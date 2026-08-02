@@ -974,8 +974,8 @@ impl HighLevelCompiler {
             lhs: IrValue::Register(tag),
             rhs: IrValue::Integer(crate::conv::usize_to_i64(ok_variant.index)),
         });
-        let ok_label = self.new_label();
-        let err_label = self.new_label();
+        let ok_label = self.new_label("result_ok");
+        let err_label = self.new_label("result_err");
         self.set_terminator(IrTerminator::Branch {
             cond: IrValue::Register(is_ok),
             then_label: ok_label.clone(),
@@ -1095,7 +1095,7 @@ impl HighLevelCompiler {
             ty: result_ty.clone(),
             count: None,
         });
-        let done_label = self.new_label();
+        let done_label = self.new_label("format_done");
 
         // Evaluate every hole once, left to right.
         let mut holes = Vec::new();
@@ -1149,8 +1149,8 @@ impl HighLevelCompiler {
 
         // Guards: u64 overflow first, then capacity, before any byte is written.
         let overflow = self.emit_format_runtime_call("fmt_is_len_overflow", vec![acc.clone()])?;
-        let overflow_label = self.new_label();
-        let size_ok_label = self.new_label();
+        let overflow_label = self.new_label("format_overflow");
+        let size_ok_label = self.new_label("format_size_ok");
         self.set_terminator(IrTerminator::Branch {
             cond: overflow.value,
             then_label: overflow_label.clone(),
@@ -1182,8 +1182,8 @@ impl HighLevelCompiler {
             lhs: acc.clone(),
             rhs: IrValue::Register(dest_len),
         });
-        let too_small_label = self.new_label();
-        let write_label = self.new_label();
+        let too_small_label = self.new_label("format_too_small");
+        let write_label = self.new_label("format_write");
         self.set_terminator(IrTerminator::Branch {
             cond: IrValue::Register(too_small),
             then_label: too_small_label.clone(),
@@ -1434,10 +1434,6 @@ impl HighLevelCompiler {
         };
 
         let elem_ptr = self.new_temp();
-        self.push_instruction(IrInstruction::Comment(format!(
-            "Compute array element address at index ${}",
-            index.value
-        )));
         self.push_instruction(IrInstruction::Index {
             dest: elem_ptr.clone(),
             ty: element_ty.clone(),
@@ -1606,8 +1602,8 @@ impl HighLevelCompiler {
     // Trap (coded exit) when `cond` is true, splitting the current block. Phi
     // correctness holds: the backend reconciles values by shared storage.
     fn emit_trap_if(&mut self, cond: IrValue, code: u32) {
-        let trap_label = self.new_label();
-        let ok_label = self.new_label();
+        let trap_label = self.new_label("trap");
+        let ok_label = self.new_label("trap_ok");
         self.set_terminator(crate::ir::IrTerminator::Branch {
             cond,
             then_label: trap_label.clone(),
@@ -1899,8 +1895,6 @@ impl HighLevelCompiler {
         target: &AssignTarget,
         rvalue: &Expression,
     ) -> Option<LoweredValue> {
-        self.push_instruction(IrInstruction::Comment("assignment".to_owned()));
-
         // Struct destructuring does not have a single lvalue address.
         if let AssignTarget::StructDestructure(fields) = target {
             // Try Address mode first (works for locals, field accesses, etc.).

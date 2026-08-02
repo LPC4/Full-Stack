@@ -74,10 +74,10 @@ impl HighLevelCompiler {
         }
     }
 
-    pub(super) fn new_label(&mut self) -> IrLabel {
+    pub(super) fn new_label(&mut self, role: &str) -> IrLabel {
         let current = self.next_label;
         self.next_label = self.next_label.saturating_add(1);
-        IrLabel::new(format!("label_{current}"))
+        IrLabel::new(format!("{role}_{current}"))
     }
 
     pub(super) fn new_temp(&mut self) -> IrRegister {

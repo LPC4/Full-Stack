@@ -20,20 +20,18 @@ main__entry:
 	addi   t0, sp, 0
 ; Store i32 to memory
 	sw     s2, 0(t0)
-	j main__label_0
-; Basic Block: label_0
-main__label_0:
-; while condition
+	j main__while_cond_0
+; Basic Block: while_cond_0
+main__while_cond_0:
 ; Load i32 from memory into $$1
 	addi   t0, sp, 0
 	lw     s2, 0(t0)
 	addi   t0, zero, 50
 	slt    s2, s2, t0
-	bne s2, zero, main__label_1
-	j main__label_2
-; Basic Block: label_1
-main__label_1:
-; assignment
+	bne s2, zero, main__while_body_1
+	j main__while_exit_2
+; Basic Block: while_body_1
+main__while_body_1:
 ; Load i32 from memory into $$3
 	addi   t0, sp, 0
 	lw     s2, 0(t0)
@@ -44,37 +42,35 @@ main__label_1:
 	addi   t0, sp, 0
 ; Store i32 to memory
 	sw     s2, 0(t0)
-; if condition
 ; Load i32 from memory into $$5
 	addi   t0, sp, 0
 	lw     s2, 0(t0)
 	addi   t0, zero, 40
 	sub    t1, s2, t0
 	sltiu  s2, t1, 1
-	bne s2, zero, main__label_3
-	j main__label_5
-; Basic Block: label_3
-main__label_3:
-	j main__label_2
-; Basic Block: label_5
-main__label_5:
-; if condition
+	bne s2, zero, main__if_then_3
+	j main__if_merge_5
+; Basic Block: if_then_3
+main__if_then_3:
+	j main__while_exit_2
+; Basic Block: if_merge_5
+main__if_merge_5:
 ; Load i32 from memory into $$7
 	addi   t0, sp, 0
 	lw     s2, 0(t0)
 	addi   t0, zero, 35
 	sub    t1, s2, t0
 	sltiu  s2, t1, 1
-	bne s2, zero, main__label_6
-	j main__label_8
-; Basic Block: label_6
-main__label_6:
-	j main__label_0
-; Basic Block: label_8
-main__label_8:
-	j main__label_0
-; Basic Block: label_2
-main__label_2:
+	bne s2, zero, main__if_then_6
+	j main__if_merge_8
+; Basic Block: if_then_6
+main__if_then_6:
+	j main__while_cond_0
+; Basic Block: if_merge_8
+main__if_merge_8:
+	j main__while_cond_0
+; Basic Block: while_exit_2
+main__while_exit_2:
 ; Load i32 from memory into $$9
 	addi   t0, sp, 0
 	lw     s2, 0(t0)

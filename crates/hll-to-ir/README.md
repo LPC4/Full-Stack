@@ -2,9 +2,10 @@
 
 **Stages 1 and 2 of the Full-Stack compiler pipeline.**
 
-Front end for the HLL systems language. Takes HLL source text and produces a typed,
-SSA-form `IrProgram` ready for the `ir-to-asm` back end. This crate owns lexing,
-parsing, semantic analysis, IR lowering, and the per-mode stdlib bundling.
+Front end for the HLL systems language. Takes HLL source text and produces a typed `IrProgram`
+ready for the `ir-to-asm` back end. Virtual temporaries are SSA values; mutable HLL locals remain
+in explicit stack slots. This crate owns lexing, parsing, semantic analysis, IR lowering, and the
+per-mode stdlib bundling.
 
 ## Flow
 
@@ -40,6 +41,10 @@ let ir: &IrProgram = &output.ir;
 
 The IR types (`IrProgram`, `IrFunction`, `IrBlock`, `IrInstruction`, `IrType`, ...) are
 re-exported from the crate root so the back end can consume them directly.
+
+`IrProgram::to_string()` emits the canonical IR 2.0 text used by the IDE, diagnostics, tests,
+goldens, and Guide. The back end consumes the structured program directly and does not parse that
+text. The complete textual contract lives in `../ir-to-asm/_IR_SPECIFICATIONS.md`.
 
 ## Module layout
 

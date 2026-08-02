@@ -18,7 +18,6 @@ sum_to_n:
 ; --- End Parameter Spills ---
 ; Basic Block: entry
 sum_to_n__entry:
-; bind parameter: n
 	addi   t0, sp, 0
 ; Store i32 to memory
 	sw     s2, 0(t0)
@@ -32,10 +31,9 @@ sum_to_n__entry:
 ; Store i32 to memory
 	addi   t1, zero, 1
 	sw     t1, 0(t0)
-	j sum_to_n__label_0
-; Basic Block: label_0
-sum_to_n__label_0:
-; while condition
+	j sum_to_n__while_cond_0
+; Basic Block: while_cond_0
+sum_to_n__while_cond_0:
 ; Load i32 from memory into $$0
 	addi   t0, sp, 16
 	lw     s2, 0(t0)
@@ -44,11 +42,10 @@ sum_to_n__label_0:
 	lw     s3, 0(t0)
 	slt    t0, s3, s2
 	sltiu  s2, t0, 1
-	bne s2, zero, sum_to_n__label_1
-	j sum_to_n__label_2
-; Basic Block: label_1
-sum_to_n__label_1:
-; assignment
+	bne s2, zero, sum_to_n__while_body_1
+	j sum_to_n__while_exit_2
+; Basic Block: while_body_1
+sum_to_n__while_body_1:
 ; Load i32 from memory into $$3
 	addi   t0, sp, 8
 	lw     s2, 0(t0)
@@ -61,7 +58,6 @@ sum_to_n__label_1:
 	addi   t0, sp, 8
 ; Store i32 to memory
 	sw     s2, 0(t0)
-; assignment
 ; Load i32 from memory into $$6
 	addi   t0, sp, 16
 	lw     s2, 0(t0)
@@ -72,9 +68,9 @@ sum_to_n__label_1:
 	addi   t0, sp, 16
 ; Store i32 to memory
 	sw     s2, 0(t0)
-	j sum_to_n__label_0
-; Basic Block: label_2
-sum_to_n__label_2:
+	j sum_to_n__while_cond_0
+; Basic Block: while_exit_2
+sum_to_n__while_exit_2:
 ; Load i32 from memory into $$8
 	addi   t0, sp, 8
 	lw     s2, 0(t0)
@@ -111,7 +107,6 @@ factorial_while:
 ; --- End Parameter Spills ---
 ; Basic Block: entry
 factorial_while__entry:
-; bind parameter: n
 	addi   t0, sp, 0
 ; Store i32 to memory
 	sw     s2, 0(t0)
@@ -125,10 +120,9 @@ factorial_while__entry:
 ; Store i32 to memory
 	addi   t1, zero, 2
 	sw     t1, 0(t0)
-	j factorial_while__label_3
-; Basic Block: label_3
-factorial_while__label_3:
-; while condition
+	j factorial_while__while_cond_3
+; Basic Block: while_cond_3
+factorial_while__while_cond_3:
 ; Load i32 from memory into $$0
 	addi   t0, sp, 16
 	lw     s2, 0(t0)
@@ -137,11 +131,10 @@ factorial_while__label_3:
 	lw     s3, 0(t0)
 	slt    t0, s3, s2
 	sltiu  s2, t0, 1
-	bne s2, zero, factorial_while__label_4
-	j factorial_while__label_5
-; Basic Block: label_4
-factorial_while__label_4:
-; assignment
+	bne s2, zero, factorial_while__while_body_4
+	j factorial_while__while_exit_5
+; Basic Block: while_body_4
+factorial_while__while_body_4:
 ; Load i32 from memory into $$3
 	addi   t0, sp, 8
 	lw     s2, 0(t0)
@@ -154,7 +147,6 @@ factorial_while__label_4:
 	addi   t0, sp, 8
 ; Store i32 to memory
 	sw     s2, 0(t0)
-; assignment
 ; Load i32 from memory into $$6
 	addi   t0, sp, 16
 	lw     s2, 0(t0)
@@ -165,9 +157,9 @@ factorial_while__label_4:
 	addi   t0, sp, 16
 ; Store i32 to memory
 	sw     s2, 0(t0)
-	j factorial_while__label_3
-; Basic Block: label_5
-factorial_while__label_5:
+	j factorial_while__while_cond_3
+; Basic Block: while_exit_5
+factorial_while__while_exit_5:
 ; Load i32 from memory into $$8
 	addi   t0, sp, 8
 	lw     s2, 0(t0)

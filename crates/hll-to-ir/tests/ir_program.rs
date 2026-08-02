@@ -6,7 +6,7 @@ use hll_to_ir::ir::types::{FloatWidth, IntWidth, IrType};
 use hll_to_ir::ir::values::{IrRegister, IrValue};
 
 #[test]
-fn pretty_print_program_has_registers_labels_and_tabs() {
+fn pretty_print_program_uses_ir_2_syntax() {
     let mut program = IrProgram::new("demo");
     program.push_type_alias(IrTypeAlias {
         name: "Point".to_owned(),
@@ -42,10 +42,10 @@ fn pretty_print_program_has_registers_labels_and_tabs() {
     program.push_function(function);
 
     let output = format!("{program}");
-    assert!(output.contains("type Point = {x: f32, y: f32}"));
+    assert!(output.contains("type Point = { x: f32, y: f32 }"));
     assert!(output.contains("const hello = c\"hi\""));
-    assert!(output.contains("define i32 add_one(i32 $value) {"));
+    assert!(output.contains("export define add_one($value: i32) -> i32 {"));
     assert!(output.contains("entry:"));
-    assert!(output.contains("\t$0 = math add i32 $value, 1"));
-    assert!(output.contains("\tret $0"));
+    assert!(output.contains("    $0 = add i32 $value, 1"));
+    assert!(output.contains("    ret $0"));
 }

@@ -971,7 +971,7 @@ main: () -> i32 {
 
         let ir_text = format!("{ir_program}");
         assert!(
-            ir_text.contains("define i32 main("),
+            ir_text.contains("define main("),
             "IR should contain main function"
         );
         assert!(
@@ -999,7 +999,7 @@ main: () -> i32 {
 
         let ir_text = format!("{ir_program}");
         assert!(
-            ir_text.contains("define i32 stress_test("),
+            ir_text.contains("define stress_test("),
             "IR should contain stress_test function"
         );
         assert!(
@@ -1031,7 +1031,7 @@ main: () -> i32 {
             "IR should contain divide function"
         );
         assert!(
-            ir_text.contains("define void start("),
+            ir_text.contains("define start("),
             "IR should contain start function"
         );
         println!("=== test4.hll IR OUTPUT ===\n{ir_text}");
@@ -1057,11 +1057,11 @@ main: () -> i32 {
             "expected indexed address IR: {ir}"
         );
         assert!(
-            ir.contains("read i32"),
+            ir.contains("load i32"),
             "expected indexed value load IR: {ir}"
         );
         assert!(
-            ir.contains("write i32"),
+            ir.contains("store i32"),
             "expected indexed assignment IR: {ir}"
         );
     }
@@ -1128,9 +1128,12 @@ main: () -> i32 {
         .expect("inferred bindings should compile");
 
         let ir = format!("{}", output.ir);
-        assert!(ir.contains("inferred local var: number"));
-        assert!(ir.contains("inferred local var: values"));
-        assert!(ir.contains("inferred local var: pointer"));
+        assert!(ir.contains("; inferred local var: number"));
+        assert!(ir.contains("; inferred local var: values"));
+        assert!(ir.contains("; inferred local var: pointer"));
+        assert!(ir.contains("$number = stack_alloc i32"));
+        assert!(ir.contains("$values = stack_alloc i32[2]"));
+        assert!(ir.contains("$pointer = stack_alloc i32*"));
     }
 
     #[test]
@@ -1309,7 +1312,7 @@ main: () -> i32 {
         )
         .expect("contextual literals should default omitted fields to zero");
         let ir = output.ir.to_string();
-        assert!(ir.contains("write i32 0"), "missing zero fill in IR: {ir}");
+        assert!(ir.contains("store i32 0"), "missing zero fill in IR: {ir}");
     }
 
     // A struct literal may initialize a fixed-array field; the inferred and
@@ -1506,7 +1509,7 @@ main: () -> i32 {
         .expect("non-capturing lambda should compile");
         let ir = output.ir.to_string();
         assert!(
-            ir.contains("define i32 __hll_lambda_0(i32 $value)"),
+            ir.contains("define __hll_lambda_0($value: i32) -> i32"),
             "missing lambda: {ir}"
         );
         assert!(
@@ -1557,12 +1560,12 @@ main: () -> i32 {
         .expect("lambda inside a generic function should compile at every instantiation");
         let ir = output.ir.to_string();
         assert!(
-            ir.contains("define i32 __hll_lambda_0(i32 $v)"),
+            ir.contains("define __hll_lambda_0($v: i32) -> i32"),
             "missing lambda: {ir}"
         );
         // Both specializations reference the one synthesized function.
         assert_eq!(
-            ir.matches("define i32 __hll_lambda_0").count(),
+            ir.matches("define __hll_lambda_0").count(),
             1,
             "lambda must be defined exactly once: {ir}"
         );

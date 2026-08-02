@@ -30,7 +30,19 @@ impl fmt::Display for IrValue {
         match self {
             Self::Register(register) => write!(f, "{register}"),
             Self::Integer(value) => write!(f, "{value}"),
-            Self::Float(value) => write!(f, "{value}"),
+            Self::Float(value) if value.is_nan() => write!(f, "nan"),
+            Self::Float(value) if value.is_infinite() && value.is_sign_negative() => {
+                write!(f, "-inf")
+            }
+            Self::Float(value) if value.is_infinite() => write!(f, "inf"),
+            Self::Float(value) => {
+                let text = value.to_string();
+                if text.contains(['.', 'e', 'E']) {
+                    write!(f, "{text}")
+                } else {
+                    write!(f, "{text}.0")
+                }
+            }
             Self::Bool(value) => write!(f, "{}", if *value { "true" } else { "false" }),
             Self::Null => write!(f, "null"),
             Self::GlobalString(name) => write!(f, "{name}"),
@@ -50,5 +62,20 @@ impl IrLabel {
 impl fmt::Display for IrLabel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn floats_remain_lexically_distinct_from_integers() {
+        assert_eq!(IrValue::Float(1.0).to_string(), "1.0");
+        assert_eq!(IrValue::Float(-0.0).to_string(), "-0.0");
+        assert_eq!(IrValue::Float(1.25).to_string(), "1.25");
+        assert_eq!(IrValue::Float(f64::INFINITY).to_string(), "inf");
+        assert_eq!(IrValue::Float(f64::NEG_INFINITY).to_string(), "-inf");
+        assert_eq!(IrValue::Float(f64::NAN).to_string(), "nan");
     }
 }

@@ -147,7 +147,6 @@ main__entry:
 	addi   t0, sp, 128
 ; Store i32* to memory
 	sd     s2, 0(t0)
-; assignment
 ; Load i32* from memory into $$17
 	addi   t0, sp, 128
 ; Store i32 to memory

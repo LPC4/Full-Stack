@@ -20,24 +20,21 @@ calc_offset:
 ; --- End Parameter Spills ---
 ; Basic Block: entry
 calc_offset__entry:
-; bind parameter: p
 	addi   t0, sp, 0
 ; Store Point* to memory
 	sd     s2, 0(t0)
-; bind parameter: shift
 	addi   t0, sp, 8
 ; Store f32 to memory
 	flw    ft0, 16(sp)
 	fsw    ft0, 0(t0)
-; assignment
-; Load {x: f32, y: f32}* from memory into $$0
+; Load { x: f32, y: f32 }* from memory into $$0
 	addi   t0, sp, 0
 	ld     s2, 0(t0)
 ; Address of field 'x' at offset 0
 	addi   t0, zero, 0
 	addi   t1, t0, 0
 	add    s2, s2, t1
-; Load {x: f32, y: f32}* from memory into $$2
+; Load { x: f32, y: f32 }* from memory into $$2
 	addi   t0, sp, 0
 	ld     s3, 0(t0)
 ; Access field 'x' at offset 0
@@ -57,15 +54,14 @@ calc_offset__entry:
 ; Store f32 to memory
 	flw    ft6, 16(sp)
 	fsw    ft6, 0(s2)
-; assignment
-; Load {x: f32, y: f32}* from memory into $$6
+; Load { x: f32, y: f32 }* from memory into $$6
 	addi   t0, sp, 0
 	ld     s2, 0(t0)
 ; Address of field 'y' at offset 4
 	addi   t0, zero, 4
 	addi   t1, t0, 0
 	add    s2, s2, t1
-; Load {x: f32, y: f32}* from memory into $$8
+; Load { x: f32, y: f32 }* from memory into $$8
 	addi   t0, sp, 0
 	ld     s3, 0(t0)
 ; Access field 'y' at offset 4
@@ -85,7 +81,7 @@ calc_offset__entry:
 ; Store f32 to memory
 	flw    ft4, 16(sp)
 	fsw    ft4, 0(s2)
-; Load {x: f32, y: f32}* from memory into $$12
+; Load { x: f32, y: f32 }* from memory into $$12
 	addi   t0, sp, 0
 	ld     s2, 0(t0)
 ; Access field 'x' at offset 0
@@ -93,7 +89,7 @@ calc_offset__entry:
 	addi   t0, s2, 0
 	flw    ft5, 0(t0)
 	fsw    ft5, 16(sp)
-; Load {x: f32, y: f32}* from memory into $$14
+; Load { x: f32, y: f32 }* from memory into $$14
 	addi   t0, sp, 0
 	ld     s2, 0(t0)
 ; Access field 'y' at offset 4

@@ -18,21 +18,19 @@ factorial:
 ; --- End Parameter Spills ---
 ; Basic Block: entry
 factorial__entry:
-; bind parameter: n
 	addi   t0, sp, 0
 ; Store i32 to memory
 	sw     s2, 0(t0)
-; if condition
 ; Load i32 from memory into $$0
 	addi   t0, sp, 0
 	lw     s2, 0(t0)
 	addi   t0, zero, 1
 	slt    t1, t0, s2
 	sltiu  s2, t1, 1
-	bne s2, zero, factorial__label_0
-	j factorial__label_2
-; Basic Block: label_0
-factorial__label_0:
+	bne s2, zero, factorial__if_then_0
+	j factorial__if_merge_2
+; Basic Block: if_then_0
+factorial__if_then_0:
 	addi   t2, zero, 1
 	addi   a0, t2, 0
 ; --- Function Epilogue ---
@@ -47,8 +45,8 @@ factorial__label_0:
 ; Return to caller
 	jalr   zero, 0(ra)
 ; --- End Epilogue ---
-; Basic Block: label_2
-factorial__label_2:
+; Basic Block: if_merge_2
+factorial__if_merge_2:
 ; Load i32 from memory into $$2
 	addi   t0, sp, 0
 	lw     s2, 0(t0)
@@ -101,21 +99,19 @@ fibonacci:
 ; --- End Parameter Spills ---
 ; Basic Block: entry
 fibonacci__entry:
-; bind parameter: n
 	addi   t0, sp, 0
 ; Store i32 to memory
 	sw     s2, 0(t0)
-; if condition
 ; Load i32 from memory into $$0
 	addi   t0, sp, 0
 	lw     s2, 0(t0)
 	addi   t0, zero, 0
 	slt    t1, t0, s2
 	sltiu  s2, t1, 1
-	bne s2, zero, fibonacci__label_3
-	j fibonacci__label_5
-; Basic Block: label_3
-fibonacci__label_3:
+	bne s2, zero, fibonacci__if_then_3
+	j fibonacci__if_merge_5
+; Basic Block: if_then_3
+fibonacci__if_then_3:
 	addi   t2, zero, 0
 	addi   a0, t2, 0
 ; --- Function Epilogue ---
@@ -130,19 +126,18 @@ fibonacci__label_3:
 ; Return to caller
 	jalr   zero, 0(ra)
 ; --- End Epilogue ---
-; Basic Block: label_5
-fibonacci__label_5:
-; if condition
+; Basic Block: if_merge_5
+fibonacci__if_merge_5:
 ; Load i32 from memory into $$2
 	addi   t0, sp, 0
 	lw     s2, 0(t0)
 	addi   t0, zero, 1
 	sub    t1, s2, t0
 	sltiu  s2, t1, 1
-	bne s2, zero, fibonacci__label_6
-	j fibonacci__label_8
-; Basic Block: label_6
-fibonacci__label_6:
+	bne s2, zero, fibonacci__if_then_6
+	j fibonacci__if_merge_8
+; Basic Block: if_then_6
+fibonacci__if_then_6:
 	addi   t2, zero, 1
 	addi   a0, t2, 0
 ; --- Function Epilogue ---
@@ -157,8 +152,8 @@ fibonacci__label_6:
 ; Return to caller
 	jalr   zero, 0(ra)
 ; --- End Epilogue ---
-; Basic Block: label_8
-fibonacci__label_8:
+; Basic Block: if_merge_8
+fibonacci__if_merge_8:
 ; Load i32 from memory into $$4
 	addi   t0, sp, 0
 	lw     s2, 0(t0)
@@ -227,15 +222,12 @@ add_multiply:
 ; --- End Parameter Spills ---
 ; Basic Block: entry
 add_multiply__entry:
-; bind parameter: a
 	addi   t0, sp, 0
 ; Store i32 to memory
 	sw     s2, 0(t0)
-; bind parameter: b
 	addi   t0, sp, 8
 ; Store i32 to memory
 	sw     s3, 0(t0)
-; bind parameter: c
 	addi   t0, sp, 16
 ; Store i32 to memory
 	sw     s4, 0(t0)
@@ -291,15 +283,12 @@ max_value:
 ; --- End Parameter Spills ---
 ; Basic Block: entry
 max_value__entry:
-; bind parameter: a
 	addi   t0, sp, 0
 ; Store i32 to memory
 	sw     s2, 0(t0)
-; bind parameter: b
 	addi   t0, sp, 8
 ; Store i32 to memory
 	sw     s3, 0(t0)
-; if condition
 ; Load i32 from memory into $$0
 	addi   t0, sp, 0
 	lw     s2, 0(t0)
@@ -307,10 +296,10 @@ max_value__entry:
 	addi   t0, sp, 8
 	lw     s3, 0(t0)
 	slt    s2, s3, s2
-	bne s2, zero, max_value__label_9
-	j max_value__label_11
-; Basic Block: label_9
-max_value__label_9:
+	bne s2, zero, max_value__if_then_9
+	j max_value__if_merge_11
+; Basic Block: if_then_9
+max_value__if_then_9:
 ; Load i32 from memory into $$3
 	addi   t0, sp, 0
 	lw     s2, 0(t0)
@@ -327,8 +316,8 @@ max_value__label_9:
 ; Return to caller
 	jalr   zero, 0(ra)
 ; --- End Epilogue ---
-; Basic Block: label_11
-max_value__label_11:
+; Basic Block: if_merge_11
+max_value__if_merge_11:
 ; Load i32 from memory into $$4
 	addi   t0, sp, 8
 	lw     s2, 0(t0)

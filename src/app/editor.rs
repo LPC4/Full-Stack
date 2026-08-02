@@ -850,10 +850,10 @@ mod tests {
 
     #[test]
     fn locate_in_stage_finds_ir_defines_and_asm_labels() {
-        let ir = "define i32 main() {\nentry:\n}\n\ndefine i64 helper(i64 $x) {\n";
+        let ir = "export define main() -> i32 {\nentry:\n}\n\ndefine helper($x: i64) -> i64 {\n";
         assert_eq!(locate_in_stage(ir, Layer::Ir, "main"), Some(0));
         let helper = locate_in_stage(ir, Layer::Ir, "helper").expect("helper found");
-        assert!(ir[helper..].starts_with("define i64 helper"));
+        assert!(ir[helper..].starts_with("define helper"));
         assert_eq!(locate_in_stage(ir, Layer::Ir, "absent"), None);
 
         let asm = ".globl main\nmain:\n    addi sp, sp, -16\nhelper:\n    ret\n";
@@ -1011,14 +1011,16 @@ fn fn_def_name(line: &str) -> Option<&str> {
         .then_some(name)
 }
 
-// IR locates the `define .. name(..)` header; assembly the `name:` label.
+// IR locates the `define name(..)` header; assembly locates the `name:` label.
 fn locate_in_stage(text: &str, layer: Layer, name: &str) -> Option<usize> {
     let mut offset = 0usize;
     for line in text.split_inclusive('\n') {
         let hit = match layer {
             Layer::Ir => {
                 let t = line.trim_start();
-                t.starts_with("define ") && t.contains(&format!(" {name}("))
+                let t = t.strip_prefix("export ").unwrap_or(t);
+                t.strip_prefix("define ")
+                    .is_some_and(|signature| signature.starts_with(&format!("{name}(")))
             }
             Layer::Asm => line
                 .strip_prefix(name)

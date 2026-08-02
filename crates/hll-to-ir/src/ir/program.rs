@@ -23,7 +23,6 @@ pub struct IrGlobalString {
 
 impl fmt::Display for IrGlobalString {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Escape the string content for IR output
         let escaped = self
             .content
             .replace('\\', "\\\\")
@@ -35,17 +34,23 @@ impl fmt::Display for IrGlobalString {
     }
 }
 
-/// The signature of a function defined in another module. Only carried when
-/// the backend cannot default it (non-scalar returns need the aggregate ABI).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IrExternFn {
     pub name: String,
+    pub params: Vec<IrType>,
     pub return_type: IrType,
 }
 
 impl fmt::Display for IrExternFn {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "extern {} {}", self.return_type, self.name)
+        write!(f, "extern {}(", self.name)?;
+        for (index, param) in self.params.iter().enumerate() {
+            if index > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{param}")?;
+        }
+        write!(f, ") -> {}", self.return_type)
     }
 }
 
@@ -57,7 +62,7 @@ pub struct IrParam {
 
 impl fmt::Display for IrParam {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} {}", self.ty, self.register)
+        write!(f, "{}: {}", self.register, self.ty)
     }
 }
 
@@ -96,14 +101,17 @@ impl IrFunction {
 
 impl fmt::Display for IrFunction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "define {} {}(", self.return_type, self.name)?;
+        if self.exported {
+            write!(f, "export ")?;
+        }
+        write!(f, "define {}(", self.name)?;
         for (index, param) in self.params.iter().enumerate() {
             if index > 0 {
                 write!(f, ", ")?;
             }
             write!(f, "{param}")?;
         }
-        writeln!(f, ") {{")?;
+        writeln!(f, ") -> {} {{", self.return_type)?;
 
         for block in &self.blocks {
             write!(f, "{block}")?;
@@ -121,6 +129,29 @@ pub struct IrGlobalVar {
     /// Raw initial bytes; `None` means zero-initialised (goes in `.bss`).
     pub init: Option<Vec<u8>>,
     pub exported: bool,
+}
+
+impl fmt::Display for IrGlobalVar {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.exported {
+            write!(f, "export ")?;
+        }
+        write!(f, "global {}: {} = ", self.name, self.ty)?;
+        let Some(bytes) = &self.init else {
+            return write!(f, "zero");
+        };
+        if bytes.len() > 1 && bytes.iter().all(|byte| byte == &bytes[0]) {
+            return write!(f, "bytes[0x{:02x}; {}]", bytes[0], bytes.len());
+        }
+        write!(f, "bytes[")?;
+        for (index, byte) in bytes.iter().enumerate() {
+            if index > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "0x{byte:02x}")?;
+        }
+        write!(f, "]")
+    }
 }
 
 #[derive(Debug)]
@@ -177,17 +208,20 @@ impl fmt::Display for IrProgram {
             writeln!(f, "{ext}")?;
         }
 
-        if (!self.type_aliases.is_empty() || !self.extern_fns.is_empty())
-            && (!self.global_strings.is_empty() || !self.functions.is_empty())
-        {
+        let has_declarations = !self.type_aliases.is_empty() || !self.extern_fns.is_empty();
+        let has_globals = !self.global_strings.is_empty() || !self.global_vars.is_empty();
+        if has_declarations && (has_globals || !self.functions.is_empty()) {
             writeln!(f)?;
         }
 
         for global_string in &self.global_strings {
             writeln!(f, "{global_string}")?;
         }
+        for global_var in &self.global_vars {
+            writeln!(f, "{global_var}")?;
+        }
 
-        if !self.global_strings.is_empty() && !self.functions.is_empty() {
+        if has_globals && !self.functions.is_empty() {
             writeln!(f)?;
         }
 
@@ -199,5 +233,110 @@ impl fmt::Display for IrProgram {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::instruction::IrTerminator;
+    use crate::ir::types::IntWidth;
+
+    fn i32_type() -> IrType {
+        IrType::Integer(IntWidth::I32)
+    }
+
+    #[test]
+    fn declarations_and_globals_use_ir_2_spelling() {
+        let ext = IrExternFn {
+            name: "sum".to_owned(),
+            params: vec![i32_type(), i32_type()],
+            return_type: i32_type(),
+        };
+        assert_eq!(ext.to_string(), "extern sum(i32, i32) -> i32");
+
+        let zero = IrGlobalVar {
+            name: "counter".to_owned(),
+            ty: i32_type(),
+            init: None,
+            exported: false,
+        };
+        assert_eq!(zero.to_string(), "global counter: i32 = zero");
+
+        let repeated = IrGlobalVar {
+            name: "padding".to_owned(),
+            ty: IrType::Array {
+                len: 4,
+                element: Box::new(IrType::Integer(IntWidth::I8)),
+            },
+            init: Some(vec![0; 4]),
+            exported: true,
+        };
+        assert_eq!(
+            repeated.to_string(),
+            "export global padding: i8[4] = bytes[0x00; 4]"
+        );
+
+        let bytes = IrGlobalVar {
+            name: "pair".to_owned(),
+            ty: IrType::Array {
+                len: 2,
+                element: Box::new(IrType::Integer(IntWidth::I8)),
+            },
+            init: Some(vec![1, 2]),
+            exported: false,
+        };
+        assert_eq!(bytes.to_string(), "global pair: i8[2] = bytes[0x01, 0x02]");
+    }
+
+    #[test]
+    fn program_prints_every_top_level_group() {
+        let mut program = IrProgram::new("demo");
+        program.push_type_alias(IrTypeAlias {
+            name: "Word".to_owned(),
+            ty: i32_type(),
+        });
+        program.push_extern_fn(IrExternFn {
+            name: "sink".to_owned(),
+            params: vec![i32_type()],
+            return_type: IrType::Void,
+        });
+        program.push_global_string(IrGlobalString {
+            name: "message".to_owned(),
+            content: "hi\n\"there\"".to_owned(),
+        });
+        program.push_global_var(IrGlobalVar {
+            name: "counter".to_owned(),
+            ty: i32_type(),
+            init: None,
+            exported: false,
+        });
+
+        let mut function = IrFunction::new("main", i32_type());
+        function.set_exported(false);
+        function.push_param(IrParam {
+            ty: i32_type(),
+            register: IrRegister::Named("value".to_owned()),
+        });
+        let mut entry = IrBlock::new("entry");
+        entry.set_terminator(IrTerminator::Return(Some(crate::ir::IrValue::Integer(0))));
+        function.push_block(entry);
+        program.push_function(function);
+
+        assert_eq!(
+            program.to_string(),
+            concat!(
+                "type Word = i32\n",
+                "extern sink(i32) -> void\n",
+                "\n",
+                "const message = c\"hi\\n\\\"there\\\"\"\n",
+                "global counter: i32 = zero\n",
+                "\n",
+                "define main($value: i32) -> i32 {\n",
+                "entry:\n",
+                "    ret 0\n",
+                "}\n",
+            )
+        );
     }
 }

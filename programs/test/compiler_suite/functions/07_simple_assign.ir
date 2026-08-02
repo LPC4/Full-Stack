@@ -1,13 +1,12 @@
-define i32 test_simple() {
+define test_simple() -> i32 {
 entry:
-	; local var: q
-	$q = stack_alloc i32
-	write i32 0 @ $q
-	; local var: r
-	$r = stack_alloc i32
-	write i32 0 @ $r
-	; assignment
-	write i32 5 @ $q
-	$0 = read i32 @ $q
-	ret $0
+    ; local var: q
+    $q = stack_alloc i32
+    store i32 0, $q
+    ; local var: r
+    $r = stack_alloc i32
+    store i32 0, $r
+    store i32 5, $q
+    $0 = load i32, $q
+    ret $0
 }

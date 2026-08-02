@@ -1,74 +1,66 @@
-define i32 sum_to_n(i32 $n) {
+define sum_to_n($n: i32) -> i32 {
 entry:
-	; bind parameter: n
-	$n_ptr = stack_alloc i32
-	write i32 $n @ $n_ptr
-	; local var: result
-	$result = stack_alloc i32
-	write i32 0 @ $result
-	; local var: i
-	$i = stack_alloc i32
-	write i32 1 @ $i
-	jump label_0
-label_0:
-	; while condition
-	$0 = read i32 @ $i
-	$1 = read i32 @ $n_ptr
-	$2 = cmp sle i32 $0, $1
-	branch $2 ? label_1 : label_2
-label_1:
-	; assignment
-	$3 = read i32 @ $result
-	$4 = read i32 @ $i
-	$5 = math add i32 $3, $4
-	write i32 $5 @ $result
-	; assignment
-	$6 = read i32 @ $i
-	$7 = math add i32 $6, 1
-	write i32 $7 @ $i
-	jump label_0
-label_2:
-	$8 = read i32 @ $result
-	ret $8
+    $n_ptr = stack_alloc i32
+    store i32 $n, $n_ptr
+    ; local var: result
+    $result = stack_alloc i32
+    store i32 0, $result
+    ; local var: i
+    $i = stack_alloc i32
+    store i32 1, $i
+    jump while_cond_0
+while_cond_0:
+    $0 = load i32, $i
+    $1 = load i32, $n_ptr
+    $2 = cmp sle i32 $0, $1
+    branch $2 ? while_body_1 : while_exit_2
+while_body_1:
+    $3 = load i32, $result
+    $4 = load i32, $i
+    $5 = add i32 $3, $4
+    store i32 $5, $result
+    $6 = load i32, $i
+    $7 = add i32 $6, 1
+    store i32 $7, $i
+    jump while_cond_0
+while_exit_2:
+    $8 = load i32, $result
+    ret $8
 }
 
-define i32 factorial_while(i32 $n) {
+define factorial_while($n: i32) -> i32 {
 entry:
-	; bind parameter: n
-	$n_ptr = stack_alloc i32
-	write i32 $n @ $n_ptr
-	; local var: result
-	$result = stack_alloc i32
-	write i32 1 @ $result
-	; local var: i
-	$i = stack_alloc i32
-	write i32 2 @ $i
-	jump label_3
-label_3:
-	; while condition
-	$0 = read i32 @ $i
-	$1 = read i32 @ $n_ptr
-	$2 = cmp sle i32 $0, $1
-	branch $2 ? label_4 : label_5
-label_4:
-	; assignment
-	$3 = read i32 @ $result
-	$4 = read i32 @ $i
-	$5 = math mul i32 $3, $4
-	write i32 $5 @ $result
-	; assignment
-	$6 = read i32 @ $i
-	$7 = math add i32 $6, 1
-	write i32 $7 @ $i
-	jump label_3
-label_5:
-	$8 = read i32 @ $result
-	ret $8
+    $n_ptr = stack_alloc i32
+    store i32 $n, $n_ptr
+    ; local var: result
+    $result = stack_alloc i32
+    store i32 1, $result
+    ; local var: i
+    $i = stack_alloc i32
+    store i32 2, $i
+    jump while_cond_3
+while_cond_3:
+    $0 = load i32, $i
+    $1 = load i32, $n_ptr
+    $2 = cmp sle i32 $0, $1
+    branch $2 ? while_body_4 : while_exit_5
+while_body_4:
+    $3 = load i32, $result
+    $4 = load i32, $i
+    $5 = mul i32 $3, $4
+    store i32 $5, $result
+    $6 = load i32, $i
+    $7 = add i32 $6, 1
+    store i32 $7, $i
+    jump while_cond_3
+while_exit_5:
+    $8 = load i32, $result
+    ret $8
 }
 
-define void main() {
+define main() -> void {
 entry:
-	call print(55)
-	call print(5040)
-	ret
+    call print(55)
+    call print(5040)
+    ret
 }

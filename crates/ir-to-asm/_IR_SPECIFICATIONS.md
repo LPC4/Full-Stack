@@ -1,354 +1,430 @@
 # Intermediate Representation Specification
 
-This document specifies the typed, SSA-form intermediate representation that sits
-between the HLL front end and the RISC-V back end. The front end (`hll-to-ir`)
-lowers source to this IR; the back end (`ir-to-asm`) consumes it and emits assembly.
-It is a strongly typed, "fat" high-level IR designed to be cheap to parse, easy to
-read, and friendly to middle-end optimization.
+This document specifies IR 2.0, the typed intermediate representation between the HLL front end
+and the RISC-V back end. The front end (`hll-to-ir`) builds an `IrProgram`; the back end
+(`ir-to-asm`) consumes that structure directly. Its textual form is the canonical human-readable
+dump used by diagnostics, tests, goldens, the IDE, and the Guide.
 
-## 1. Core design principles
+IR 2.0 is a hard syntax cut. The project does not parse or preserve the former IR 1.x spelling.
 
-The IR bridges HLL's strict, explicit memory model with a machine-agnostic format.
-Four ideas shape it.
+## 1. Design principles
 
-1. Static single assignment. Every virtual register is assigned exactly once, which
-   keeps data-flow analysis and dead-code elimination simple.
-2. Infinite virtual registers. Registers use a `$` prefix and are unbounded; register
-   allocation is deferred entirely to the target-specific back end.
-3. A fat instruction set. Instructions are expressive and polymorphic over type, which
-   keeps the IR concise and semantically rich for high-level passes.
-4. Explicit reads and writes. Virtual registers hold values; memory access always goes
-   through `read` and `write`. The `@` sigil is reserved for memory access.
+1. Static single assignment for virtual registers. Every temporary and parameter register is
+   assigned once. Mutable HLL locals remain in explicit stack slots until mem2reg is implemented.
+2. Infinite virtual registers. Registers use a `$` prefix and are allocated by the target back
+   end only after IR optimization.
+3. A typed, high-level instruction set. Operations retain enough type and layout information for
+   target-independent analysis and readable dumps.
+4. Explicit memory access. Values live in virtual registers; `load` and `store` are the only
+   ordinary memory reads and writes.
+5. One visible opcode per instruction. Internal Rust groupings such as `Math`, `Unary`, and
+   `Cast` do not appear as wrapper words in the text.
+6. Deterministic output. Stable names, ordering, spacing, and escaping make textual goldens useful
+   assertions rather than approximate snapshots.
 
-### 1.1 Aggregate type representation
+### 1.1 Aggregate representation
 
-HLL structs carry named fields, for example `type Point = { x: f32, y: f32 }`. The IR
-preserves those field names in its aggregate types: the lowered form is
-`{x: f32, y: f32}`, and named aliases such as `type Point = {x: f32, y: f32}` are emitted
-at module scope. Field access still resolves to byte offsets at lowering time (the
-`offset` instruction), but the names are kept in the type for readability. Anonymous
-aggregates with empty field names are also legal where a one-off struct type is needed.
+HLL structs preserve their field names in IR aggregate types:
 
-### 1.2 Signedness in integer operations
+```text
+type Point = { x: f32, y: f32 }
+```
 
-The IR does not distinguish signed from unsigned integer types; an integer type is just
-its width (`i8`, `i16`, `i32`, `i64`). Signedness lives in the operation instead.
+Anonymous fields are legal and print as types without a name:
 
-- Division and modulo: `sdiv` / `mod` are signed; `udiv` / `umod` are unsigned. A plain
-  `div` opcode exists for completeness, but the front end always selects `sdiv` or `udiv`
-  from the operand's signedness.
-- Comparison: each comparison carries an `s` or `u` prefix where it matters
-  (`slt` vs `ult`, and so on).
-- Casting: `sext` (sign-extend) and `zext` (zero-extend) widen with the matching
-  interpretation of the source.
+```text
+type DivideResult = { i32, i32 }
+```
 
-## 2. Syntax and lexical conventions
+Member access still resolves to a byte offset before the backend. Field names exist for type
+identity and readability; `offset`, `load`, and `store` carry the executable operation.
 
-The IR uses a simple, unambiguous text format meant for fast parsing and human reading.
+### 1.2 Signedness
+
+Integer types record width but not signedness. Signedness belongs to the operation:
+
+- Division and remainder use `sdiv` / `mod` or `udiv` / `umod`.
+- Ordered comparisons use `slt`, `sle`, `sgt`, `sge` or their `u` forms.
+- Widening uses `sext` or `zext`.
+- Operations whose bits are identical for signed and unsigned values use one opcode.
+
+The plain `div` opcode remains part of the model, but HLL lowering selects `sdiv` or `udiv`.
+
+## 2. Lexical conventions
 
 | Entity | Syntax | Example |
-|--------|--------|---------|
-| Virtual register | `$` prefix | `$1`, `$base_ptr`, `$t0` |
-| Basic block | bare label and `:` | `entry:`, `loop_header:` |
-| Function | bare name after `define` / `call` | `define i32 compute_sum(...)`, `call compute_sum(...)` |
-| Global string | `const` declaration | `const hello = c"hi"` |
-| Temporary register | numeric | `$0`, `$1`, `$2` (compiler generated) |
-| Named register | alphanumeric | `$count`, `$value` (front-end mapped) |
-| Comment | semicolon `;` | `; calculate offset` |
+| --- | --- | --- |
+| Virtual register | `$` prefix | `$0`, `$value`, `$base_ptr` |
+| Basic block | Bare identifier and `:` | `entry:`, `while_cond_0:` |
+| Function or global | Bare link name | `call sum($a, $b)`, `global_ref counter` |
+| Compiler temporary | Numeric register | `$0`, `$1`, `$2` |
+| Named value | Identifier register | `$count`, `$result` |
+| Comment | Semicolon to end of line | `; aggregate return uses sret` |
 
-## 3. Type system
+IR output uses four spaces for instructions and terminators inside a basic block. Identifiers may
+contain dots and angle-bracketed monomorphization components because those characters cannot
+collide with HLL source identifiers.
 
-The IR mirrors the HLL front-end types closely to keep the semantic gap small.
+String contents use C-style escapes for backslash, quote, newline, tab, and carriage return.
+Inline assembly strings escape backslash and quote. Source-line markers are internal metadata and
+do not appear in the canonical textual dump.
 
-| Type | Description |
-|------|-------------|
-| `void` | No value (used for function returns). |
-| `i1`, `i8`, `i16`, `i32`, `i64` | Integers (`i1` is boolean). Signedness is in the opcode, not the type. |
+Generated comments retain useful source information that instructions cannot express directly.
+In particular, `; local var: name` and `; inferred local var: name` mark HLL bindings before their
+stack slots. Field-layout and ABI comments are also retained; comments that merely say
+`assignment` or restate a control-flow opcode are omitted.
+
+## 3. Types
+
+| Type | Meaning |
+| --- | --- |
+| `void` | No returned value. |
+| `i1`, `i8`, `i16`, `i32`, `i64` | Width-only integer; `i1` is boolean. |
 | `f32`, `f64` | IEEE 754 floating point. |
-| `T*` | Pointer to type `T`. |
-| `fn(T, U) -> R` / `fn(T, U)` | Function pointer code address with parameter and return types. |
-| `T[N]` | Fixed-size array, for example `i32[10]`. |
-| `{name: T, ...}` | Aggregate (struct) type with named fields; names may be empty for anonymous aggregates. |
-| `Name` | A named type definition or alias. |
+| `T*` | Pointer to `T`. |
+| `T[N]` | Fixed-size array of `N` elements. |
+| `T[]` | Slice fat pointer containing data pointer and length. |
+| `{ name: T, U }` | Aggregate with named or anonymous fields. |
+| `fn(T, U) -> R` | Function pointer returning `R`. |
+| `fn(T, U)` | Function pointer returning `void`. |
+| `Name` | Named type or alias. |
 
-### 3.1 Aggregate types
+Postfix types compose from the inside out. `i8*[4]` is an array of four pointers, while `i8[4]*`
+is a pointer to an array.
 
-An aggregate can appear two ways:
+## 4. Top-level declarations
 
-- As a module-level named alias for a reusable struct definition.
-- Inline in a type expression (an allocation, parameter, or return type).
-
-Both forms are equivalent at runtime; the choice is stylistic. Field names are kept in
-the type, but member access is always computed as a byte offset.
-
-```text
-; Named alias (reusable)
-type Point = {x: f32, y: f32}
-type DivideResult = {i32, i32}
-
-; Inline aggregates in signatures and allocations
-define {i32, i32} divide(i32 $a, i32 $b) { ... }
-$ptr = stack_alloc {i32, i32}
-```
-
-### 3.2 Extern function signatures
-
-A module may call functions defined in other modules. When such a callee's return type is
-non-scalar (aggregate, array, slice, or float), the backend cannot default it to an integer
-register, so the front end records the signature as a module-level `extern` line after the
-type aliases:
+### 4.1 Type aliases
 
 ```text
-extern u8[] fmt_subslice
-extern f64 some_float_producer
+type Point = { x: f32, y: f32 }
+type Buffer = i8[256]
 ```
 
-The backend uses these to pick the sret/aggregate or float return convention at call sites.
-Externs with scalar (integer/pointer/void) returns are not recorded; the default integer
-convention already matches them.
+Aliases may name any IR type, although HLL normally emits them for structs, enums, and concrete
+generic specializations.
 
-## 4. Instruction set
+### 4.2 Extern functions
 
-### 4.1 Memory and state
+An extern is a complete typed declaration:
 
-Memory instructions use `@` to mirror HLL's dereferencing and to separate type-scaled
-indexing from byte-scaled offsets.
+```text
+extern fmt_subslice(i8[], i64, i64) -> i8[]
+extern log(i32) -> void
+```
 
-| Instruction | Syntax | Description |
-|-------------|--------|-------------|
-| `stack_alloc` | `$dest = stack_alloc <type> [count]` | Allocate stack space. Returns `type*`. |
-| `heap_alloc` | `$dest = heap_alloc <type> [x<count>]` | Allocate zero-initialized heap memory. Returns `type*`. Mirrors HLL `new(...)`; `count` may be a runtime register. |
-| `heap_free` | `heap_free $ptr` | Free heap memory. |
-| `read` | `$dest = read <type> @ $ptr [+ offset]` | Read from memory. `offset` is an immediate byte offset. |
-| `write` | `write <type> <value> @ $ptr [+ offset]` | Write `<value>` to `$ptr` plus `offset` bytes. |
-| `index` | `$dest = index <type> $base_ptr, $idx` | Array indexing; scales the offset by `sizeof(type)`. Returns a pointer. |
-| `offset` | `$dest = offset <type> $base_ptr, $byte_offset` | Raw pointer arithmetic; scales strictly by 1 byte. Returns a pointer. |
-| `global_ref` | `$dest = global_ref <name>` | Load the address of a named global variable. |
-| `read_reg` | `$dest = read_reg <reg>` | Read a named ABI register into `$dest`. Result type is always `i64`. |
-| `inline_asm` | `inline_asm { "line"; ... }` | Emit raw RISC-V lines verbatim. Only ABI-stable registers (sp, fp, ra, a0-a7, s1-s11) may appear; any branches or labels must stay inside the block. |
+Parameter names do not appear because extern parameters are not values in the current module.
+The backend uses the return type to select integer, floating-point, aggregate, or sret call ABI.
 
-Field access typically lowers to an `offset` that computes the member pointer, followed
-by a `read` or `write`. The optional `+ offset` form on `read` / `write` is equivalent
-and folds the byte offset into the access.
+### 4.3 Global strings
 
-### 4.2 Compute
+```text
+const greeting = c"hello\n"
+```
 
-Compute instructions are strongly typed but polymorphic in operation.
+The name denotes the global string data when used as an IR value.
 
-| Instruction | Syntax | Description |
-|-------------|--------|-------------|
-| `math` | `$dest = math <op> <type> <lhs>, <rhs>` | `<op>`: `add, sub, mul, div, sdiv, udiv, mod, umod, shl, shr, and, or, xor`. Most ops are bitwise identical for signed and unsigned; only division (`sdiv`/`udiv`) and modulo (`mod`/`umod`) differ. |
-| `unary` | `$dest = unary <op> <type> <value>` | `<op>`: `neg`, `not`. |
-| `cmp` | `$dest = cmp <cond> <type> <lhs>, <rhs>` | Returns `i1`. `eq` and `ne` are signedness-free; ordering uses `slt, sle, sgt, sge` (signed) or `ult, ule, ugt, uge` (unsigned). There is no signedness-ambiguous `lt`/`le`/`gt`/`ge`. |
-| `cast` | `$dest = cast <mode> <value> -> <type>` | `<mode>`: `trunc, zext, sext, bitcast, f2i, i2f`. |
+### 4.4 Global variables
 
-### 4.3 Control flow
+```text
+global counter: i64 = zero
+export global flags: i8[4] = bytes[0x00; 4]
+global pair: i8[2] = bytes[0x01, 0x02]
+```
 
-Control flow runs between labeled basic blocks. Each block ends in exactly one
+`zero` means zero-initialized storage and normally lowers to `.bss`. `bytes[...]` is an explicit
+initializer and normally lowers to `.data`. A repeated byte may use `byte; count`; otherwise every
+byte is listed in target memory order. The declared type determines size and alignment.
+
+`export` makes a defined function or global visible to other objects. Its absence means the symbol
+is module-private.
+
+### 4.5 Functions and blocks
+
+```text
+export define add($lhs: i32, $rhs: i32) -> i32 {
+entry:
+    $sum = add i32 $lhs, $rhs
+    ret $sum
+}
+```
+
+Every function prints an explicit return type, including `-> void`. Each block has one label and
+at most one terminator. Valid lowered functions end every reachable block in exactly one
 terminator.
 
-| Instruction | Syntax | Description |
-|-------------|--------|-------------|
-| `phi` | `$dest = phi <type> [ value, label ], ...` | SSA merge: selects a value by the predecessor block control came from. |
-| `jump` | `jump label` | Unconditional jump to a basic block. |
-| `branch` | `branch $cond ? true_lbl : false_lbl` | Conditional branch on an `i1` register. |
-| `call` | `[$res =] call func(<value>, ...)` | Invoke a function. |
-| `indirect_call` | `[$res =] indirect_call fn(...) $callee(<value>, ...)` | Invoke a function pointer with `jalr`-style semantics. |
-| `function_addr` | `$dest = function_addr func` | Load a function symbol's code address. |
-| `ret` | `ret [$val]` | Return to the caller. |
+## 5. Instructions
 
-`jump`, `branch`, and `ret` are terminators; `phi`, `call`, and `indirect_call` are
-ordinary instructions.
+### 5.1 Allocation and memory
 
-Phi nodes lower to explicit copies on each incoming edge. Every phi gets a dedicated
-staging slot: an edge first copies all of its incoming values into the staging slots, then
-writes every phi destination, giving multiple phis in one block parallel-assignment
-semantics (a swapping pair of loop phis is safe). A conditional branch whose target holds
-phis routes that edge through a generated `<fn>__<pred>__phi__<target>` trampoline label so
-copies execute only on the taken edge. Registers feeding or defined by a phi stay on the
-stack-slot path; the graph-coloring allocator does not claim them. The optimizer's
-`phi_simplify` pass (gated, with `const_fold` and `dce`) removes phis whose incoming values
-collapse to one value after ignoring self-references, and DCE drops phis whose result is
-never read. The HLL front end does not emit phi nodes yet -- locals stay in stack slots
-across merges -- so phi programs currently come from passes or hand-built IR
-(see `.ai/plan/PHI_PLAN.md` for the SSA-construction roadmap).
+| Instruction | Syntax | Meaning |
+| --- | --- | --- |
+| Stack allocation | `$dest = stack_alloc T[, count]` | Allocate one or `count` elements in the current frame; result is `T*`. |
+| Heap allocation | `$dest = heap_alloc T[, count]` | Allocate zeroed heap storage; count may be a runtime value. |
+| Heap free | `heap_free $ptr` | Release a heap allocation. |
+| Load | `$dest = load T, $ptr[ + bytes]` | Read `T` from the pointer plus an immediate byte offset. |
+| Store | `store T value, $ptr[ + bytes]` | Write `T` to the pointer plus an immediate byte offset. |
+| Index | `$dest = index T $base, index` | Add `index * sizeof(T)` and return `T*`. |
+| Offset | `$dest = offset T $base, bytes` | Add an unscaled byte count and return `T*`. |
+| Global address | `$dest = global_ref name` | Load a global variable's address. |
+| ABI register | `$dest = read_reg reg` | Read an allowed ABI register as `i64`. |
 
-Aggregate call arguments have value semantics. RV64 lowering passes one pointer to the caller's
-aggregate bytes in the next integer ABI argument slot; the callee copies the complete value into
-its parameter slot before executing the entry block. The pointer is an ABI detail and does not
-change the IR parameter type. Register overflow stores the pointer in the ordinary outgoing stack
-argument area.
+An omitted allocation count means one element. Stack counts are compile-time unsigned integers;
+heap counts may also be virtual registers.
 
-## 5. Structs and multiple returns
+`offset` and `index` accept dynamic values. The optional offset folded into `load` and `store` is
+an immediate signed byte count.
 
-The language has no tuples, so multiple returns are modeled as named structs. Structs are
-allocated on the stack and passed or returned by pointer, or embedded directly in a
-signature.
+### 5.2 Arithmetic and bit operations
 
 ```text
-; Inline aggregate in the return type
-define {i32, i32} divide(i32 $a, i32 $b) {
-entry:
-    $0 = math sdiv i32 $a, $b
-    $1 = math mod i32 $a, $b
-
-    ; Allocate the result struct on the stack
-    $result_ptr = stack_alloc {i32, i32}
-
-    ; Write members using their byte offsets
-    write i32 $0 @ $result_ptr + 0
-    write i32 $1 @ $result_ptr + 4
-
-    ret $result_ptr
-}
-
-; A named alias is equivalent
-type DivideResult = {i32, i32}
-
-define DivideResult divide_alt(i32 $a, i32 $b) {
-entry:
-    $0 = math sdiv i32 $a, $b
-    $1 = math mod i32 $a, $b
-
-    $result_ptr = stack_alloc DivideResult
-
-    write i32 $0 @ $result_ptr + 0
-    write i32 $1 @ $result_ptr + 4
-
-    ret $result_ptr
-}
+$sum = add i32 $lhs, $rhs
+$quotient = sdiv i64 $value, 10
+$mask = and i64 $bits, 255
+$negative = neg i32 $value
+$inverted = bitnot i32 $value
 ```
 
-Member access relies on byte offsets computed at lowering time.
-
-## 6. Generics and monomorphization
-
-The IR has no native generics; all generic resolution happens in the front end. To keep
-monomorphized names collision-free, the IR allows angle brackets `<` and `>` directly in
-identifiers. Because those characters are illegal in HLL identifiers, a monomorphized
-name such as `Vector<i32>` can never collide with a user-defined type.
+Binary operations use:
 
 ```text
-type Vector<i32> = {i32*, i64, i64}
-
-define void Vector<i32>.push(Vector<i32>* $vec, i32 $val) {
-    ; implementation
-}
+add sub mul div sdiv udiv mod umod shl shr and or xor
 ```
 
-## 7. Full translation example
+Unary operations use:
 
-This shows array indexing, field access via `offset`, and `read` / `write` semantics.
+```text
+neg not bitnot
+```
 
-HLL source:
+`not` is logical negation (`value == 0`); `bitnot` complements every bit.
+
+### 5.3 Comparisons
+
+```text
+$same = cmp eq i32 $lhs, $rhs
+$before = cmp slt i64 $lhs, $rhs
+```
+
+Comparisons return `i1`. Conditions are:
+
+```text
+eq ne slt ult sle ule sgt ugt sge uge
+```
+
+Equality is signedness-independent. There are no ambiguous `lt`, `le`, `gt`, or `ge` forms.
+
+### 5.4 Casts
+
+```text
+$wide = sext $small to i64
+$bits = bitcast $float to i32
+```
+
+Cast opcodes are `trunc`, `zext`, `sext`, `bitcast`, `f2i`, and `i2f`. The source type comes from
+the typed value; the target type appears after `to`.
+
+### 5.5 Calls and addresses
+
+```text
+$result = call add($lhs, $rhs)
+call log($result)
+$callback = function_addr add
+$result = indirect_call $callback($lhs, $rhs) : fn(i32, i32) -> i32
+```
+
+Direct calls obtain their signature from a local definition or extern declaration. Indirect calls
+carry the complete function-pointer type after the invocation. A call returning `void` omits the
+destination.
+
+Aggregate arguments have value semantics. RV64 lowering passes a pointer to the caller's bytes in
+the next integer ABI argument location, and the callee copies the value into its parameter slot.
+The pointer is an ABI detail and does not change the IR parameter type.
+
+### 5.6 Phi nodes
+
+```text
+$value = phi i32 [ $from_then, if_then_0 ], [ $from_else, if_else_1 ]
+```
+
+A phi selects the incoming value associated with the predecessor block. The backend lowers phis
+to edge copies with parallel-assignment semantics. Conditional edges may route through generated
+trampoline labels so copies execute only on the selected edge.
+
+The HLL front end does not yet emit organic phi nodes. Mutable locals remain in stack slots. See
+`.ai/plan/PHI_PLAN.md` for the separate mem2reg roadmap.
+
+### 5.7 Inline assembly
+
+```text
+inline_asm { "mv a0, s1"; "ecall"; }
+```
+
+Lines are emitted verbatim after string unescaping. Only ABI-stable registers (`sp`, `fp`, `ra`,
+`a0` through `a7`, and `s1` through `s11`) may appear. Labels and branches must remain inside the
+block.
+
+## 6. Terminators
+
+| Terminator | Syntax | Meaning |
+| --- | --- | --- |
+| Jump | `jump target` | Continue in one block. |
+| Branch | `branch condition ? then : else` | Select a successor using an `i1` value. |
+| Return | `ret` or `ret value` | Return to the caller. |
+| Trap | `trap code` | Abort with a diagnostic code and no successor. |
+
+`jump`, `branch`, `ret`, and `trap` end a block. Phi and call instructions do not.
+
+## 7. Translation example
+
+HLL:
 
 ```hll
 type Point = { x: f32, y: f32 }
 
-offset_point(points: Point[10]*, idx: i32) {
-    @points[idx].x = @points[idx].x + 10.0
+shift_x: (point: Point*, shift: f32) -> f32 {
+    point.x = point.x + shift
+    return point.x
 }
 ```
 
-IR output:
+IR 2.0:
 
 ```text
-type Point = {x: f32, y: f32}
+type Point = { x: f32, y: f32 }
 
-define void offset_point(Point[10]* $points, i32 $idx) {
+define shift_x($point: Point*, $shift: f32) -> f32 {
 entry:
-    ; index scales by sizeof(Point) to reach points[idx]
-    $1 = index Point $points, $idx
-
-    ; offset reaches the x field (byte 0) and read loads it
-    $2 = offset f32 $1, 0
-    $3 = read f32 @ $2
-
-    ; compute the new value
-    $4 = math add f32 $3, 10.0
-
-    ; write it back to the same field location
-    write f32 $4 @ $2
-
-    ret
+    $point_ptr = stack_alloc Point*
+    store Point* $point, $point_ptr
+    $shift_ptr = stack_alloc f32
+    store f32 $shift, $shift_ptr
+    $0 = load Point*, $point_ptr
+    $1 = offset f32 $0, 0
+    $2 = load Point*, $point_ptr
+    $3 = load f32, $2 + 0
+    $4 = load f32, $shift_ptr
+    $5 = add f32 $3, $4
+    store f32 $5, $1
+    $6 = load Point*, $point_ptr
+    $7 = load f32, $6 + 0
+    ret $7
 }
 ```
 
+The stack slots preserve mutable HLL binding semantics. Numeric registers are SSA temporaries.
+
 ## 8. Formal grammar (EBNF)
+
+The grammar describes canonical output. `identifier` includes implementation-generated generic
+components; a consumer must balance nested `<...>` components rather than split at their commas.
 
 ### 8.1 Lexical elements
 
 ```ebnf
-register    = "$" ( letter { letter | digit | "_" } | digit { digit } );
-identifier  = letter { letter | digit | "_" | "." | "<" | ">" };
-label       = identifier;
-field       = [ identifier ":" ] type;
-aggregate   = "{" field { "," field } "}";
-type        = "void" | "i1" | "i8" | "i16" | "i32" | "i64" | "f32" | "f64"
-            | identifier | aggregate
-            | type "*" | type "[" integer "]";
-integer     = [ "-" ] digit { digit };
-float       = [ "-" ] digit { digit } "." digit { digit };
-value       = register | identifier | integer | float | "true" | "false" | "null";
+letter          = "A".."Z" | "a".."z" | "_";
+digit           = "0".."9";
+hex_digit       = digit | "a".."f" | "A".."F";
+register        = "$" ( letter { letter | digit } | digit { digit } );
+identifier      = letter { letter | digit | "." | "_" | generic_component };
+generic_component = "<" identifier_or_type { "," identifier_or_type } ">";
+identifier_or_type = identifier | type;
+label           = identifier;
+unsigned        = digit { digit };
+integer         = [ "-" ] unsigned;
+exponent        = ( "e" | "E" ) [ "+" | "-" ] unsigned;
+float           = [ "-" ] unsigned ( "." unsigned [ exponent ] | exponent )
+                | "inf" | "-inf" | "nan";
+hex_byte        = "0x" hex_digit hex_digit;
+string          = '"' { escaped_char | any_char_except_quote_or_backslash } '"';
+c_string        = "c" string;
+value           = register | identifier | integer | float | "true" | "false" | "null";
 ```
 
-### 8.2 Instructions
+### 8.2 Types
 
 ```ebnf
-type_decl     = "type" identifier "=" aggregate;
-function_def  = "define" type identifier "(" [ param_list ] ")" "{" { basic_block } "}";
-param_list    = type register { "," type register };
-basic_block   = label ":" { instruction } terminator;
+primitive_type  = "void" | "i1" | "i8" | "i16" | "i32" | "i64" | "f32" | "f64";
+field           = [ identifier ":" ] type;
+aggregate       = "{" [ field { "," field } ] "}";
+function_type   = "fn" "(" [ type { "," type } ] ")" [ "->" type ];
+primary_type    = primitive_type | identifier | aggregate | function_type;
+type            = primary_type { "*" | "[" unsigned "]" | "[]" };
+```
 
-global_string = "const" identifier "=" "c\"" { any_char - '"' } "\"";
+An omitted function-type return means `void`. Function definitions and externs always print an
+explicit return type.
 
-program       = { type_decl } { global_string } { function_def };
+### 8.3 Top-level program
 
-instruction   = alloc_inst | heap_alloc_inst | free_inst | read_inst | write_inst
-              | index_inst | offset_inst | global_ref_inst | math_inst | unary_inst
-              | cmp_inst | cast_inst | call_inst | phi_inst | inline_asm_inst
-              | read_reg_inst;
+```ebnf
+type_decl       = "type" identifier "=" type;
+extern_decl     = "extern" identifier "(" [ type { "," type } ] ")" "->" type;
+string_decl     = "const" identifier "=" c_string;
+byte_init       = "bytes" "[" [ hex_byte [ ";" unsigned ]
+                                | hex_byte { "," hex_byte } ] "]";
+global_init     = "zero" | byte_init;
+global_decl     = [ "export" ] "global" identifier ":" type "=" global_init;
+param           = register ":" type;
+function_def    = [ "export" ] "define" identifier
+                  "(" [ param { "," param } ] ")" "->" type
+                  "{" { basic_block } "}";
+basic_block     = label ":" { instruction } [ terminator ];
+program         = { type_decl } { extern_decl } { string_decl | global_decl } { function_def };
+```
 
-alloc_inst      = register "=" "stack_alloc" type [ integer ];
-heap_alloc_inst = register "=" "heap_alloc" type [ "x" value ];
-free_inst       = "heap_free" register;
+### 8.4 Instructions
 
-inline_asm_inst = "inline_asm" "{" { '"' { any_char - '"' } '"' ";" } "}";
-read_reg_inst   = register "=" "read_reg" abi_reg;
+```ebnf
+stack_alloc     = register "=" "stack_alloc" type [ "," unsigned ];
+heap_alloc      = register "=" "heap_alloc" type [ "," value ];
+heap_free       = "heap_free" register;
+load            = register "=" "load" type "," register [ "+" integer ];
+store           = "store" type value "," register [ "+" integer ];
+index           = register "=" "index" type register "," value;
+offset          = register "=" "offset" type register "," value;
+global_ref      = register "=" "global_ref" identifier;
+read_reg        = register "=" "read_reg" abi_reg;
+
+binary_op       = "add" | "sub" | "mul" | "div" | "sdiv" | "udiv"
+                | "mod" | "umod" | "shl" | "shr" | "and" | "or" | "xor";
+binary          = register "=" binary_op type value "," value;
+unary_op        = "neg" | "not" | "bitnot";
+unary           = register "=" unary_op type value;
+cmp_op          = "eq" | "ne" | "slt" | "ult" | "sle" | "ule"
+                | "sgt" | "ugt" | "sge" | "uge";
+compare         = register "=" "cmp" cmp_op type value "," value;
+cast_op         = "trunc" | "zext" | "sext" | "bitcast" | "f2i" | "i2f";
+cast            = register "=" cast_op value "to" type;
+
+argument_list   = value { "," value };
+call            = [ register "=" ] "call" identifier "(" [ argument_list ] ")";
+indirect_call   = [ register "=" ] "indirect_call" value
+                  "(" [ argument_list ] ")" ":" function_type;
+function_addr   = register "=" "function_addr" identifier;
+phi_arm         = "[" value "," label "]";
+phi             = register "=" "phi" type phi_arm { "," phi_arm };
+inline_asm      = "inline_asm" "{" { string ";" } "}";
+comment         = ";" { any_char_except_newline };
+
+instruction     = stack_alloc | heap_alloc | heap_free | load | store | index | offset
+                | global_ref | read_reg | binary | unary | compare | cast | call
+                | indirect_call | function_addr | phi | inline_asm | comment;
+```
+
+```ebnf
 abi_reg         = "sp" | "fp" | "ra"
                 | "a0" | "a1" | "a2" | "a3" | "a4" | "a5" | "a6" | "a7"
-                | "s1" | "s2" | "s3" | "s4" | "s5" | "s6" | "s7" | "s8" | "s9" | "s10" | "s11";
+                | "s1" | "s2" | "s3" | "s4" | "s5" | "s6"
+                | "s7" | "s8" | "s9" | "s10" | "s11";
+```
 
-read_inst       = register "=" "read" type "@" register [ "+" integer ];
-write_inst      = "write" type value "@" register [ "+" integer ];
+### 8.5 Terminators
 
-index_inst      = register "=" "index" type register "," value;
-offset_inst     = register "=" "offset" type register "," value;
-global_ref_inst = register "=" "global_ref" identifier;
-
-math_inst       = register "=" "math" math_op type value "," value;
-math_op         = "add" | "sub" | "mul" | "div" | "sdiv" | "udiv" | "mod" | "umod"
-                | "shl" | "shr" | "and" | "or" | "xor";
-
-unary_inst      = register "=" "unary" unary_op type value;
-unary_op        = "neg" | "not";
-
-cmp_inst        = register "=" "cmp" cmp_op type value "," value;
-cmp_op          = "eq" | "ne" | "slt" | "ult" | "sle" | "ule" | "sgt" | "ugt" | "sge" | "uge";
-
-cast_inst       = register "=" "cast" cast_mode value "->" type;
-cast_mode       = "trunc" | "zext" | "sext" | "bitcast" | "f2i" | "i2f";
-
-call_inst       = [ register "=" ] "call" identifier "(" [ arg_list ] ")";
-indirect_call_inst = [ register "=" ] "indirect_call" type value "(" [ arg_list ] ")";
-function_addr_inst = register "=" "function_addr" identifier;
-arg_list        = value { "," value };
-
-phi_inst        = register "=" "phi" type phi_arm { "," phi_arm };
-phi_arm         = "[" value "," label "]";
-
-terminator      = jump_inst | branch_inst | ret_inst;
-jump_inst       = "jump" label;
-branch_inst     = "branch" value "?" label ":" label;
-ret_inst        = "ret" [ value ];
+```ebnf
+jump            = "jump" label;
+branch          = "branch" value "?" label ":" label;
+return          = "ret" [ value ];
+trap            = "trap" unsigned;
+terminator      = jump | branch | return | trap;
 ```

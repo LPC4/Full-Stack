@@ -22,11 +22,9 @@ divide:
 ; --- End Parameter Spills ---
 ; Basic Block: entry
 divide__entry:
-; bind parameter: a
 	addi   t0, sp, 0
 ; Store i32 to memory
 	sw     s2, 0(t0)
-; bind parameter: b
 	addi   t0, sp, 8
 ; Store i32 to memory
 	sw     s3, 0(t0)
@@ -82,7 +80,6 @@ test_tuple_destructuring:
 ; --- End Prologue ---
 ; Basic Block: entry
 test_tuple_destructuring__entry:
-; assignment
 ; --- Function Call: divide ---
 ; Passing 2 arguments
 	addi   t0, zero, 10
@@ -94,7 +91,7 @@ test_tuple_destructuring__entry:
 	sd     a0, 24(sp)
 ; --- End Function Call: divide ---
 	addi   t0, sp, 0
-; Store {quotient: i32, remainder: i32} to memory
+; Store { quotient: i32, remainder: i32 } to memory
 	addi   t1, a0, 0
 	sd     t1, 0(t0)
 ; Load i32 from memory into $$2

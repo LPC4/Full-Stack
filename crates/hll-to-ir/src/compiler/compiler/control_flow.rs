@@ -428,7 +428,6 @@ impl HighLevelCompiler {
         then_block: &Block,
         else_branch: Option<&Statement>,
     ) {
-        self.push_instruction(IrInstruction::Comment("if condition".to_owned()));
         let cond_value = if let Some(lowered) = self.lower_expression(cond) {
             lowered.value
         } else {
@@ -439,9 +438,9 @@ impl HighLevelCompiler {
             IrValue::Bool(false)
         };
 
-        let then_label = self.new_label();
-        let else_label = self.new_label();
-        let merge_label = self.new_label();
+        let then_label = self.new_label("if_then");
+        let else_label = self.new_label("if_else");
+        let merge_label = self.new_label("if_merge");
 
         let branch_else = if else_branch.is_some() {
             else_label.clone()
@@ -477,14 +476,13 @@ impl HighLevelCompiler {
         cond: &Expression,
         body: &Block,
     ) {
-        let cond_label = self.new_label();
-        let body_label = self.new_label();
-        let exit_label = self.new_label();
+        let cond_label = self.new_label("while_cond");
+        let body_label = self.new_label("while_body");
+        let exit_label = self.new_label("while_exit");
 
         self.set_terminator(IrTerminator::Jump(cond_label.clone()));
 
         self.start_new_block(cond_label.0.clone());
-        self.push_instruction(IrInstruction::Comment("while condition".to_owned()));
         let cond_value = if let Some(lowered) = self.lower_expression(cond) {
             lowered.value
         } else {

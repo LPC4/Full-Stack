@@ -2,9 +2,13 @@
 
 **Stage 3 of the Full-Stack compiler pipeline.**
 
-Back end that lowers a typed SSA `IrProgram` into RV64IMAFD assembly. It performs
-register allocation, lays out each function's stack frame, selects machine
-instructions, and emits the `.text`, `.data`, and `.rodata` sections.
+Back end that lowers a typed `IrProgram` into RV64IMAFD assembly. Virtual temporaries are SSA
+values, while mutable HLL locals remain in explicit stack slots. The back end performs register
+allocation, lays out each function's stack frame, selects machine instructions, and emits the
+`.text`, `.data`, and `.rodata` sections.
+
+The back end consumes the structured program directly. IR 2.0 text is its canonical diagnostic
+and golden representation, specified in `_IR_SPECIFICATIONS.md`, not a reparsed handoff format.
 
 ## Flow
 

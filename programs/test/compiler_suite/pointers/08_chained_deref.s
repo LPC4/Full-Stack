@@ -18,7 +18,6 @@ chained_deref_assign:
 ; --- End Parameter Spills ---
 ; Basic Block: entry
 chained_deref_assign__entry:
-; bind parameter: val
 	addi   t0, sp, 0
 ; Store i32 to memory
 	sw     s2, 0(t0)
@@ -47,7 +46,6 @@ chained_deref_assign__entry:
 ; Store i32** to memory
 	addi   t1, sp, 8
 	sd     t1, 0(t0)
-; assignment
 ; Load i32** from memory into $$1
 	addi   t0, sp, 16
 	addi   s2, t1, 0

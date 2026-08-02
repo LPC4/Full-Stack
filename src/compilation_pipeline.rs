@@ -1992,7 +1992,7 @@ main: () -> i32 {
             .expect("qualified generic call should compile");
         let ir = result.ir_program.to_string();
         assert!(
-            ir.contains("define i32 max__i32"),
+            ir.contains("define max__i32"),
             "the template should specialize into the importer's own object: {ir}"
         );
     }

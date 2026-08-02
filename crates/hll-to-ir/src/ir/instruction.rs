@@ -118,14 +118,14 @@ impl fmt::Display for IrInstruction {
             Self::Alloc { dest, ty, count } => {
                 write!(f, "{dest} = stack_alloc {ty}")?;
                 if let Some(count) = count {
-                    write!(f, " {count}")?;
+                    write!(f, ", {count}")?;
                 }
                 Ok(())
             }
             Self::HeapAlloc { dest, ty, count } => {
                 write!(f, "{dest} = heap_alloc {ty}")?;
                 if let Some(count) = count {
-                    write!(f, " x{count}")?;
+                    write!(f, ", {count}")?;
                 }
                 Ok(())
             }
@@ -133,7 +133,8 @@ impl fmt::Display for IrInstruction {
             Self::InlineAsm { lines } => {
                 write!(f, "inline_asm {{")?;
                 for line in lines {
-                    write!(f, " \"{line}\";")?;
+                    let escaped = line.replace('\\', "\\\\").replace('"', "\\\"");
+                    write!(f, " \"{escaped}\";")?;
                 }
                 write!(f, " }}")
             }
@@ -144,7 +145,7 @@ impl fmt::Display for IrInstruction {
                 ptr,
                 offset,
             } => {
-                write!(f, "{dest} = read {ty} @ {ptr}")?;
+                write!(f, "{dest} = load {ty}, {ptr}")?;
                 if let Some(offset) = offset {
                     write!(f, " + {offset}")?;
                 }
@@ -156,7 +157,7 @@ impl fmt::Display for IrInstruction {
                 ptr,
                 offset,
             } => {
-                write!(f, "write {ty} {value} @ {ptr}")?;
+                write!(f, "store {ty} {value}, {ptr}")?;
                 if let Some(offset) = offset {
                     write!(f, " + {offset}")?;
                 }
@@ -180,13 +181,13 @@ impl fmt::Display for IrInstruction {
                 ty,
                 lhs,
                 rhs,
-            } => write!(f, "{dest} = math {op} {ty} {lhs}, {rhs}"),
+            } => write!(f, "{dest} = {op} {ty} {lhs}, {rhs}"),
             Self::Unary {
                 dest,
                 op,
                 ty,
                 value,
-            } => write!(f, "{dest} = unary {op} {ty} {value}"),
+            } => write!(f, "{dest} = {op} {ty} {value}"),
             Self::Cmp {
                 dest,
                 op,
@@ -199,7 +200,7 @@ impl fmt::Display for IrInstruction {
                 mode,
                 value,
                 ty,
-            } => write!(f, "{dest} = cast {mode} {value} -> {ty}"),
+            } => write!(f, "{dest} = {mode} {value} to {ty}"),
             Self::Call {
                 dest,
                 function,
@@ -226,14 +227,14 @@ impl fmt::Display for IrInstruction {
                 if let Some(dest) = dest {
                     write!(f, "{dest} = ")?;
                 }
-                write!(f, "indirect_call {callee_ty} {callee}(")?;
+                write!(f, "indirect_call {callee}(")?;
                 for (index, arg) in args.iter().enumerate() {
                     if index > 0 {
                         write!(f, ", ")?;
                     }
                     write!(f, "{arg}")?;
                 }
-                write!(f, ")")
+                write!(f, ") : {callee_ty}")
             }
             Self::Phi { dest, ty, incoming } => {
                 write!(f, "{dest} = phi {ty} ")?;
@@ -286,9 +287,211 @@ impl fmt::Display for IrTerminator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ir::types::IntWidth;
+
+    fn reg(name: &str) -> IrRegister {
+        IrRegister::Named(name.to_owned())
+    }
+
+    fn value(name: &str) -> IrValue {
+        IrValue::Register(reg(name))
+    }
+
+    fn i32_type() -> IrType {
+        IrType::Integer(IntWidth::I32)
+    }
 
     #[test]
-    fn trap_terminator_displays_code() {
+    fn instructions_use_ir_2_spelling() {
+        let function_type = IrType::FunctionPointer {
+            params: vec![i32_type()],
+            return_type: Box::new(i32_type()),
+        };
+        let cases = [
+            (
+                IrInstruction::Comment("reason".to_owned()),
+                "; reason".to_owned(),
+            ),
+            (
+                IrInstruction::SourceLine {
+                    file: "main.hll".to_owned(),
+                    line: 7,
+                },
+                "; .loc main.hll:7".to_owned(),
+            ),
+            (
+                IrInstruction::Alloc {
+                    dest: reg("slot"),
+                    ty: i32_type(),
+                    count: Some(4),
+                },
+                "$slot = stack_alloc i32, 4".to_owned(),
+            ),
+            (
+                IrInstruction::HeapAlloc {
+                    dest: reg("items"),
+                    ty: i32_type(),
+                    count: Some(value("count")),
+                },
+                "$items = heap_alloc i32, $count".to_owned(),
+            ),
+            (
+                IrInstruction::HeapFree { ptr: reg("items") },
+                "heap_free $items".to_owned(),
+            ),
+            (
+                IrInstruction::InlineAsm {
+                    lines: vec!["mv a0, \"x\"".to_owned()],
+                },
+                "inline_asm { \"mv a0, \\\"x\\\"\"; }".to_owned(),
+            ),
+            (
+                IrInstruction::ReadReg {
+                    dest: reg("sp"),
+                    reg: "sp".to_owned(),
+                },
+                "$sp = read_reg sp".to_owned(),
+            ),
+            (
+                IrInstruction::Load {
+                    dest: reg("v"),
+                    ty: i32_type(),
+                    ptr: reg("ptr"),
+                    offset: Some(4),
+                },
+                "$v = load i32, $ptr + 4".to_owned(),
+            ),
+            (
+                IrInstruction::Store {
+                    ty: i32_type(),
+                    value: value("v"),
+                    ptr: reg("ptr"),
+                    offset: None,
+                },
+                "store i32 $v, $ptr".to_owned(),
+            ),
+            (
+                IrInstruction::Offset {
+                    dest: reg("field"),
+                    ty: i32_type(),
+                    ptr: reg("ptr"),
+                    bytes: IrValue::Integer(4),
+                },
+                "$field = offset i32 $ptr, 4".to_owned(),
+            ),
+            (
+                IrInstruction::Index {
+                    dest: reg("element"),
+                    ty: i32_type(),
+                    base_ptr: reg("ptr"),
+                    idx: value("index"),
+                },
+                "$element = index i32 $ptr, $index".to_owned(),
+            ),
+            (
+                IrInstruction::Math {
+                    dest: reg("sum"),
+                    op: IrMathOp::Add,
+                    ty: i32_type(),
+                    lhs: value("a"),
+                    rhs: value("b"),
+                },
+                "$sum = add i32 $a, $b".to_owned(),
+            ),
+            (
+                IrInstruction::Unary {
+                    dest: reg("negative"),
+                    op: IrUnaryOp::Neg,
+                    ty: i32_type(),
+                    value: value("a"),
+                },
+                "$negative = neg i32 $a".to_owned(),
+            ),
+            (
+                IrInstruction::Cmp {
+                    dest: reg("less"),
+                    op: IrCmpOp::Slt,
+                    ty: i32_type(),
+                    lhs: value("a"),
+                    rhs: value("b"),
+                },
+                "$less = cmp slt i32 $a, $b".to_owned(),
+            ),
+            (
+                IrInstruction::Cast {
+                    dest: reg("wide"),
+                    mode: IrCastMode::Sext,
+                    value: value("a"),
+                    ty: IrType::Integer(IntWidth::I64),
+                },
+                "$wide = sext $a to i64".to_owned(),
+            ),
+            (
+                IrInstruction::Call {
+                    dest: Some(reg("result")),
+                    function: "sum".to_owned(),
+                    args: vec![value("a"), value("b")],
+                },
+                "$result = call sum($a, $b)".to_owned(),
+            ),
+            (
+                IrInstruction::IndirectCall {
+                    dest: Some(reg("result")),
+                    callee: value("function"),
+                    callee_ty: function_type,
+                    args: vec![value("a")],
+                },
+                "$result = indirect_call $function($a) : fn(i32) -> i32".to_owned(),
+            ),
+            (
+                IrInstruction::Phi {
+                    dest: reg("merged"),
+                    ty: i32_type(),
+                    incoming: vec![(value("a"), IrLabel::new("if_then"))],
+                },
+                "$merged = phi i32 [ $a, if_then ]".to_owned(),
+            ),
+            (
+                IrInstruction::GlobalRef {
+                    dest: reg("global"),
+                    name: "counter".to_owned(),
+                },
+                "$global = global_ref counter".to_owned(),
+            ),
+            (
+                IrInstruction::FunctionAddr {
+                    dest: reg("function"),
+                    name: "sum".to_owned(),
+                },
+                "$function = function_addr sum".to_owned(),
+            ),
+        ];
+
+        for (instruction, expected) in cases {
+            assert_eq!(instruction.to_string(), expected);
+        }
+    }
+
+    #[test]
+    fn terminators_use_ir_2_spelling() {
+        assert_eq!(IrTerminator::Return(None).to_string(), "ret");
+        assert_eq!(
+            IrTerminator::Return(Some(value("result"))).to_string(),
+            "ret $result"
+        );
+        assert_eq!(
+            IrTerminator::Jump(IrLabel::new("done")).to_string(),
+            "jump done"
+        );
+        assert_eq!(
+            IrTerminator::Branch {
+                cond: value("condition"),
+                then_label: IrLabel::new("yes"),
+                else_label: IrLabel::new("no"),
+            }
+            .to_string(),
+            "branch $condition ? yes : no"
+        );
         assert_eq!(IrTerminator::Trap { code: 134 }.to_string(), "trap 134");
     }
 }

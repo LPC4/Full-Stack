@@ -59,7 +59,6 @@ pub enum IrType {
     Named(String),
 }
 
-// AFTER:
 impl fmt::Display for IrType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -85,23 +84,54 @@ impl fmt::Display for IrType {
                 }
             }
             Self::Aggregate(fields) => {
-                write!(f, "{{")?;
+                if fields.is_empty() {
+                    return write!(f, "{{}}");
+                }
+                write!(f, "{{ ")?;
                 for (index, (name, field_ty)) in fields.iter().enumerate() {
                     if index > 0 {
                         write!(f, ", ")?;
                     }
-                    // Print named fields as "name: type", unnamed as just "type"
                     if !name.is_empty() {
                         write!(f, "{name}: {field_ty}")?;
                     } else {
                         write!(f, "{field_ty}")?;
                     }
                 }
-                write!(f, "}}")
+                write!(f, " }}")
             }
             Self::Array { len, element } => write!(f, "{element}[{len}]"),
             Self::Slice(element) => write!(f, "{element}[]"),
             Self::Named(name) => write!(f, "{name}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn types_use_ir_2_spelling() {
+        let aggregate = IrType::Aggregate(vec![
+            ("x".to_owned(), IrType::Float(FloatWidth::F32)),
+            (String::new(), IrType::Integer(IntWidth::I64)),
+        ]);
+        let function = IrType::FunctionPointer {
+            params: vec![IrType::Pointer(Box::new(aggregate.clone()))],
+            return_type: Box::new(IrType::Integer(IntWidth::I32)),
+        };
+
+        assert_eq!(aggregate.to_string(), "{ x: f32, i64 }");
+        assert_eq!(IrType::Aggregate(Vec::new()).to_string(), "{}");
+        assert_eq!(function.to_string(), "fn({ x: f32, i64 }*) -> i32");
+        assert_eq!(
+            IrType::FunctionPointer {
+                params: Vec::new(),
+                return_type: Box::new(IrType::Void),
+            }
+            .to_string(),
+            "fn()"
+        );
     }
 }

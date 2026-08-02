@@ -91,8 +91,8 @@ impl HighLevelCompiler {
             lhs: IrValue::Register(tag),
             rhs: IrValue::Integer(usize_to_i64(success.index)),
         });
-        let success_label = self.new_label();
-        let failure_label = self.new_label();
+        let success_label = self.new_label("try_success");
+        let failure_label = self.new_label("try_failure");
         self.set_terminator(IrTerminator::Branch {
             cond: IrValue::Register(is_success),
             then_label: success_label.clone(),
@@ -508,7 +508,7 @@ impl HighLevelCompiler {
             offset: Some(0),
         });
 
-        let merge_label = self.new_label();
+        let merge_label = self.new_label("match_merge");
         let match_id = self.match_id;
         self.match_id += 1;
 
@@ -557,8 +557,8 @@ impl HighLevelCompiler {
                         rhs: IrValue::Integer(usize_to_i64(info.index)),
                     });
 
-                    let then_label = self.new_label();
-                    let else_label = self.new_label();
+                    let then_label = self.new_label("match_arm");
+                    let else_label = self.new_label("match_next");
                     self.set_terminator(IrTerminator::Branch {
                         cond: IrValue::Register(cond),
                         then_label: then_label.clone(),
@@ -617,7 +617,7 @@ impl HighLevelCompiler {
             }
         };
         let mut store_ty: Option<IrType> = None;
-        let merge_label = self.new_label();
+        let merge_label = self.new_label("match_merge");
 
         let mut saw_catch_all = false;
         for arm in arms {
@@ -644,8 +644,8 @@ impl HighLevelCompiler {
                         lhs: value.value.clone(),
                         rhs,
                     });
-                    let then_label = self.new_label();
-                    let else_label = self.new_label();
+                    let then_label = self.new_label("match_arm");
+                    let else_label = self.new_label("match_next");
                     self.set_terminator(IrTerminator::Branch {
                         cond: IrValue::Register(cond),
                         then_label: then_label.clone(),

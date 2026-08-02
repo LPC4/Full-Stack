@@ -16,7 +16,6 @@ control_suite:
 ; --- End Parameter Spills ---
 ; Basic Block: entry
 control_suite__entry:
-; bind parameter: param
 	addi   t0, sp, 0
 ; Store i32 to memory
 	sw     s2, 0(t0)
@@ -25,31 +24,28 @@ control_suite__entry:
 ; Store i32 to memory
 	addi   t1, zero, 0
 	sw     t1, 0(t0)
-	j control_suite__label_0
-; Basic Block: label_0
-control_suite__label_0:
-; while condition
+	j control_suite__while_cond_0
+; Basic Block: while_cond_0
+control_suite__while_cond_0:
 ; Load i32 from memory into $$0
 	addi   t0, sp, 0
 	lw     s2, 0(t0)
 	addi   t0, zero, 0
 	slt    s2, t0, s2
-	bne s2, zero, control_suite__label_1
-	j control_suite__label_2
-; Basic Block: label_1
-control_suite__label_1:
-; if condition
+	bne s2, zero, control_suite__while_body_1
+	j control_suite__while_exit_2
+; Basic Block: while_body_1
+control_suite__while_body_1:
 ; Load i32 from memory into $$2
 	addi   t0, sp, 0
 	lw     s2, 0(t0)
 	addi   t0, zero, 5
 	sub    t1, s2, t0
 	sltiu  s2, t1, 1
-	bne s2, zero, control_suite__label_3
-	j control_suite__label_4
-; Basic Block: label_3
-control_suite__label_3:
-; assignment
+	bne s2, zero, control_suite__if_then_3
+	j control_suite__if_else_4
+; Basic Block: if_then_3
+control_suite__if_then_3:
 ; Load i32 from memory into $$4
 	addi   t0, sp, 8
 	lw     s2, 0(t0)
@@ -60,10 +56,9 @@ control_suite__label_3:
 	addi   t0, sp, 8
 ; Store i32 to memory
 	sw     s2, 0(t0)
-	j control_suite__label_5
-; Basic Block: label_4
-control_suite__label_4:
-; assignment
+	j control_suite__if_merge_5
+; Basic Block: if_else_4
+control_suite__if_else_4:
 ; Load i32 from memory into $$6
 	addi   t0, sp, 8
 	lw     s2, 0(t0)
@@ -74,10 +69,9 @@ control_suite__label_4:
 	addi   t0, sp, 8
 ; Store i32 to memory
 	sw     s2, 0(t0)
-	j control_suite__label_5
-; Basic Block: label_5
-control_suite__label_5:
-; assignment
+	j control_suite__if_merge_5
+; Basic Block: if_merge_5
+control_suite__if_merge_5:
 ; Load i32 from memory into $$8
 	addi   t0, sp, 0
 	lw     s2, 0(t0)
@@ -88,19 +82,18 @@ control_suite__label_5:
 	addi   t0, sp, 0
 ; Store i32 to memory
 	sw     s2, 0(t0)
-	j control_suite__label_0
-; Basic Block: label_2
-control_suite__label_2:
-; if condition
+	j control_suite__while_cond_0
+; Basic Block: while_exit_2
+control_suite__while_exit_2:
 ; Load i32 from memory into $$10
 	addi   t0, sp, 8
 	lw     s2, 0(t0)
 	addi   t0, zero, 0
 	slt    s2, t0, s2
-	bne s2, zero, control_suite__label_6
-	j control_suite__label_8
-; Basic Block: label_6
-control_suite__label_6:
+	bne s2, zero, control_suite__if_then_6
+	j control_suite__if_merge_8
+; Basic Block: if_then_6
+control_suite__if_then_6:
 ; Load i32 from memory into $$12
 	addi   t0, sp, 8
 	lw     s2, 0(t0)
@@ -115,8 +108,8 @@ control_suite__label_6:
 ; Return to caller
 	jalr   zero, 0(ra)
 ; --- End Epilogue ---
-; Basic Block: label_8
-control_suite__label_8:
+; Basic Block: if_merge_8
+control_suite__if_merge_8:
 	addi   t1, zero, 0
 	addi   a0, t1, 0
 ; --- Function Epilogue ---

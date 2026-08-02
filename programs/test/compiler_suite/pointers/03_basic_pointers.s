@@ -18,7 +18,6 @@ pointers:
 ; --- End Parameter Spills ---
 ; Basic Block: entry
 pointers__entry:
-; bind parameter: val
 	addi   t0, sp, 0
 ; Store i32 to memory
 	sw     s2, 0(t0)
@@ -42,7 +41,6 @@ pointers__entry:
 	addi   t0, sp, 8
 ; Store i32* to memory
 	sd     s2, 0(t0)
-; assignment
 ; Load i32* from memory into $$1
 	addi   t0, sp, 8
 ; Load i32 from memory into $$2
@@ -55,7 +53,6 @@ pointers__entry:
 ; Store i32* to memory
 	addi   t1, sp, 0
 	sd     t1, 0(t0)
-; assignment
 ; Load i32* from memory into $$3
 	addi   t0, sp, 16
 	addi   s2, t1, 0

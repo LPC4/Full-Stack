@@ -134,7 +134,7 @@ mod tests {
             "   ",
             "li t0, 5 # set it\n_start:\n  ret\n",
             "main: () -> i32 { return 7 }\n; trailing comment",
-            "define @main() {\nentry:\n  $1 = const 5\n}\n",
+            "define main() -> i32 {\nentry:\n    $1 = add i32 2, 3\n}\n",
             "Fn { name: \"main\", args: [1, 2] }",
             "\"unterminated",
             "0x1f 0b1010 0o17 12_345",

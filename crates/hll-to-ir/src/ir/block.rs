@@ -36,11 +36,11 @@ impl fmt::Display for IrBlock {
             if matches!(instruction, IrInstruction::SourceLine { .. }) {
                 continue;
             }
-            writeln!(f, "\t{instruction}")?;
+            writeln!(f, "    {instruction}")?;
         }
 
         if let Some(terminator) = &self.terminator {
-            writeln!(f, "\t{terminator}")?;
+            writeln!(f, "    {terminator}")?;
         }
 
         Ok(())

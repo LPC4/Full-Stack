@@ -21,7 +21,6 @@ test_simple__entry:
 ; Store i32 to memory
 	addi   t1, zero, 0
 	sw     t1, 0(t0)
-; assignment
 	addi   t0, sp, 0
 ; Store i32 to memory
 	addi   t1, zero, 5
