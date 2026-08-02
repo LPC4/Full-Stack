@@ -61,12 +61,13 @@ line fragment when the link should jump to a particular line:
 [UART base address](repo:crates/virtual-machine/src/bus.rs#L48)
 ```
 
-The build rejects malformed paths, invalid line fragments, and missing files. Rust source links
-open the corresponding `blob/main` page on GitHub and Rust files are never published to or opened
-in the IDE. Valid links to bundled lesson, runtime, and example sources open editable files in
-their matching IDE workspace; other non-Rust repository files open as read-only references. The
-matching `.build` run configuration is selected when one exists. Ordinary Guide-local, fragment,
-figure, and external links retain their normal Markdown meaning.
+The build rejects malformed paths, invalid line fragments, and missing files. Only `.s`, `.ir`,
+and `.hll` repository links open in the IDE. Valid links to bundled lesson, runtime, and example
+sources open editable files in their matching IDE workspace; other source files open as read-only
+references. The matching `.build` run configuration is selected when one exists. Every other
+repository file, including Rust VM code and Markdown documentation, opens its `blob/main` page on
+GitHub. Ordinary Guide-local, fragment, figure, and external links retain their normal Markdown
+meaning.
 
 ## Authoring
 

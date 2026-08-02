@@ -169,6 +169,14 @@ pub fn is_rust_source(path: &str) -> bool {
         .is_some_and(|(_stem, extension)| extension.eq_ignore_ascii_case("rs"))
 }
 
+pub fn is_ide_source(path: &str) -> bool {
+    path.rsplit_once('.').is_some_and(|(_stem, extension)| {
+        extension.eq_ignore_ascii_case("s")
+            || extension.eq_ignore_ascii_case("ir")
+            || extension.eq_ignore_ascii_case("hll")
+    })
+}
+
 pub fn validate_path(path: &str) -> Result<(), String> {
     if path.is_empty()
         || path.starts_with('/')
@@ -205,6 +213,18 @@ mod tests {
         }
         assert!(validate_path("crates/virtual-machine/src/bus.rs").is_ok());
         assert!(validate_path("directory/file with spaces.txt").is_ok());
+    }
+
+    #[test]
+    fn ide_sources_are_limited_to_assembly_ir_and_hll() {
+        for path in [
+            "main.s", "main.S", "main.ir", "main.IR", "main.hll", "main.HLL",
+        ] {
+            assert!(is_ide_source(path), "{path}");
+        }
+        for path in ["README.md", "src/bus.rs", "link.ld", "program.build"] {
+            assert!(!is_ide_source(path), "{path}");
+        }
     }
 
     #[test]

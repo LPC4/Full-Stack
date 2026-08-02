@@ -1,7 +1,7 @@
 // Markdown to HTML, with our own code fences, figures, and repository links.
 
 use crate::code;
-use crate::repository::{Catalog, is_rust_source, validate_path};
+use crate::repository::{Catalog, is_ide_source, validate_path};
 use crate::split::slugify;
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd, html};
 use std::collections::HashSet;
@@ -76,10 +76,13 @@ fn repository_link(dest: &str, ctx: &Context<'_>) -> Result<Option<String>, Stri
             Ok(line)
         })
         .transpose()?;
-    let mut href = if is_rust_source(path) {
+    let ide_source = is_ide_source(path);
+    let mut href = if ide_source {
+        format!("{}?file={}", ctx.path_to_site_root, percent_encode(path))
+    } else {
         let repository_url = ctx
             .repository_url
-            .ok_or_else(|| format!("Rust repository link `{path}` requires `repo_url`"))?
+            .ok_or_else(|| format!("repository link `{path}` requires `repo_url`"))?
             .trim_end_matches('/');
         let encoded_path = path
             .split('/')
@@ -87,14 +90,12 @@ fn repository_link(dest: &str, ctx: &Context<'_>) -> Result<Option<String>, Stri
             .collect::<Vec<_>>()
             .join("/");
         format!("{repository_url}/blob/main/{encoded_path}")
-    } else {
-        format!("{}?file={}", ctx.path_to_site_root, percent_encode(path))
     };
     if let Some(line) = line {
-        if is_rust_source(path) {
-            href.push_str(&format!("#L{line}"));
-        } else {
+        if ide_source {
             href.push_str(&format!("&amp;line={line}"));
+        } else {
+            href.push_str(&format!("#L{line}"));
         }
     }
     Ok(Some(format!(
@@ -325,6 +326,10 @@ mod tests {
             Catalog::testing(&[
                 "crates/asm-to-binary/_RISCV_SPECIFICATIONS.md",
                 "crates/virtual-machine/src/bus.rs",
+                "programs/example/output.ir",
+                "programs/example/source.hll",
+                "programs/lessons/01_sum/sum.s",
+                "programs/lessons/07_qemu/link.ld",
                 "directory/file with spaces.rs",
             ])
         });
@@ -361,32 +366,47 @@ mod tests {
     }
 
     #[test]
-    fn non_rust_repository_links_open_the_ide_in_a_new_tab() {
+    fn assembly_ir_and_hll_repository_links_open_the_ide_in_a_new_tab() {
         let out = render(
-            "[spec](repo:crates/asm-to-binary/_RISCV_SPECIFICATIONS.md#L42)\n",
+            "[asm](repo:programs/lessons/01_sum/sum.s#L2) \
+             [ir](repo:programs/example/output.ir) \
+             [hll](repo:programs/example/source.hll)\n",
             &ctx(),
         )
         .expect("render");
         assert!(
-            out.html.contains(
-                "../../../?file=crates%2Fasm-to-binary%2F_RISCV_SPECIFICATIONS.md&amp;line=42"
-            ),
-            "{}",
             out.html
+                .contains("../../../?file=programs%2Flessons%2F01_sum%2Fsum.s&amp;line=2")
+        );
+        assert!(
+            out.html
+                .contains("../../../?file=programs%2Fexample%2Foutput.ir")
+        );
+        assert!(
+            out.html
+                .contains("../../../?file=programs%2Fexample%2Fsource.hll")
         );
         assert!(out.html.contains("class=\"source-link\""));
         assert!(out.html.contains("target=\"_blank\" rel=\"noopener\""));
     }
 
     #[test]
-    fn rust_repository_links_open_github_in_a_new_tab() {
+    fn documentation_vm_code_and_other_repository_files_open_github() {
         let out = render(
-            "[bus](repo:crates/virtual-machine/src/bus.rs#L42)\n",
+            "[spec](repo:crates/asm-to-binary/_RISCV_SPECIFICATIONS.md#L42) \
+             [bus](repo:crates/virtual-machine/src/bus.rs#L45) \
+             [script](repo:programs/lessons/07_qemu/link.ld)\n",
             &ctx(),
         )
         .expect("render");
         assert!(out.html.contains(
-            "href=\"https://github.com/LPC4/Full-Stack/blob/main/crates/virtual-machine/src/bus.rs#L42\""
+            "href=\"https://github.com/LPC4/Full-Stack/blob/main/crates/asm-to-binary/_RISCV_SPECIFICATIONS.md#L42\""
+        ));
+        assert!(out.html.contains(
+            "href=\"https://github.com/LPC4/Full-Stack/blob/main/crates/virtual-machine/src/bus.rs#L45\""
+        ));
+        assert!(out.html.contains(
+            "href=\"https://github.com/LPC4/Full-Stack/blob/main/programs/lessons/07_qemu/link.ld\""
         ));
         assert!(!out.html.contains("?file="));
         assert!(out.html.contains("target=\"_blank\" rel=\"noopener\""));
