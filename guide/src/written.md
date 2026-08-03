@@ -1,5 +1,5 @@
 I started off creating Minecraft mods for fun, and ever since, I've wanted to understand what a computer
-*actually* does. Not just how to use a programming language, but how an application really gets ran. At some point
+*actually* does. Not just how to use a programming language, but how an application really gets run. At some point
 I realized I had no idea how Java itself worked underneath.
 
 That question is why I started working on multiple projects in my free time: different virtual machines, custom assembly and
@@ -8,7 +8,8 @@ programming languages. Eventually, after much trial and error, I arrived at [thi
 Full-Stack goes over the entire execution stack of computing: from binary instructions to a running operating system.
 It includes a virtual machine (VM), a compiler, assembler, and linker for a custom language, and a kernel that runs inside the VM.
 
-In these documents we'll be going over all the things you'd need to know to build a similar project from scratch.
+In these documents we'll understand every layer and how it fits together, giving you what you need to build a
+similar project from scratch.
 
 Throughout these documents there will be multiple code snippets. Complete examples have a Run button, so
 you can modify and execute them directly on the page. You can also open the larger lesson programs in
@@ -1322,57 +1323,92 @@ their arguments explicitly and produce new temporary values, just like `add` and
 stack slots before they are used. That looks redundant here, and an optimizer could remove much of it, but we are
 leaving optimization disabled so every lowering step remains visible.
 
-The back end then decides how to express those operations using the RISC-V calling convention. With the
-compiler's extra comments removed again, `sum_of_squares` looks like this. The few lines around it call the
-function with `3` and `4` so you can run it here. You can also open the
-[complete generated assembly](repo:programs/lessons/09_hll_functions/out/asm/sum_of_squares.s) to see the raw
-output.
+The back end then decides how to express those operations using the RISC-V calling convention.
+Below is the compiler's generated instruction stream with its explanatory comments removed. The
+hosted standard library normally supplies `_start`, the small harness before `square` takes its
+place here by calling the generated `main` and writing its return value to SYSCON. Everything from
+`square` onward comes directly from the
+[complete generated assembly](repo:programs/lessons/09_hll_functions/out/asm/sum_of_squares.s).
 
-```asm,runnable expect=a0:25
-  li    a0, 3
-  li    a1, 4
-  jal   ra, sum_of_squares
-  j     done
+```asm,runnable=bare expect=a0:25
+.section .text
+.globl _start
+_start:
+  jal    ra, main
+  li     t0, 0x10010000
+  sd     a0, 0(t0)
 
 square:
-  mulw  a0, a0, a0
-  ret
+  addi   sp, sp, -32
+  sd     ra, 24(sp)
+  sd     s2, 8(sp)
+  sd     s3, 16(sp)
+  addi   t0, sp, 32
+  addiw  s2, a0, 0
+square__entry:
+  addi   t0, sp, 0
+  sw     s2, 0(t0)
+  addi   t0, sp, 0
+  lw     s2, 0(t0)
+  addi   t0, sp, 0
+  lw     s3, 0(t0)
+  mul    s2, s2, s3
+  addiw  s2, s2, 0
+  addi   a0, s2, 0
+  ld     s3, 16(sp)
+  ld     s2, 8(sp)
+  ld     ra, 24(sp)
+  addi   sp, sp, 32
+  jalr   zero, 0(ra)
 
 sum_of_squares:
-  addi  sp, sp, -48
-  sd    ra, 32(sp)
-  sd    s2, 16(sp)
-  sd    s3, 24(sp)
-  addi  t0, sp, 48
-  addiw s2, a0, 0
-  addiw s3, a1, 0
-
+  addi   sp, sp, -48
+  sd     ra, 32(sp)
+  sd     s2, 16(sp)
+  sd     s3, 24(sp)
+  addi   t0, sp, 48
+  addiw  s2, a0, 0
+  addiw  s3, a1, 0
 sum_of_squares__entry:
-  addi  t0, sp, 0
-  sw    s2, 0(t0)
-  addi  t0, sp, 8
-  sw    s3, 0(t0)
-  addi  t0, sp, 0
-  lw    s2, 0(t0)
-  addi  a0, s2, 0
-  jal   ra, square
-  addiw s2, a0, 0
-  addi  t0, sp, 8
-  lw    s3, 0(t0)
-  addi  a0, s3, 0
-  jal   ra, square
-  addiw s3, a0, 0
-  add   s2, s2, s3
-  addiw s2, s2, 0
-  addi  a0, s2, 0
+  addi   t0, sp, 0
+  sw     s2, 0(t0)
+  addi   t0, sp, 8
+  sw     s3, 0(t0)
+  addi   t0, sp, 0
+  lw     s2, 0(t0)
+  addi   a0, s2, 0
+  jal    ra, square
+  addiw  s2, a0, 0
+  addi   t0, sp, 8
+  lw     s3, 0(t0)
+  addi   a0, s3, 0
+  jal    ra, square
+  addiw  s3, a0, 0
+  add    s2, s2, s3
+  addiw  s2, s2, 0
+  addi   a0, s2, 0
+  ld     s3, 24(sp)
+  ld     s2, 16(sp)
+  ld     ra, 32(sp)
+  addi   sp, sp, 48
+  jalr   zero, 0(ra)
 
-  ld    s3, 24(sp)
-  ld    s2, 16(sp)
-  ld    ra, 32(sp)
-  addi  sp, sp, 48
-  jalr  zero, 0(ra)
-
-done:
+main:
+  addi   sp, sp, -16
+  sd     ra, 8(sp)
+  sd     s2, 0(sp)
+main__entry:
+  addi   t0, zero, 3
+  addi   a0, t0, 0
+  addi   t1, zero, 4
+  addi   a1, t1, 0
+  jal    ra, sum_of_squares
+  addiw  s2, a0, 0
+  addi   a0, s2, 0
+  ld     s2, 0(sp)
+  ld     ra, 8(sp)
+  addi   sp, sp, 16
+  jalr   zero, 0(ra)
 ```
 
 The arguments arrive in `a0` and `a1`, just as they did in our handwritten assembly. Before each call to `square`,
@@ -1384,9 +1420,9 @@ registers belong to the caller, and the epilogue restores all three. This is the
 we wrote by hand in the earlier lessons. The difference is that the compiler has now derived it itself.
 
 You can immediately see that this code isn't optimized: it has lots of repetition and unnecessary stack usage.
-This was one of the issues with early compilers. People didn't want to use them because writing in assembly was
-just faster. But as compilers progressed, so did optimization techniques, and today assembly created by a compiler
-is almost always faster than handwritten assembly.
+This was one of the issues with early compilers: for many programs, handwritten assembly was faster. But as
+compilers progressed, so did optimization techniques. Today, modern compilers are difficult to beat across an
+entire program, although handwritten assembly can sometimes still win in niche performance-critical scenarios.
 
 ### HLL examples
 

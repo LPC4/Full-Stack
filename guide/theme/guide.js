@@ -374,11 +374,6 @@
         }
       }
 
-      function syncScroll() {
-        highlight.scrollLeft = code.scrollLeft;
-        highlight.scrollTop = code.scrollTop;
-      }
-
       loadSandbox()
         .then(function (module) {
           highlighter = module;
@@ -394,10 +389,9 @@
         var source = sourceText(code);
         if (highlighter) repaint(highlighter, source);
         else highlight.textContent = source;
-        syncScroll();
+        code.scrollLeft = 0;
+        code.scrollTop = 0;
       });
-
-      code.addEventListener("scroll", syncScroll, { passive: true });
 
       code.addEventListener("keydown", function (event) {
         if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey) return;
@@ -437,7 +431,6 @@
         else highlight.textContent = pristine;
         code.scrollTop = 0;
         code.scrollLeft = 0;
-        syncScroll();
         output.hidden = true;
         output.textContent = "";
       });
@@ -455,9 +448,16 @@
     var key = pageKey(url);
     if (pageCache.has(key)) return pageCache.get(key);
 
-    var request = fetch(key, { credentials: "same-origin" })
+    var request = fetch(key, {
+      credentials: "same-origin",
+      headers: { Accept: "text/html" },
+    })
       .then(function (response) {
         if (!response.ok) throw new Error("Page request failed with " + response.status);
+        var type = response.headers.get("content-type") || "";
+        if (!type.toLowerCase().startsWith("text/html")) {
+          throw new Error("Page request returned " + (type || "an unknown media type"));
+        }
         return response.text();
       })
       .catch(function (error) {

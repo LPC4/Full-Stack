@@ -422,6 +422,13 @@ pre.code.wrapped .ln {
   height: auto;
   vertical-align: middle;
 }
+.figure img[src$="/riscv-logo.png"] {
+  box-sizing: border-box;
+  width: min(420px, 100%);
+  padding: 16px 22px;
+  background: #ffffff;
+  border-radius: 6px;
+}
 .figure figcaption {
   margin-top: 1em;
   color: var(--muted);
@@ -473,7 +480,8 @@ pre.code.wrapped .ln {
   margin: 0;
   border: none;
   border-radius: 0;
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
   overflow: hidden;
   pointer-events: none;
   tab-size: 2;
@@ -487,7 +495,7 @@ pre.code.wrapped .ln {
   margin: 0;
   padding: 14px 18px;
   resize: none;
-  overflow: auto;
+  overflow: hidden;
   color: transparent;
   -webkit-text-fill-color: transparent;
   caret-color: var(--heading);
@@ -498,7 +506,8 @@ pre.code.wrapped .ln {
   font-size: 14px;
   line-height: 1.55;
   tab-size: 2;
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
 }
 .sandbox-code::selection {
   color: transparent;

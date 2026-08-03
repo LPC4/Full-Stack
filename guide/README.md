@@ -30,16 +30,21 @@ a release build of the browser IDE beside them so source permalinks work locally
 and the WASM sandbox are rebuilt only when their source inputs have changed, so editing Guide
 Markdown reuses both existing WASM bundles.
 
+The preview server supports `GET` and `HEAD`, redirects directory resources to their trailing-slash
+canonical route, and returns `Allow: GET, HEAD` for unsupported methods. Production response and
+cache headers remain controlled by GitHub Pages.
+
 Build without serving:
 
 ```sh
 cargo run -p full_stack_guide -- build --root guide --out dist
 ```
 
-`--out` names the overall site root. The generator replaces only its owned `guide/` and
-`_source/` children, leaving Trunk's IDE files in place. Production catalogs Git-tracked
-regular files. `--include-worktree` additionally includes nonignored worktree additions and
-skips tracked paths removed from disk, which is useful while testing an unstaged rename.
+`--out` names the overall site root. The generator replaces its owned `guide/` and `_source/`
+children and publishes the root icon assets, leaving Trunk's other IDE files in place.
+Production catalogs Git-tracked regular files. `--include-worktree` additionally
+includes nonignored worktree additions and skips tracked paths removed from disk, which is
+useful while testing an unstaged rename.
 
 Use `--port N` to change the preview port, `--no-sandbox` to skip WASM checks, or
 `--rebuild-sandbox` to force a rebuild.
@@ -104,8 +109,9 @@ Expected register values are optional and remain visible after the reader edits 
 ```
 ````
 
-Runnable editors highlight changes as they are typed. Tab and Shift+Tab indent or unindent with
-two spaces while keeping focus in the editor.
+Runnable editors highlight changes as they are typed, wrap long lines, and grow with their source
+instead of adding an internal scrollbar. Tab and Shift+Tab indent or unindent with two spaces while
+keeping focus in the editor.
 
 Use ordinary Markdown image syntax for figures. The alt text becomes the accessible caption,
 and a matching `name.dark.svg` is selected by the dark theme.

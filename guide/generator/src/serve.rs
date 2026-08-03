@@ -14,7 +14,7 @@ fn content_type(path: &Path) -> &'static str {
         Some("svg") => "image/svg+xml",
         // Anything else makes instantiateStreaming reject the module.
         Some("wasm") => "application/wasm",
-        Some("png") => "image/png",
+        Some("png" | "ico") => "image/png",
         Some("toml" | "txt" | "md" | "rs" | "hll" | "s" | "ld" | "yml" | "yaml") => {
             "text/plain; charset=utf-8"
         }
@@ -62,14 +62,29 @@ fn percent_decode(text: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-fn respond(stream: &mut TcpStream, status: &str, kind: &str, body: &[u8]) -> std::io::Result<()> {
+fn respond(
+    stream: &mut TcpStream,
+    method: &str,
+    status: &str,
+    kind: &str,
+    extra_headers: &[(&str, &str)],
+    body: &[u8],
+) -> std::io::Result<()> {
+    let extra = extra_headers
+        .iter()
+        .map(|(name, value)| format!("{name}: {value}\r\n"))
+        .collect::<String>();
     let head = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\n\
+        "HTTP/1.1 {status}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\n{extra}\
          Cache-Control: no-store\r\nConnection: close\r\n\r\n",
         body.len()
     );
     stream.write_all(head.as_bytes())?;
-    stream.write_all(body)
+    if method == "HEAD" {
+        Ok(())
+    } else {
+        stream.write_all(body)
+    }
 }
 
 fn handle(root: &Path, stream: &mut TcpStream) -> std::io::Result<()> {
@@ -85,23 +100,70 @@ fn handle(root: &Path, stream: &mut TcpStream) -> std::io::Result<()> {
 
     let mut parts = request.split_whitespace();
     let method = parts.next().unwrap_or_default();
-    let target = parts.next().unwrap_or("/");
+    let target = parts.next().unwrap_or_default();
+    let version = parts.next().unwrap_or_default();
+    if target.is_empty() || !version.starts_with("HTTP/") {
+        return respond(
+            stream,
+            method,
+            "400 Bad Request",
+            "text/plain; charset=utf-8",
+            &[],
+            b"bad request\n",
+        );
+    }
     if method != "GET" && method != "HEAD" {
         return respond(
             stream,
+            method,
             "405 Method Not Allowed",
-            "text/plain",
-            b"only GET\n",
+            "text/plain; charset=utf-8",
+            &[("Allow", "GET, HEAD")],
+            b"method not allowed\n",
         );
     }
 
     let Some(path) = resolve(root, target) else {
-        return respond(stream, "403 Forbidden", "text/plain", b"forbidden\n");
+        return respond(
+            stream,
+            method,
+            "403 Forbidden",
+            "text/plain; charset=utf-8",
+            &[],
+            b"forbidden\n",
+        );
     };
+    let request_path = target.split(['?', '#']).next().unwrap_or_default();
+    if path.ends_with("index.html")
+        && path.parent().is_some_and(Path::is_dir)
+        && !request_path.ends_with('/')
+        && !request_path.ends_with("index.html")
+    {
+        let query = target
+            .split_once('?')
+            .map(|(_, query)| format!("?{query}"))
+            .unwrap_or_default();
+        let location = format!("{request_path}/{query}");
+        return respond(
+            stream,
+            method,
+            "308 Permanent Redirect",
+            "text/plain; charset=utf-8",
+            &[("Location", &location)],
+            b"redirecting to canonical route\n",
+        );
+    }
     let Ok(body) = std::fs::read(&path) else {
-        return respond(stream, "404 Not Found", "text/plain", b"not found\n");
+        return respond(
+            stream,
+            method,
+            "404 Not Found",
+            "text/plain; charset=utf-8",
+            &[],
+            b"not found\n",
+        );
     };
-    respond(stream, "200 OK", content_type(&path), &body)
+    respond(stream, method, "200 OK", content_type(&path), &[], &body)
 }
 
 pub fn serve(root: &Path, port: u16) -> Result<(), String> {
@@ -128,6 +190,24 @@ pub fn serve(root: &Path, port: u16) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Read as _;
+
+    fn exchange(root: &Path, request: &[u8]) -> Vec<u8> {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listen");
+        let address = listener.local_addr().expect("address");
+        let request = request.to_owned();
+        let client = std::thread::spawn(move || {
+            let mut stream = TcpStream::connect(address).expect("connect");
+            stream.write_all(&request).expect("request");
+            let mut response = Vec::new();
+            stream.read_to_end(&mut response).expect("response");
+            response
+        });
+        let (mut stream, _) = listener.accept().expect("accept");
+        handle(root, &mut stream).expect("handle");
+        drop(stream);
+        client.join().expect("client")
+    }
 
     #[test]
     fn traversal_is_rejected() {
@@ -164,5 +244,51 @@ mod tests {
         assert_eq!(content_type(Path::new("a/b.wasm")), "application/wasm");
         assert_eq!(content_type(Path::new("a/b.svg")), "image/svg+xml");
         assert_eq!(content_type(Path::new("a/b.json")), "application/json");
+        assert_eq!(content_type(Path::new("favicon.ico")), "image/png");
+    }
+
+    #[test]
+    fn head_reports_get_length_without_a_body() {
+        let base =
+            std::env::temp_dir().join(format!("full-stack-guide-head-{}", std::process::id()));
+        let page = base.join("guide");
+        std::fs::create_dir_all(&page).expect("create route");
+        std::fs::write(page.join("index.html"), "page").expect("write route");
+
+        let response = exchange(&base, b"HEAD /guide/ HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        let response = String::from_utf8(response).expect("utf8 response");
+        assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+        assert!(response.contains("Content-Length: 4\r\n"));
+        assert!(response.ends_with("\r\n\r\n"));
+        std::fs::remove_dir_all(base).expect("remove fixture");
+    }
+
+    #[test]
+    fn unsupported_methods_advertise_the_uniform_interface() {
+        let response = exchange(
+            Path::new("out"),
+            b"POST /guide/ HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        );
+        let response = String::from_utf8(response).expect("utf8 response");
+        assert!(response.starts_with("HTTP/1.1 405 Method Not Allowed\r\n"));
+        assert!(response.contains("Allow: GET, HEAD\r\n"));
+    }
+
+    #[test]
+    fn directory_resources_redirect_to_their_canonical_route() {
+        let base =
+            std::env::temp_dir().join(format!("full-stack-guide-redirect-{}", std::process::id()));
+        let page = base.join("guide");
+        std::fs::create_dir_all(&page).expect("create route");
+        std::fs::write(page.join("index.html"), "page").expect("write route");
+
+        let response = exchange(
+            &base,
+            b"GET /guide?source=test HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        );
+        let response = String::from_utf8(response).expect("utf8 response");
+        assert!(response.starts_with("HTTP/1.1 308 Permanent Redirect\r\n"));
+        assert!(response.contains("Location: /guide/?source=test\r\n"));
+        std::fs::remove_dir_all(base).expect("remove fixture");
     }
 }

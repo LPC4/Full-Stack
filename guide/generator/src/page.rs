@@ -144,7 +144,7 @@ pub fn build(config: &Config, pages: &[Page], index: usize, rendered: &Rendered)
 <title>{head_title}</title>
 <meta name="description" content="{description}">{author}
 <link rel="canonical" href="{canonical}">
-<link rel="icon" href="{guide_root}theme/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="{site_root}favicon.ico"><link rel="icon" href="{guide_root}theme/favicon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="{site_root}apple-touch-icon.png">
 <link rel="stylesheet" href="{guide_root}theme/guide.css">
 <script>
   // Applied before paint so a stored theme never flashes the wrong colors.
