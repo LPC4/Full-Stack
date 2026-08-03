@@ -1,13 +1,13 @@
 # Full-Stack Guide
 
-The learning frontend for Full-Stack is a static Guide generated from `src/written.md` and
-published beside the browser IDE. It uses the same syntax highlighter and virtual machine as
-the application.
+The learning frontend for Full-Stack is a static Guide generated from the Markdown sources in
+`guide.toml` and published beside the browser IDE. It uses the same syntax highlighter and
+virtual machine as the application.
 
 ## Flow
 
 ```text
-written.md + guide.toml + figures
+Markdown sources + guide.toml + figures
   -> full_stack_guide
   -> clean directory-routed HTML, CSS, SVG, and repository source assets
   -> optional in-page assembly sandbox through full_stack_guide_wasm
@@ -25,9 +25,10 @@ From the repository root:
 cargo run -p full_stack_guide -- serve --root guide
 ```
 
-The Guide is served at `http://localhost:8000/guide/`. The command rebuilds the pages and
-builds the browser IDE in release mode with Trunk so source permalinks work locally. It also
-rebuilds the WASM sandbox when its sources have changed.
+The Guide is served at `http://localhost:8000/guide/`. The command rebuilds the pages and keeps
+a release build of the browser IDE beside them so source permalinks work locally. The browser IDE
+and the WASM sandbox are rebuilt only when their source inputs have changed, so editing Guide
+Markdown reuses both existing WASM bundles.
 
 Build without serving:
 
@@ -71,12 +72,14 @@ meaning.
 
 ## Authoring
 
-Write the lesson in `src/written.md`. A `##` heading starts a chapter, `###` starts a page,
-and deeper headings form the on-page outline.
+List authored sources as `[[parts]]` in `guide.toml`. The first source supplies the landing page
+and its `##` chapters. Each later source is appended as a top-level chapter named by its part
+title. Within every source, `###` starts a page and deeper headings form the on-page outline.
 
 Code fences tagged `asm`, `hll`, `ir`, `ast`, `sh`, `ld`, or `x86` use the shared syntax
-highlighter. Use `runnable` for a fragment that should receive an entry point and clean halt
-automatically. Use `runnable=bare` only for a complete program:
+highlighter. Use `runnable` for an assembly fragment that should receive an entry point and clean
+halt automatically, or for a standalone HLL program with a `main` function. Use `runnable=bare`
+only for a complete assembly program:
 
 ````markdown
 ```asm,runnable
@@ -85,6 +88,12 @@ li a0, 5
 
 ```asm,runnable=bare
 .globl _start
+```
+
+```hll,runnable
+main: () -> i32 {
+    return 5
+}
 ```
 ````
 

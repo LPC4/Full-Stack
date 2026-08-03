@@ -14,6 +14,21 @@ target_wasm
 
 # Compiler artifact output directory
 out/
+# Publish the HLL lesson outputs used by the Guide.
+!programs/lessons/08_hll/out/
+programs/lessons/08_hll/out/*
+!programs/lessons/08_hll/out/asm/
+!programs/lessons/08_hll/out/asm/*.s
+!programs/lessons/08_hll/out/ir/
+!programs/lessons/08_hll/out/ir/*.ir
+!programs/lessons/09_hll_functions/out/
+programs/lessons/09_hll_functions/out/*
+!programs/lessons/09_hll_functions/out/asm/
+!programs/lessons/09_hll_functions/out/asm/*.s
+!programs/lessons/09_hll_functions/out/elf/
+!programs/lessons/09_hll_functions/out/elf/*.elf
+!programs/lessons/09_hll_functions/out/ir/
+!programs/lessons/09_hll_functions/out/ir/*.ir
 .run
 .idea
 plugin

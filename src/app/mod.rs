@@ -301,7 +301,7 @@ impl FullStackApp {
             code_follow: None,
             code_follow_scrolled: None,
             launch_mode: LaunchMode::Run,
-            step_count: 100,
+            step_count: 1,
             step_unit: machine_dock::StepUnit::Line,
             time_scrub: 0,
             time_follow_now: true,
@@ -1688,15 +1688,26 @@ impl FullStackApp {
         self.reset_layer_for_active_file();
     }
 
-    // Instruction stepping steps over calls; F11 / Shift+F11 step in / out.
+    // The selected unit controls F10; instruction mode retires exactly one instruction.
     pub(super) fn step_selected_live_machine(&mut self) {
         let Some(live) = &mut self.live else {
             return;
         };
         match self.step_unit {
             machine_dock::StepUnit::Line => live.step_line(),
-            machine_dock::StepUnit::Instruction => live.step_over(),
+            machine_dock::StepUnit::Instruction => live.step_in(),
             machine_dock::StepUnit::Cycle => live.step_cycle(),
+        }
+    }
+
+    pub(super) fn step_into_selected_live_machine(&mut self) {
+        let Some(live) = &mut self.live else {
+            return;
+        };
+        if self.step_unit == machine_dock::StepUnit::Line {
+            live.step_line_in();
+        } else {
+            live.step_in();
         }
     }
 
@@ -1865,15 +1876,13 @@ impl FullStackApp {
         if ui.input(|i| i.key_pressed(egui::Key::F10)) && self.live.is_some() {
             self.step_selected_live_machine();
         }
-        if ui.input(|i| i.key_pressed(egui::Key::F11))
-            && let Some(live) = &mut self.live
-        {
+        if ui.input(|i| i.key_pressed(egui::Key::F11)) && self.live.is_some() {
             if ui.input(|i| i.modifiers.shift) {
-                live.step_out();
-            } else if self.step_unit == machine_dock::StepUnit::Line {
-                live.step_line_in();
+                if let Some(live) = &mut self.live {
+                    live.step_out();
+                }
             } else {
-                live.step_in();
+                self.step_into_selected_live_machine();
             }
         }
         if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::J)) {
@@ -2346,6 +2355,56 @@ mod tests {
     }
 
     #[test]
+    fn instruction_mode_retires_one_instruction_and_enters_calls() {
+        let root = temp_root("instruction_step");
+        write_native_workspace(&root);
+        let mut app = test_app(IdeWorkspace::new(Box::new(MemoryFs::new())).expect("workspace"));
+        app.open_native_workspace_folder(&root);
+        app.debug_selected_config(1.0);
+
+        assert_eq!(app.step_count, 1, "single-step is the default");
+        app.step_unit = machine_dock::StepUnit::Instruction;
+        let call_pc = {
+            let live = app.live.as_mut().expect("debug session");
+            let mut call_pc = None;
+            for _ in 0..128 {
+                let pc = live.registers().pc;
+                let bytes = live.read_virtual(pc, 4);
+                let word = u32::from_le_bytes(bytes.try_into().expect("instruction word"));
+                if matches!(
+                    virtual_machine::cpu::decoder::decode(word),
+                    Ok(
+                        virtual_machine::cpu::decoder::DecodedInsn::Jal { rd: 1, .. }
+                            | virtual_machine::cpu::decoder::DecodedInsn::Jalr { rd: 1, .. }
+                    )
+                ) {
+                    call_pc = Some(pc);
+                    break;
+                }
+                live.step_in();
+            }
+            call_pc.expect("hosted entry calls main")
+        };
+        let retired = app
+            .live
+            .as_ref()
+            .expect("debug session")
+            .vm()
+            .insns_retired();
+
+        app.step_selected_live_machine();
+
+        let live = app.live.as_ref().expect("debug session");
+        assert_eq!(live.vm().insns_retired(), retired + 1);
+        assert_ne!(
+            live.registers().pc,
+            call_pc + 4,
+            "instruction mode entered the call instead of stepping over it"
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
     fn stopping_a_debug_session_hides_its_surface() {
         let root = temp_root("debug_stop_surface");
         write_native_workspace(&root);
@@ -2464,7 +2523,7 @@ mod tests {
             });
 
         let before = harness.state().live.as_ref().expect("session").steps;
-        harness.get_by_label("Step over (F10)").click();
+        harness.get_by_label("Step one instruction (F10)").click();
         harness.step();
         assert!(harness.state().live.as_ref().expect("session").steps > before);
 
@@ -2855,6 +2914,41 @@ mod tests {
             app.reference_address_state(),
             (Some(repository_path), Some(2))
         );
+    }
+
+    #[test]
+    fn hll_lesson_reference_opens_the_lessons_workspace_and_hosted_config() {
+        let workspace = IdeWorkspace::lessons().expect("lessons workspace");
+        let mut app = test_app(workspace);
+        let repository_path =
+            VPath::parse("programs/lessons/08_hll/compiler_pipeline.hll").expect("path");
+        app.open_repository_reference(
+            crate::web_reference::ReferenceDocument {
+                path: repository_path.clone(),
+                bytes: b"main: () -> i32 { return 1 + 1 }\n".to_vec(),
+                binary: false,
+                line: None,
+            },
+            None,
+        );
+
+        assert_eq!(
+            app.active_path().expect("active source").as_str(),
+            "08_hll/compiler_pipeline.hll"
+        );
+        assert!(
+            !app.workspace
+                .active_document()
+                .expect("active document")
+                .is_read_only()
+        );
+        let config = app.selected_config().expect("selected config");
+        assert_eq!(config.kind, RunKind::Hosted);
+        assert_eq!(
+            config.build,
+            BuildRef::Manifest(VPath::parse("08_hll/compiler_pipeline.build").expect("manifest"))
+        );
+        assert_eq!(app.reference_address_state(), (Some(repository_path), None));
     }
 
     #[test]

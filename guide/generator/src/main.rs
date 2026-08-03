@@ -8,6 +8,7 @@
 
 mod code;
 mod config;
+mod freshness;
 mod page;
 mod render;
 mod repository;
@@ -113,6 +114,30 @@ fn write_summary(root: &Path, pages: &[Page]) -> std::io::Result<()> {
 }
 
 fn build_preview_ide(repo_root: &Path, output: &Path) -> Result<(), String> {
+    let marker = output.join(".full-stack-guide-preview.stamp");
+    let bundle = output.join("full_stack_bg.wasm");
+    let sources = [
+        repo_root.join("src"),
+        repo_root.join("crates"),
+        repo_root.join("programs"),
+        repo_root.join("assets"),
+        repo_root.join("theme"),
+        repo_root.join(".cargo/config.toml"),
+        repo_root.join("build.rs"),
+        repo_root.join("Cargo.lock"),
+        repo_root.join("Cargo.toml"),
+        repo_root.join("index.html"),
+        repo_root.join("rust-toolchain"),
+        repo_root.join("Trunk.toml"),
+    ];
+    if output.join("index.html").is_file()
+        && output.join("full_stack.js").is_file()
+        && !freshness::is_stale(&marker, &bundle, &sources)
+    {
+        println!("browser IDE unchanged; reusing the existing Trunk build");
+        return Ok(());
+    }
+
     println!("building browser IDE with Trunk...");
     let status = Command::new("trunk")
         .args(["build", "--release", "--public-url", "/", "--dist"])
@@ -123,6 +148,7 @@ fn build_preview_ide(repo_root: &Path, output: &Path) -> Result<(), String> {
     if !status.success() {
         return Err(format!("Trunk failed to build the preview IDE ({status})"));
     }
+    freshness::mark(&marker).map_err(|e| format!("cannot record the preview IDE build: {e}"))?;
     Ok(())
 }
 
@@ -138,6 +164,21 @@ fn prepare_output(args: &Args, repo_root: &Path) -> Result<PathBuf, String> {
         build_preview_ide(repo_root, &output)?;
     }
     Ok(output)
+}
+
+fn load_pages(root: &Path, config: &Config) -> Result<Vec<Page>, String> {
+    let mut authored_parts = Vec::new();
+    for part in &config.parts {
+        let source = root.join(&part.source);
+        let markdown = std::fs::read_to_string(&source)
+            .map_err(|e| format!("cannot read {}: {e}", source.display()))?;
+        authored_parts.push((part.title.as_str(), markdown));
+    }
+    Ok(split::split_parts(
+        authored_parts
+            .iter()
+            .map(|(title, markdown)| (*title, markdown.as_str())),
+    ))
 }
 
 fn run() -> Result<(), String> {
@@ -161,13 +202,7 @@ fn run() -> Result<(), String> {
         false
     };
 
-    let mut pages = Vec::new();
-    for part in &config.parts {
-        let source = root.join(&part.source);
-        let markdown = std::fs::read_to_string(&source)
-            .map_err(|e| format!("cannot read {}: {e}", source.display()))?;
-        pages.extend(split::split(&part.title, &markdown));
-    }
+    let pages = load_pages(root, &config)?;
     if pages.is_empty() {
         return Err("no pages were produced".into());
     }

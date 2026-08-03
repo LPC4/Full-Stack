@@ -58,7 +58,7 @@ pub fn render(fence: &Fence<'_>, source: &str) -> String {
 <button class=\"sandbox-reset\" type=\"button\">Reset</button></div>\
 <div class=\"sandbox-editor\">\
 <pre class=\"code sandbox-highlight\" aria-hidden=\"true\"><code>{inner}</code></pre>\
-<textarea class=\"sandbox-code\" aria-label=\"Editable assembly example\" spellcheck=\"false\" wrap=\"off\">{raw}</textarea>\
+<textarea class=\"sandbox-code\" aria-label=\"Editable {tag} example\" spellcheck=\"false\" wrap=\"off\">{raw}</textarea>\
 </div>\
 <div class=\"sandbox-output\" aria-live=\"polite\" hidden></div></div>\n"
     )
@@ -102,6 +102,7 @@ mod tests {
         assert!(html.contains("sandbox-editor"));
         assert!(html.contains("sandbox-highlight"));
         assert!(html.contains("textarea class=\"sandbox-code\""));
+        assert!(html.contains("aria-label=\"Editable asm example\""));
         assert!(!html.contains("contenteditable"));
         assert!(html.contains("data-wrap=\"snippet\""));
         assert!(html.contains("data-expect=\"\""));

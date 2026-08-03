@@ -1,0 +1,8 @@
+name = "fibonacci_template"
+title = "09.2 (template): fibonacci"
+root = "fibonacci_template.hll"
+target = "hosted"
+entry = "_start"
+stdlib = "hosted"
+import_closure = true
+mangle_symbols = false

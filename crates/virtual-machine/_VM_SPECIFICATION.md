@@ -1018,6 +1018,12 @@ direct jump to its own address retires once and pauses at that address. Other lo
 entries, and never-returning calls are bounded by both an 8 ms wall-clock budget and a 2,000,000
 cycle cap so a synchronous step cannot monopolize the UI thread.
 
+Instruction stepping enters calls and pauses after exactly one instruction retires. Cycle stepping
+advances exactly one pipeline tick. A full pipeline can retire one instruction per cycle, so the two
+modes often appear identical in straight-line code; pipeline fill, stalls, and flushes make their
+different behavior visible. The disassembly view follows the architectural pc, which changes when
+an instruction retires rather than on every cycle.
+
 
 ## 12. Testing & Verification
 

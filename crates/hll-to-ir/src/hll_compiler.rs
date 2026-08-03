@@ -392,6 +392,28 @@ mod tests {
         .compile(source)
     }
 
+    #[test]
+    fn stdlib_type_prelude_emits_only_referenced_aliases() {
+        let compile = |source| {
+            HllCompiler::new(CompileConfig {
+                target: TargetMode::Hosted,
+                strict: true,
+                type_prelude: crate::stdlib::get_stdlib_type_prelude(),
+                ..CompileConfig::default()
+            })
+            .compile(source)
+            .expect("compile source with stdlib type prelude")
+            .ir
+        };
+
+        let unused = compile("main: () -> i32 { return 1 + 1 }");
+        assert!(unused.type_aliases.is_empty());
+
+        let referenced = compile("main: () { block: HeapBlock* = null }");
+        assert_eq!(referenced.type_aliases.len(), 1);
+        assert_eq!(referenced.type_aliases[0].name, "HeapBlock");
+    }
+
     fn fixture_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../programs/test/fixtures")
     }

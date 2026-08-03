@@ -137,3 +137,21 @@ source = "how_real_is_real_enough"
 name = "riscv_machine_comparison"
 source_line = 1931
 caption = "The project VM, QEMU virt, and QEMU's sifive_u model share RV64 but expose different devices."
+
+[[figure]]
+source = "compilers_and_ir"
+name = "compiler_pipeline"
+source_line = 1967
+caption = "HLL moves through IR and RISC-V assembly before becoming machine code."
+
+[[figure]]
+source = "from_hll_to_an_executable"
+name = "linking_hll_executable"
+source_line = 2002
+caption = "The linker combines the program and its supporting code into one executable ELF."
+
+[[figure]]
+source = "watching_it_run"
+name = "stdlib_execution_path"
+source_line = 2037
+caption = "Instruction stepping follows execution from the standard library into main and back again."

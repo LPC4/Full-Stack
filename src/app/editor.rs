@@ -331,8 +331,12 @@ impl FullStackApp {
                 }
             }
             let dim = !paused;
-            if icon_button(ui, icons::STEP_OVER, "Step over (F10)", false, dim).clicked() && paused
-            {
+            let step_tip = match self.step_unit {
+                super::machine_dock::StepUnit::Line => "Step over source line (F10)",
+                super::machine_dock::StepUnit::Instruction => "Step one instruction (F10)",
+                super::machine_dock::StepUnit::Cycle => "Step one cycle (F10)",
+            };
+            if icon_button(ui, icons::STEP_OVER, step_tip, false, dim).clicked() && paused {
                 act = Some(DebugAction::StepOver);
             }
             if icon_button(ui, icons::STEP_IN, "Step into (F11)", false, dim).clicked() && paused {
@@ -363,11 +367,7 @@ impl FullStackApp {
                 }
             }
             Some(DebugAction::StepOver) => self.step_selected_live_machine(),
-            Some(DebugAction::StepIn) => {
-                if let Some(live) = &mut self.live {
-                    live.step_line_in();
-                }
-            }
+            Some(DebugAction::StepIn) => self.step_into_selected_live_machine(),
             Some(DebugAction::StepOut) => {
                 if let Some(live) = &mut self.live {
                     live.step_out();

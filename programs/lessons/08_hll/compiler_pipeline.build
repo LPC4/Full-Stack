@@ -1,0 +1,9 @@
+name = "compiler_pipeline"
+title = "08: HLL compiler pipeline"
+root = "compiler_pipeline.hll"
+target = "hosted"
+entry = "_start"
+stdlib = "hosted"
+import_closure = true
+mangle_symbols = true
+out = "out"

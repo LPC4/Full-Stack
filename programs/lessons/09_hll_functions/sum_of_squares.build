@@ -1,0 +1,9 @@
+name = "sum_of_squares"
+title = "09.1: HLL functions"
+root = "sum_of_squares.hll"
+target = "hosted"
+entry = "_start"
+stdlib = "hosted"
+import_closure = true
+mangle_symbols = false
+out = "out"

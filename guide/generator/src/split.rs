@@ -191,6 +191,21 @@ pub fn split(index_title: &str, markdown: &str) -> Vec<Page> {
     pages
 }
 
+pub fn split_parts<'a>(parts: impl IntoIterator<Item = (&'a str, &'a str)>) -> Vec<Page> {
+    let mut parts = parts.into_iter();
+    let Some((index_title, first)) = parts.next() else {
+        return Vec::new();
+    };
+    let mut markdown = first.trim_end().to_owned();
+    for (title, body) in parts {
+        markdown.push_str("\n\n## ");
+        markdown.push_str(title.trim());
+        markdown.push_str("\n\n");
+        markdown.push_str(body.trim());
+    }
+    split(index_title, &markdown)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,6 +232,23 @@ mod tests {
         assert_eq!(pages[1].body, "chapter intro");
         assert_eq!(pages[3].body, "first");
         assert_eq!(pages[4].body, "second");
+    }
+
+    #[test]
+    fn later_parts_become_trailing_chapters() {
+        let pages = split_parts([
+            ("Intro", "intro\n\n## Lessons\nlesson"),
+            (
+                "Glossary",
+                "| Term | Meaning |\n| --- | --- |\n| IR | Intermediate representation |",
+            ),
+        ]);
+        let titles: Vec<&str> = pages.iter().map(|page| page.title.as_str()).collect();
+        let slugs: Vec<String> = pages.iter().map(|page| page.route.slug()).collect();
+
+        assert_eq!(titles, ["Intro", "Lessons", "Glossary"]);
+        assert_eq!(slugs, ["", "lessons", "glossary"]);
+        assert!(pages[2].body.contains("Intermediate representation"));
     }
 
     // A `###` inside a fence is sample text, not a new page.

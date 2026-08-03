@@ -665,6 +665,9 @@ The mechanisms above are the target. Current status:
   qualified relative imports; `as` and `cc` keep their layout headers as shared record prelude.
   User programs use qualified stdlib imports rather than hand-written `external` declarations;
   `external` remains reserved for ABI/runtime edges such as `_start` calling user `main`.
+- Shared type-prelude aliases are registered in every translation unit for semantic analysis and
+  lowering. Only aliases transitively referenced by the finished IR are emitted into that module;
+  source-authored type declarations remain visible even when unused.
 
 Migration order: (1) interface import for `type`/`const`/signatures, retiring the source
 prelude where possible; `as`/`cc` still need layout prelude for shared records); (2)

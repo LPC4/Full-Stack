@@ -1,5 +1,4 @@
-# Guide manifest. `parts` is a list so the specifications can join later
-# without touching the generator.
+# Guide manifest. The first part supplies the landing page. Later parts are appended as chapters.
 
 title = "Full-Stack Guide"
 author = "Liam"
@@ -13,3 +12,7 @@ sidebar = "left"
 [[parts]]
 title = "Intro"
 source = "src/written.md"
+
+[[parts]]
+title = "Glossary"
+source = "src/glossary.md"

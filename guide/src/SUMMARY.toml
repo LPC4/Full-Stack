@@ -62,6 +62,11 @@ title = "Functions"
 
 [[page]]
 kind = "section"
+slug = "cpus-and-assembly/stack-frames"
+title = "Stack frames"
+
+[[page]]
+kind = "section"
 slug = "cpus-and-assembly/the-frame-pointer"
 title = "The frame pointer"
 
@@ -124,4 +129,49 @@ title = "Building it"
 kind = "section"
 slug = "the-same-code-on-qemu/how-real-is-real-enough"
 title = "How real is real enough"
+
+[[page]]
+kind = "chapter"
+slug = "high-level-languages"
+title = "High-Level Languages"
+
+[[page]]
+kind = "section"
+slug = "high-level-languages/compilers-and-ir"
+title = "Compilers and IR"
+
+[[page]]
+kind = "section"
+slug = "high-level-languages/an-example"
+title = "An example"
+
+[[page]]
+kind = "section"
+slug = "high-level-languages/from-hll-to-an-executable"
+title = "From HLL to an executable"
+
+[[page]]
+kind = "section"
+slug = "high-level-languages/watching-it-run"
+title = "Watching it run"
+
+[[page]]
+kind = "section"
+slug = "high-level-languages/another-example"
+title = "Another example"
+
+[[page]]
+kind = "section"
+slug = "high-level-languages/hll-examples"
+title = "HLL examples"
+
+[[page]]
+kind = "section"
+slug = "high-level-languages/exercise"
+title = "Exercise"
+
+[[page]]
+kind = "chapter"
+slug = "glossary"
+title = "Glossary"
 

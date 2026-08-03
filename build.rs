@@ -121,7 +121,7 @@ fn generate_userspace(manifest_dir: &Path, out_dir: &Path) {
 }
 
 // Walk `programs/` for embeddable sources keyed by repo-relative path: every `.hll`,
-// plus `.build`/`.s` under user+example for demo-workspace materialization.
+// plus build and lowering files used by the demo and lesson workspaces.
 fn collect_source_files(dir: &Path, manifest_dir: &Path, out: &mut Vec<SourceFile>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
@@ -140,7 +140,7 @@ fn collect_source_files(dir: &Path, manifest_dir: &Path, out: &mut Vec<SourceFil
         let ext = path.extension().and_then(|ext| ext.to_str());
         let embed = match ext {
             Some("hll") => true,
-            Some("build" | "s") => {
+            Some("build" | "ir" | "s") => {
                 key.starts_with("programs/user/")
                     || key.starts_with("programs/example/")
                     || key.starts_with("programs/lessons/")
@@ -162,7 +162,7 @@ struct SourceFile {
 
 fn render_source_files(sources: &[SourceFile]) -> String {
     let mut out = String::new();
-    out.push_str("\n/// Every bundled `programs/**/*.hll` keyed by repo-relative path.\n");
+    out.push_str("\n/// Bundled program files keyed by repo-relative path.\n");
     out.push_str("pub static SOURCE_FILES: &[(&str, &str)] = &[\n");
     for source in sources {
         writeln!(
@@ -175,7 +175,7 @@ fn render_source_files(sources: &[SourceFile]) -> String {
     }
     out.push_str("];\n\n");
     out.push_str(
-        "/// Look up a bundled program source by its repo-relative `programs/...` path.\n\
+        "/// Look up a bundled program file by its repo-relative `programs/...` path.\n\
          pub fn source_by_path(key: &str) -> Option<&'static str> {\n\
              SOURCE_FILES.iter().find(|(path, _)| *path == key).map(|(_, source)| *source)\n\
          }\n",

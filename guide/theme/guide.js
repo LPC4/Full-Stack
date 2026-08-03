@@ -413,8 +413,9 @@
         loadSandbox()
           .then(function (module) {
             var source = sourceText(code);
+            var language = sandbox.dataset.lang || "asm";
             var bare = sandbox.dataset.wrap === "bare";
-            var result = module.run_asm(source, 100000, bare);
+            var result = module.run_code(language, source, 100000, bare);
             showResult(output, result, sandbox);
             repaint(module, source);
           })

@@ -28,8 +28,8 @@ use crate::pseudo::PseudoInstruction;
 use crate::real::RealInstruction;
 use crate::riscv::rv64i::Srai;
 use crate::riscv::rv64i::{
-    Add, Addi, And, Andi, Ecall, Jalr, Lb, Lbu, Ld, Lui, Mret, Or, Ori, Sb, Sd, SfenceVma, Slli,
-    Sret, Srl, Srli, Sub, Wfi,
+    Add, Addi, Addiw, And, Andi, Ecall, Jalr, Lb, Lbu, Ld, Lui, Mret, Or, Ori, Sb, Sd, SfenceVma,
+    Slli, Sret, Srl, Srli, Sub, Wfi,
 };
 use crate::riscv::rv64m::{
     Div, Divu, Divuw, Divw, Mul, Mulh, Mulhsu, Mulhu, Mulw, Rem, Remu, Remuw, Remw,
@@ -199,6 +199,15 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
         }
         "jal" => try_parse_or_warn!(out, line, "jal", parse_jal(rest)),
         "la" => try_parse_or_warn!(out, line, "la", parse_la(rest)),
+        "jalr" => {
+            if let Some((rd, rs1, imm)) = parse_load_mem(rest) {
+                out.push(AsmToken::Real(RealInstruction::Jalr(Jalr::new(
+                    rd, rs1, imm,
+                ))));
+            } else {
+                asm_warn!(out, "unrecognised jalr: {line}");
+            }
+        }
 
         // --- No-operand instructions ---
         "ecall" => out.push(AsmToken::Real(RealInstruction::Ecall(Ecall))),
@@ -248,7 +257,7 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
         }
 
         // --- I-type: `rd, rs1, imm` format ---
-        "addi" | "andi" | "ori" => {
+        "addi" | "addiw" | "andi" | "ori" => {
             if let Some((rd, rs1, imm)) = parse_r_i_imm(rest) {
                 let inst = i_imm_inst(mnemonic, rd, rs1, imm);
                 out.push(inst);
@@ -380,10 +389,11 @@ fn load_inst(mnemonic: &str, rd: u8, rs1: u8, imm: i32) -> AsmToken {
     }
 }
 
-// Build an I-type ALU immediate `AsmToken` (addi, andi, ori).
+// Build an I-type ALU immediate `AsmToken` (addi, addiw, andi, ori).
 fn i_imm_inst(mnemonic: &str, rd: u8, rs1: u8, imm: i32) -> AsmToken {
     match mnemonic {
         "addi" => AsmToken::Real(RealInstruction::Addi(Addi::new(rd, rs1, imm))),
+        "addiw" => AsmToken::Real(RealInstruction::Addiw(Addiw::new(rd, rs1, imm))),
         "andi" => AsmToken::Real(RealInstruction::Andi(Andi::new(rd, rs1, imm))),
         "ori" => AsmToken::Real(RealInstruction::Ori(Ori::new(rd, rs1, imm))),
         _ => unreachable!(),
@@ -803,6 +813,15 @@ mod tests {
                 (0x01 << 25) | (7 << 20) | (6 << 15) | (funct3 << 12) | (5 << 7) | opcode;
             assert_eq!(word, expected, "{mnemonic}");
         }
+    }
+
+    #[test]
+    fn compiler_i_type_instructions_encode_from_source_text() {
+        assert_eq!(
+            encode_line("addiw s2, a0, 0"),
+            (10 << 15) | (18 << 7) | 0x1b
+        );
+        assert_eq!(encode_line("jalr zero, 0(ra)"), (1 << 15) | 0x67);
     }
 
     // `ble rs1, rs2, L` is the spec pseudo for `bge rs2, rs1, L` (operands swapped).

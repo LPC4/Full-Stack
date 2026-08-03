@@ -23,3 +23,17 @@ f4ccd48e0e320b5a 06_uart/hello_world.s
 5834dd06375e737e 06_uart/print_char.build
 21b8647f0722a8a2 06_uart/print_char.s
 6e3bc289f3a325c1 07_qemu/hello_world.s
+2f6ce30e2c4e770d 08_hll/compiler_pipeline.build
+232fc2ebc6424539 08_hll/compiler_pipeline.hll
+caeba3bffa92136e 08_hll/compiler_pipeline.ir
+2dcd39fd93be875e 08_hll/compiler_pipeline.s
+b0601fd0a8e57573 08_hll/out/asm/compiler_pipeline.s
+caeba3bffa92136e 08_hll/out/ir/compiler_pipeline.ir
+c46889de0a9b0282 09_hll_functions/fibonacci.build
+9cb17d2a4774656b 09_hll_functions/fibonacci.hll
+c991b18b86d6950e 09_hll_functions/fibonacci_template.build
+1b5e7c58f530fb1d 09_hll_functions/fibonacci_template.hll
+3458e9157fb56fe0 09_hll_functions/out/asm/sum_of_squares.s
+e8f6605948ad5b00 09_hll_functions/out/ir/sum_of_squares.ir
+3ceba8fdc2c773a4 09_hll_functions/sum_of_squares.build
+4470a906b5c25a09 09_hll_functions/sum_of_squares.hll

@@ -208,14 +208,6 @@ impl HighLevelCompiler {
         self.pending_global_strings.clear();
         self.global_vars.clear();
         let mut ir_program = IrProgram::new("ir_program");
-        // Emit prelude types so the IR-to-ASM backend can resolve IrType::Named references
-        // in modules that lack their own type declarations.
-        for (name, ty) in &self.prelude_types {
-            ir_program.push_type_alias(IrTypeAlias {
-                name: name.clone(),
-                ty: ty.clone(),
-            });
-        }
 
         // Named types must register before enum payload layouts: enums are visited first,
         // and an unresolved struct payload would contribute zero bytes to the layout.
@@ -295,6 +287,7 @@ impl HighLevelCompiler {
         for global_string in self.pending_global_strings.drain(..) {
             ir_program.push_global_string(global_string);
         }
+        type_aliases::emit_referenced_prelude_types(&mut ir_program, &self.prelude_types);
 
         Ok(ir_program)
     }
@@ -305,5 +298,6 @@ mod declarations;
 mod enums;
 mod expressions;
 mod literals;
+mod type_aliases;
 mod types;
 mod utils;

@@ -1,7 +1,7 @@
 [package]
 name = "full_stack_guide_wasm"
 version = "0.1.0"
-description = "In-page RISC-V assembly sandbox for the Full-Stack Guide"
+description = "In-page HLL and RISC-V sandbox for the Full-Stack Guide"
 repository = "https://github.com/LPC4/Full-Stack"
 license = "MIT OR Apache-2.0"
 edition = "2024"
@@ -14,6 +14,8 @@ path = "src/lib.rs"
 
 [dependencies]
 asm_to_binary = { path = "../../crates/asm-to-binary" }
+hll_to_ir = { path = "../../crates/hll-to-ir" }
+ir_to_asm = { path = "../../crates/ir-to-asm" }
 virtual_machine = { path = "../../crates/virtual-machine" }
 fs_utils = { path = "../../crates/fs-utils" }
 

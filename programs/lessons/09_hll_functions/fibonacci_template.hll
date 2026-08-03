@@ -1,0 +1,9 @@
+fibonacci: (n: i32) -> i32 {
+    return 0
+}
+
+main: () -> i32 {
+    if fibonacci(0) != 0 { return 1 }
+    if fibonacci(1) != 1 { return 2 }
+    return fibonacci(12)
+}

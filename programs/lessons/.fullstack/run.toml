@@ -86,3 +86,32 @@ present = "terminal"
 max_steps_per_frame = 200000
 debug = true
 
+[[config]]
+type = "hosted"
+build = "08_hll/compiler_pipeline.build"
+present = "terminal"
+max_steps_per_frame = 200000
+debug = false
+
+[[config]]
+type = "hosted"
+build = "09_hll_functions/sum_of_squares.build"
+present = "terminal"
+max_steps_per_frame = 200000
+debug = false
+
+[[config]]
+type = "hosted"
+build = "09_hll_functions/fibonacci_template.build"
+present = "terminal"
+max_steps_per_frame = 200000
+debug = true
+breakpoint = "fibonacci"
+
+[[config]]
+type = "hosted"
+build = "09_hll_functions/fibonacci.build"
+present = "terminal"
+max_steps_per_frame = 200000
+debug = true
+breakpoint = "fibonacci"

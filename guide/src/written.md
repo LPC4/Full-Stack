@@ -424,14 +424,21 @@ first argument goes.
 
 But then there's an issue. What if a function wants to call another function? It'll do a `jal` of its own,
 the return address in `ra` gets overwritten, and now the outer function can't return to its caller
-anymore. This is where a really important concept comes in: the *function stack frame*. At the
+anymore.
+
+### Stack frames
+
+This is where a really important concept comes in: the *function stack frame*. At the
 top of the function, in what's called the *prologue*, you move `sp` down by the size of your frame (a
 multiple of 16, since the convention keeps `sp` aligned to 16 bytes), and then you `sd` everything that has
 to survive into the slots you just reserved: `ra` first and foremost (so it can be restored later),
-plus any `s` registers you plan to use. That last part is the other half of the convention: a call is allowed to clobber
-(or overwrite) any `a` or `t` register, but the `s` registers are "saved" registers that must come out of a call unchanged,
+plus any `s` registers you plan to use.
+
+That last part is the other half of the convention: a call is allowed to clobber (or overwrite) any `a` or `t`
+register, but the `s` registers are "saved" registers that must come out of a call unchanged,
 so if you want to use one, you have to save its old value first, because it belongs to your caller. At the end of the
 function, the *epilogue* undoes all of it in reverse: `ld` the saved registers back, move `sp` up, `ret`.
+
 Here's a function that needs all of it, `max3`, which finds the largest of three numbers by calling `max`
 twice:
 
@@ -1081,5 +1088,359 @@ someone chose.
 
 So we've got to abstract this out even further. An operating system can hide hardware differences behind a stable interface:
 when you call `println`, your program does not need to know which UART the machine has or where it lives. But even with
-that interface, writing everything in assembly does not scale. So next we'll move up to a higher-level language and
+that interface, writing everything in assembly takes a lot of effort. So next we'll move up to a higher-level language and
 build the compiler that turns readable programs into the instructions we now understand.
+
+## High-Level Languages
+
+As I said before, writing code in assembly does not scale very well. It is slow to write, difficult to debug and
+has a lot of repetition. That does not make large assembly programs impossible: the original
+[RollerCoaster Tycoon](https://www.chrissawyer.com/faq3.htm) was written almost entirely in x86 assembly.
+It just takes a lot more work.
+
+That is why people started inventing higher-level languages. Early languages such as Lisp and COBOL already made
+programs easier to express than assembly, and C later made it practical to write readable systems software
+without spelling out every CPU instruction by hand.
+
+We will not be going over C in this chapter, though. Instead, we will use a custom language I invented: HLL, which
+stands for High-Level Language (I know, original). You can find its full
+[language specification here](repo:crates/hll-to-ir/_LANG_SPECIFICATIONS.md).
+
+It started as a hobby project, and after a lot of iteration it finally feels ready to showcase. So let's have a look.
+
+### Compilers and IR
+
+Before we take a look at HLL, we first need to know what compilers do, and how they do it. This makes some of the design
+decisions easier to understand.
+
+A compiler translates a higher-level language into something a machine can execute. For a native program that
+usually ends in machine code for an instruction set such as x86 or RISC-V. Other compilers target bytecode for a
+virtual machine instead, like WebAssembly. This translation is necessary because a CPU cannot execute
+higher-level instructions directly of course.
+
+The translation is not very straightforward. The compiler has to turn expressions into individual instructions,
+decide where values live, pass function arguments, create stack frames and do all the other work we previously had
+to do ourselves in assembly.
+
+It is possible to translate HLL directly into RISC-V, but doing everything in one step would get messy very quickly.
+Instead, the compiler first translates it into an *intermediate representation*, or IR. You can think of IR as a
+small language between HLL and assembly. It makes each translation step simpler and gives the compiler a convenient
+place to optimize the program.
+
+![HLL moves through IR and RISC-V assembly before becoming machine code.](figures/compiler_pipeline.svg)
+
+This separation also makes the compiler easier to port. If I wanted HLL programs to run on an x86 machine, the HLL
+front end could stay the same. I would only need to replace the back end that translates IR into RISC-V with one that
+translates IR into x86.
+
+### An example
+
+All right, let's make this pipeline more concrete. Here is about the smallest useful HLL program we can write:
+
+```hll
+main: () -> i32 {
+    return 1 + 1
+}
+```
+
+[Open the complete compiler-pipeline lesson in the IDE](repo:programs/lessons/08_hll/compiler_pipeline.hll).
+The link opens the Lessons workspace and selects its matching `08: HLL compiler pipeline` run configuration. The
+folder also contains the [IR code](repo:programs/lessons/08_hll/compiler_pipeline.ir), the
+[RISC-V code](repo:programs/lessons/08_hll/compiler_pipeline.s) and the
+[build manifest](repo:programs/lessons/08_hll/compiler_pipeline.build).
+
+This defines a function named `main`, which is where the program starts. The empty parentheses mean it takes no
+arguments, `i32` is its return type and the body returns the result of `1 + 1`.
+
+The first stage of the compiler translates that program into this IR:
+
+```ir
+define main() -> i32 {
+entry:
+    $0 = add i32 1, 1
+    ret $0
+}
+```
+
+The expression is already broken into simpler steps. `add i32 1, 1` adds two 32-bit integers and stores the result
+in the temporary `$0`. The next instruction returns that temporary. IR still has useful concepts such as types and
+an unlimited supply of temporary values, but every operation is now explicit and easier to translate.
+
+The back end then translates that IR into RISC-V assembly. With the compiler's extra comments removed, the
+generated function looks like this:
+
+```asm
+.section .text
+main:
+  addi sp, sp, -16
+  sd   ra, 8(sp)
+  sd   s2, 0(sp)
+
+main__entry:
+  addi  t0, zero, 1
+  addi  t1, zero, 1
+  add   s2, t0, t1
+  addiw s2, s2, 0
+  addi  a0, s2, 0
+
+  ld   s2, 0(sp)
+  ld   ra, 8(sp)
+  addi sp, sp, 16
+  jalr zero, 0(ra)
+```
+
+The middle of the function is the translation we were looking for: load both `1`s, add them and move the result
+into `a0`, the return-value register. The rest is the function prologue and epilogue we saw earlier. Even this tiny
+program already shows why having the IR as a separate step is useful.
+
+The manifest sets `out = "out"`. I've already built this lesson with the native `fsc` tool, so the exact
+[compiler generated IR](repo:programs/lessons/08_hll/out/ir/compiler_pipeline.ir) and
+[compiler generated assembly](repo:programs/lessons/08_hll/out/asm/compiler_pipeline.s)
+are in that folder and can be opened in the browser too.
+
+### From HLL to an executable
+
+The pipeline diagram ended at machine code, but the IDE has one more button next to `IR` and `ASM`: `ELF`. ELF
+stands for *Executable and Linkable Format*, and it is the final file produced by the linker.
+
+Before, we encoded our assembly directly, placed those bytes into a CPU and started executing them. There were
+no extra layers because our assembly was the entire program and it already knew the exact machine it was
+running on. We can still do that, but it is not a great way to build reusable programs. Every program would have to
+set up everything itself and know details such as the stack location, MMIO addresses and how to stop the machine.
+
+Instead, we can put a small amount of supporting code around the program. It prepares whatever the program needs
+before `main` begins and deals with the result after `main` returns. This supporting environment is called a
+*runtime*.
+
+A reusable collection of this supporting code and other common functionality is called a *standard library*.
+Later, an operating system will provide another layer between programs and the hardware. We will build all of that
+later. For now, the important point is that they keep machine-specific details out of our HLL file.
+
+`main` is not actually the first function that runs. The real entry point is `_start`, and its address is recorded in
+the ELF. Depending on the target, `_start` could prepare the stack pointer, initialize memory or set up access to
+devices before calling `main`. In this example the VM has already prepared the stack, so `_start` calls `main` and
+waits for it to return. When `main` returns `2`, execution goes back to `_start`, which stops the machine with exit
+code `2`.
+
+The compiler turns our HLL program and the supporting code into separate *object files*. Each one contains machine
+code and data, but it is not a complete executable on its own. The linker combines those objects, resolves references
+between them, lays out their sections and produces one ELF file. Besides the instructions and data, the ELF records
+the instruction set it contains, its entry address, the sections and memory segments, their sizes and their flags.
+The complete structure is described in the
+[ELF specification](https://gabi.xinuos.com/elf/).
+
+![Linking the program and its supporting code into one ELF.](figures/linking_hll_executable.svg)
+
+This is also why the HLL source can be modular and reusable while the ELF is still machine-specific. ELF files can
+contain x86, RISC-V and many other kinds of machine code, but a CPU cannot execute all of them. An ELF is also still
+a file, so it has to be placed into memory before the CPU can run it. That is the loader's job. It reads the ELF
+header and checks whether it understands that file. This ELF is built for RISC-V and this project's machine
+environment. To run the same program on a RISC-V QEMU machine, we would port the supporting library to QEMU's memory
+map and devices and link it again. The HLL source itself could stay the same.
+
+### Watching it run
+
+The nice thing about the debugger is that it runs the final linked ELF, not just the instructions generated for our
+HLL file. By stepping one instruction at a time, we can see what the standard library does before and after `main`,
+and exactly where control moves between its code and ours.
+
+![Instruction stepping moves from library code into main and back.](figures/stdlib_execution_path.svg)
+
+To watch it happen, open the [example](repo:programs/lessons/08_hll/compiler_pipeline.hll) and click `build`. The
+spine on the left lights up, and its buttons let you inspect the HLL, IR, assembly and final ELF.
+
+Then click `debug`, switch to `disasm`, select `instr` and keep the step count at `1`. Execution begins in `_start`,
+which belongs to the standard library. Keep stepping and you will see it call `main`, where the instructions from our
+HLL file calculate `1 + 1`. When `main` returns, `a0` contains `2` and execution moves back into the standard library,
+which uses that value to stop the machine with exit code `2`. This is the boundary the linker normally hides: in the
+disassembly, you can walk across it one instruction at a time.
+
+### Another example
+
+Our first program showed the pipeline, but it did not show what happens when one function calls another. For that,
+let's revisit the sum-of-squares program from the stack-frame lesson, this time written in HLL:
+
+```hll,runnable expect=a0:25
+square: (value: i32) -> i32 {
+    return value * value
+}
+
+sum_of_squares: (a: i32, b: i32) -> i32 {
+    return square(a) + square(b)
+}
+
+main: () -> i32 {
+    return sum_of_squares(3, 4)
+}
+```
+
+[Open the lesson 09 source in the IDE](repo:programs/lessons/09_hll_functions/sum_of_squares.hll).
+`main` calls `sum_of_squares` with `3` and `4`. That function squares both arguments, adds the results and returns
+`25`. You can check the complete pipeline from the command line:
+
+```sh
+fsc run programs/lessons/09_hll_functions/sum_of_squares.hll
+```
+
+The program stops with exit code `25`. Now let's look at the
+[generated IR](repo:programs/lessons/09_hll_functions/out/ir/sum_of_squares.ir):
+
+```ir
+define square($value: i32) -> i32 {
+entry:
+    $value_ptr = stack_alloc i32
+    store i32 $value, $value_ptr
+    $0 = load i32, $value_ptr
+    $1 = load i32, $value_ptr
+    $2 = mul i32 $0, $1
+    ret $2
+}
+
+define sum_of_squares($a: i32, $b: i32) -> i32 {
+entry:
+    $a_ptr = stack_alloc i32
+    store i32 $a, $a_ptr
+    $b_ptr = stack_alloc i32
+    store i32 $b, $b_ptr
+    $0 = load i32, $a_ptr
+    $1 = call square($0)
+    $2 = load i32, $b_ptr
+    $3 = call square($2)
+    $4 = add i32 $1, $3
+    ret $4
+}
+
+define main() -> i32 {
+entry:
+    $0 = call sum_of_squares(3, 4)
+    ret $0
+}
+```
+
+Each HLL function becomes an IR function with the same parameters and return type. The `call` instructions name
+their arguments explicitly and produce new temporary values, just like `add` and `mul`. Parameters are copied into
+stack slots before they are used. That looks redundant here, and an optimizer could remove much of it, but we are
+leaving optimization disabled so every lowering step remains visible.
+
+The back end then decides how to express those operations using the RISC-V calling convention. With the
+compiler's extra comments removed again, `sum_of_squares` looks like this. The few lines around it call the
+function with `3` and `4` so you can run it here. You can also open the
+[complete generated assembly](repo:programs/lessons/09_hll_functions/out/asm/sum_of_squares.s) to see the raw
+output.
+
+```asm,runnable expect=a0:25
+  li    a0, 3
+  li    a1, 4
+  jal   ra, sum_of_squares
+  j     done
+
+square:
+  mulw  a0, a0, a0
+  ret
+
+sum_of_squares:
+  addi  sp, sp, -48
+  sd    ra, 32(sp)
+  sd    s2, 16(sp)
+  sd    s3, 24(sp)
+  addi  t0, sp, 48
+  addiw s2, a0, 0
+  addiw s3, a1, 0
+
+sum_of_squares__entry:
+  addi  t0, sp, 0
+  sw    s2, 0(t0)
+  addi  t0, sp, 8
+  sw    s3, 0(t0)
+  addi  t0, sp, 0
+  lw    s2, 0(t0)
+  addi  a0, s2, 0
+  jal   ra, square
+  addiw s2, a0, 0
+  addi  t0, sp, 8
+  lw    s3, 0(t0)
+  addi  a0, s3, 0
+  jal   ra, square
+  addiw s3, a0, 0
+  add   s2, s2, s3
+  addiw s2, s2, 0
+  addi  a0, s2, 0
+
+  ld    s3, 24(sp)
+  ld    s2, 16(sp)
+  ld    ra, 32(sp)
+  addi  sp, sp, 48
+  jalr  zero, 0(ra)
+
+done:
+```
+
+The arguments arrive in `a0` and `a1`, just as they did in our handwritten assembly. Before each call to `square`,
+the next argument is placed in `a0`. Afterward, the return value is copied out of `a0`. The two results stay in
+`s2` and `s3` until `add` combines them, then the final result goes back into `a0` for the caller.
+
+Because `jal` overwrites `ra`, the prologue saves it before either call. It also saves `s2` and `s3`, since those
+registers belong to the caller, and the epilogue restores all three. This is the same calling-convention
+we wrote by hand in the earlier lessons. The difference is that the compiler has now derived it itself.
+
+You can immediately see that this code isn't optimized: it has lots of repetition and unnecessary stack usage.
+This was one of the issues with early compilers. People didn't want to use them because writing in assembly was
+just faster. But as compilers progressed, so did optimization techniques, and today assembly created by a compiler
+is almost always faster than handwritten assembly.
+
+### HLL examples
+
+The next few chapters use HLL, but they will focus on what happens below the source code rather than teaching
+general programming. For a practical language reference, open the `demo workspace` in the IDE and expand
+`programs/example`. Every folder there is a complete program with its own run configuration, so you can run,
+edit and experiment with the examples directly.
+
+Start with [core basics](repo:programs/example/core_basics/core_basics.hll) for declarations, functions and
+control flow. The rest of the folder divides the language into focused examples:
+
+- [operators](repo:programs/example/operators/operators.hll)
+- [arrays, slices and ranges](repo:programs/example/arrays_slices_and_ranges/arrays_slices_and_ranges.hll)
+- [structs and binding](repo:programs/example/structs_and_binding/structs_and_binding.hll)
+- [pointers and places](repo:programs/example/pointers_and_places/pointers_and_places.hll)
+- [generics](repo:programs/example/generics/generics.hll)
+- [enums, match and results](repo:programs/example/enums_match_and_result/enums_match_and_result.hll)
+- [strings and iteration](repo:programs/example/strings_and_iteration/strings_and_iteration.hll)
+- [compile-time math](repo:programs/example/compile_time_math/compile_time_math.hll)
+- [advanced language features](repo:programs/example/hll2_completion_showcase/hll2_completion_showcase.hll)
+
+Most HLL constructs should already look familiar. These are the conventions most likely to be new:
+
+| Syntax | Meaning |
+| --- | --- |
+| `; comment` | A line comment. Semicolons are not statement terminators. |
+| `name: Type = value` | A binding with an explicit type. |
+| `name := value` | A binding whose type is inferred. |
+| `name = value` | Assignment to an existing binding. |
+| `name: (arg: Type) -> Return { ... }` | A function. Leave out `-> Return` when it returns nothing. |
+| `T*`, `&place`, `@pointer` | A pointer type, taking an address and reading or writing a whole pointee. |
+| `value as Type` | An explicit postfix cast. |
+| `T[N]`, `T[]` | A fixed array and a bounds-checked slice. |
+
+The [language specification](repo:crates/hll-to-ir/_LANG_SPECIFICATIONS.md) is the complete reference when an
+example is not enough.
+
+### Exercise
+
+Now it's your turn. Write a function that calculates the `n`th Fibonacci number, where the sequence starts
+with `0, 1, 1, 2, 3, 5`. Do it with a loop rather than recursion: handle `0` and `1` first, then keep track of
+the previous number, the current number and which position you have reached.
+
+The template is
+[`09_hll_functions/fibonacci_template.hll`](repo:programs/lessons/09_hll_functions/fibonacci_template.hll), with
+the run configuration `09.2 (template): fibonacci`. It checks the first two numbers before calling
+`fibonacci(12)`, so the finished program should stop with exit code `144`.
+
+Once it works, open the generated IR. Find the branch for the `0` and `1` case, the branch that controls the loop
+and the jump that takes execution back around. Then start the debugger and step through a few iterations of the
+loop. This is the same ordinary control flow you wrote in HLL, just spread across explicit basic blocks.
+
+If you get stuck, the finished version is
+[`09_hll_functions/fibonacci.hll`](repo:programs/lessons/09_hll_functions/fibonacci.hll), with the run configuration
+`09.3 (solution): fibonacci`.
+
+For a quick reminder of the systems terminology used so far, see the [glossary](../../glossary/).

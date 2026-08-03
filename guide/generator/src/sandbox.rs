@@ -3,7 +3,8 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::SystemTime;
+
+use crate::freshness;
 
 pub enum Outcome {
     Fresh,
@@ -11,36 +12,30 @@ pub enum Outcome {
     NoToolchain,
 }
 
-fn newest(path: &Path) -> Option<SystemTime> {
-    let meta = std::fs::metadata(path).ok()?;
-    if !meta.is_dir() {
-        return meta.modified().ok();
-    }
-    std::fs::read_dir(path)
-        .ok()?
-        .filter_map(|entry| newest(&entry.ok()?.path()))
-        .max()
-}
-
 // The wasm crate and every local crate it pulls in.
 fn sources(root: &Path) -> Vec<PathBuf> {
     let wasm = root.join("wasm");
     let mut paths = vec![wasm.join("src"), wasm.join("Cargo.toml")];
     if let Some(repo) = root.parent() {
-        paths.push(repo.join("crates/fs-utils/src/syntax_highlight"));
+        paths.push(repo.join("Cargo.lock"));
+        for name in [
+            "asm-to-binary",
+            "fs-utils",
+            "hll-to-ir",
+            "ir-to-asm",
+            "os-runtime",
+            "virtual-machine",
+        ] {
+            paths.push(repo.join("crates").join(name));
+        }
     }
     paths
 }
 
 fn is_stale(root: &Path) -> bool {
     let bundle = root.join("wasm/pkg/full_stack_guide_wasm_bg.wasm");
-    let Some(built) = newest(&bundle) else {
-        return true;
-    };
-    sources(root)
-        .iter()
-        .filter_map(|path| newest(path))
-        .any(|source| source > built)
+    let marker = root.join("../target/full-stack-guide-wasm.stamp");
+    freshness::is_stale(&marker, &bundle, &sources(root))
 }
 
 pub fn ensure(root: &Path, force: bool) -> Result<Outcome, String> {
@@ -68,7 +63,11 @@ pub fn ensure(root: &Path, force: bool) -> Result<Outcome, String> {
         .status();
 
     match status {
-        Ok(status) if status.success() => Ok(Outcome::Rebuilt),
+        Ok(status) if status.success() => {
+            freshness::mark(&root.join("../target/full-stack-guide-wasm.stamp"))
+                .map_err(|error| format!("cannot record sandbox build: {error}"))?;
+            Ok(Outcome::Rebuilt)
+        }
         Ok(status) => Err(format!("wasm-pack failed ({status})")),
         // Missing toolchain is not fatal: the pages still render without it.
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Outcome::NoToolchain),
@@ -89,10 +88,8 @@ mod tests {
     fn sources_cover_the_shared_highlighter() {
         let paths = sources(Path::new("guide"));
         assert!(paths.iter().any(|p| p.ends_with("wasm/src")));
-        assert!(
-            paths
-                .iter()
-                .any(|p| p.ends_with("crates/fs-utils/src/syntax_highlight"))
-        );
+        assert!(paths.iter().any(|p| p.ends_with("crates/fs-utils")));
+        assert!(paths.iter().any(|p| p.ends_with("crates/hll-to-ir")));
+        assert!(paths.iter().any(|p| p.ends_with("crates/ir-to-asm")));
     }
 }

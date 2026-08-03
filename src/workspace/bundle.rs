@@ -65,7 +65,7 @@ pub fn populate_lessons_workspace(fs: &mut dyn WorkspaceFs) -> io::Result<()> {
 }
 
 // Titles are not listed here; they come from each manifest's `title` field.
-const LESSONS: [(&str, &str, bool); 12] = [
+const LESSONS: [(&str, &str, bool); 16] = [
     ("01_sum/sum.build", "loop", false),
     ("02_array_sum/array_sum.build", "", false),
     ("03_reverse_array/reverse_array_template.build", "", false),
@@ -78,17 +78,37 @@ const LESSONS: [(&str, &str, bool); 12] = [
     ("06_uart/hello_raw.build", "", false),
     ("06_uart/print_char.build", "", true),
     ("06_uart/hello_world.build", "", true),
+    ("08_hll/compiler_pipeline.build", "", false),
+    ("09_hll_functions/sum_of_squares.build", "", false),
+    (
+        "09_hll_functions/fibonacci_template.build",
+        "fibonacci",
+        true,
+    ),
+    ("09_hll_functions/fibonacci.build", "fibonacci", true),
+];
+
+const HOSTED_LESSONS: [&str; 4] = [
+    "08_hll/compiler_pipeline.build",
+    "09_hll_functions/sum_of_squares.build",
+    "09_hll_functions/fibonacci_template.build",
+    "09_hll_functions/fibonacci.build",
 ];
 
 fn lesson_run_configs() -> String {
     let mut store = RunConfigStore::default();
     for (build, breakpoint, debug) in LESSONS {
+        let kind = if HOSTED_LESSONS.contains(&build) {
+            RunKind::Hosted
+        } else {
+            RunKind::Freestanding
+        };
         let Ok(build) = VPath::parse(build) else {
             continue;
         };
         let mut config = RunConfig::hosted(String::new(), build);
         config.name_from_manifest = true;
-        config.kind = RunKind::Freestanding;
+        config.kind = kind;
         config.run.present = PresentMode::Terminal;
         if !breakpoint.is_empty() {
             config.debug.breakpoints.push(breakpoint.to_owned());
@@ -305,6 +325,20 @@ mod tests {
             "05_stack_frames/sum_of_squares.build",
             "05_stack_frames/sum_of_squares_template.s",
             "05_stack_frames/sum_of_squares_template.build",
+            "08_hll/compiler_pipeline.hll",
+            "08_hll/compiler_pipeline.ir",
+            "08_hll/compiler_pipeline.s",
+            "08_hll/compiler_pipeline.build",
+            "08_hll/out/ir/compiler_pipeline.ir",
+            "08_hll/out/asm/compiler_pipeline.s",
+            "09_hll_functions/sum_of_squares.hll",
+            "09_hll_functions/sum_of_squares.build",
+            "09_hll_functions/fibonacci_template.hll",
+            "09_hll_functions/fibonacci_template.build",
+            "09_hll_functions/fibonacci.hll",
+            "09_hll_functions/fibonacci.build",
+            "09_hll_functions/out/ir/sum_of_squares.ir",
+            "09_hll_functions/out/asm/sum_of_squares.s",
         ] {
             assert!(
                 fs.read_file(&VPath::parse(path).expect("path")).is_ok(),
@@ -318,9 +352,14 @@ mod tests {
         );
 
         let store = RunConfigStore::load(&fs).expect("run configs parse");
-        assert_eq!(store.configs.len(), 12);
-        for config in &store.configs {
-            assert_eq!(config.kind, RunKind::Freestanding);
+        assert_eq!(store.configs.len(), LESSONS.len());
+        for (config, (build, _, _)) in store.configs.iter().zip(LESSONS) {
+            let expected_kind = if HOSTED_LESSONS.contains(&build) {
+                RunKind::Hosted
+            } else {
+                RunKind::Freestanding
+            };
+            assert_eq!(config.kind, expected_kind);
             let crate::runconfig::BuildRef::Manifest(path) = &config.build else {
                 panic!("lesson config must reference a manifest");
             };
@@ -353,9 +392,11 @@ mod tests {
             "/programs/lessons/.fullstack/run.toml"
         );
         let on_disk = std::fs::read_to_string(path).expect("read materialized run.toml");
+        let on_disk = on_disk.replace("\r\n", "\n");
+        let generated = lesson_run_configs().replace("\r\n", "\n");
         assert_eq!(
-            on_disk.replace("\r\n", "\n"),
-            lesson_run_configs().replace("\r\n", "\n"),
+            on_disk.trim_end(),
+            generated.trim_end(),
             "programs/lessons/.fullstack/run.toml is stale; regenerate it from lesson_run_configs"
         );
     }

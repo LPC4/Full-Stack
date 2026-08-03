@@ -1,6 +1,8 @@
-//! Runs Guide assembly snippets on the real VM, and re-highlights edited source.
+//! Compiles and runs Guide snippets on the real VM, and re-highlights edited source.
 
 use asm_to_binary::{AssembledOutput, Assembler, parse_asm_source};
+use hll_to_ir::{CompileConfig, HllCompiler, TargetMode};
+use ir_to_asm::CompilerRv64;
 use serde::Serialize;
 use virtual_machine::RunResult;
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
@@ -89,6 +91,34 @@ fn run_to_marker(vm: &mut VirtualMachine, marker_pc: u64, max_steps: u64) -> Run
     }
 }
 
+fn outcome_from_result(vm: &VirtualMachine, result: RunResult) -> Outcome {
+    let RunResult {
+        steps,
+        uart_output,
+        outcome,
+    } = result;
+    let registers = vm.peek_all_xregs();
+    Outcome {
+        error: None,
+        uart: uart_output,
+        exit_code: match outcome {
+            StepOutcome::Halted(code) => Some(code as i32),
+            StepOutcome::Continue => None,
+        },
+        steps,
+        max_steps_reached: matches!(outcome, StepOutcome::Continue),
+        pc: format!("{:#x}", vm.peek_pc()),
+        registers: ABI_NAMES
+            .iter()
+            .zip(registers)
+            .map(|(name, value)| Register {
+                name,
+                value: format!("{value:#x}"),
+            })
+            .collect(),
+    }
+}
+
 fn needs_wrapping(source: &str) -> bool {
     !source.lines().any(|line| {
         line.split(['#', ';'])
@@ -167,31 +197,61 @@ pub fn run(source: &str, max_steps: u64, bare: bool) -> Outcome {
     } else {
         vm.run(max_steps)
     };
-    let RunResult {
-        steps,
-        uart_output,
-        outcome,
-    } = result;
+    outcome_from_result(&vm, result)
+}
 
-    let registers = vm.peek_all_xregs();
-    Outcome {
-        error: None,
-        uart: uart_output,
-        exit_code: match outcome {
-            StepOutcome::Halted(code) => Some(code as i32),
-            StepOutcome::Continue => None,
-        },
-        steps,
-        max_steps_reached: matches!(outcome, StepOutcome::Continue),
-        pc: format!("{:#x}", vm.peek_pc()),
-        registers: ABI_NAMES
-            .iter()
-            .zip(registers)
-            .map(|(name, value)| Register {
-                name,
-                value: format!("{value:#x}"),
-            })
-            .collect(),
+/// Compiles a standalone HLL program and runs its `main` return value as the exit code.
+pub fn run_hll(source: &str, max_steps: u64) -> Outcome {
+    let compiler = HllCompiler::new(CompileConfig {
+        target: TargetMode::Hosted,
+        strict: true,
+        source_file: Some(SNIPPET.to_owned()),
+        ..CompileConfig::default()
+    });
+    let output = match compiler.compile(source) {
+        Ok(output) => output,
+        Err(diagnostics) => {
+            let message = diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.render(SNIPPET))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            return Outcome::failed(message);
+        }
+    };
+    if !output
+        .ir
+        .functions
+        .iter()
+        .any(|function| function.name == "main")
+    {
+        return Outcome::failed("HLL sandbox programs need a `main` function");
+    }
+
+    let entry = ".section .text\n\
+                 .globl _start\n\
+                 _start:\n\
+                   jal  ra, main\n\
+                   li   t0, 0x10010000\n\
+                   sd   a0, 0(t0)\n";
+    let mut tokens = parse_asm_source(Some(SNIPPET), entry);
+    let (_, compiled) = CompilerRv64::new().compile_with_tokens(&output.ir);
+    tokens.extend(compiled);
+    let assembled = match Assembler::assemble(&tokens) {
+        Ok(assembled) => assembled,
+        Err(error) => return Outcome::failed(error.message),
+    };
+    let mut vm = VirtualMachine::new(&assembled);
+    let result = vm.run(max_steps);
+    outcome_from_result(&vm, result)
+}
+
+/// Runs one of the source languages supported by editable Guide examples.
+pub fn run_source(lang: &str, source: &str, max_steps: u64, bare: bool) -> Outcome {
+    match lang {
+        "asm" => run(source, max_steps, bare),
+        "hll" => run_hll(source, max_steps),
+        _ => Outcome::failed(format!("runnable `{lang}` blocks are not supported")),
     }
 }
 
@@ -201,6 +261,13 @@ pub fn run(source: &str, max_steps: u64, bare: bool) -> Outcome {
 #[wasm_bindgen]
 pub fn run_asm(source: &str, max_steps: u32, bare: bool) -> JsValue {
     let outcome = run(source, u64::from(max_steps), bare);
+    serde_wasm_bindgen::to_value(&outcome).unwrap_or(JsValue::NULL)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn run_code(lang: &str, source: &str, max_steps: u32, bare: bool) -> JsValue {
+    let outcome = run_source(lang, source, u64::from(max_steps), bare);
     serde_wasm_bindgen::to_value(&outcome).unwrap_or(JsValue::NULL)
 }
 
@@ -308,19 +375,43 @@ mod tests {
     }
 
     #[test]
+    fn hll_runs_through_the_compiler_backend_and_vm() {
+        let source = "main: () -> i32 {\n    return 20 + 5\n}\n";
+        let outcome = run_hll(source, STEPS);
+
+        assert!(outcome.error.is_none(), "{:?}", outcome.error);
+        assert_eq!(outcome.exit_code, Some(25));
+        let a0 = outcome
+            .registers
+            .iter()
+            .find(|register| register.name == "a0")
+            .expect("a0 is always reported");
+        assert_eq!(a0.value, "0x19");
+    }
+
+    #[test]
     fn every_runnable_guide_example_executes_and_matches_expectations() {
         let markdown = include_str!("../../src/written.md");
         let mut runnable = false;
         let mut bare = false;
+        let mut language = String::new();
         let mut expected = Vec::new();
         let mut source = String::new();
         let mut count = 0;
         let mut expectation_count = 0;
 
         for line in markdown.lines() {
-            if !runnable && line.starts_with("```asm,runnable") {
+            let fence = line.strip_prefix("```");
+            if !runnable
+                && fence.is_some_and(|info| {
+                    (info.starts_with("asm,") || info.starts_with("hll,"))
+                        && info.contains("runnable")
+                })
+            {
                 runnable = true;
-                bare = line.starts_with("```asm,runnable=bare");
+                let info = fence.expect("checked above");
+                language = info.split(',').next().unwrap_or("").to_owned();
+                bare = info.starts_with("asm,runnable=bare");
                 expected = line
                     .split_whitespace()
                     .find_map(|part| part.strip_prefix("expect="))
@@ -338,10 +429,10 @@ mod tests {
                     .collect();
                 source.clear();
             } else if runnable && line == "```" {
-                let outcome = run(&source, 100_000, bare);
+                let outcome = run_source(&language, &source, 100_000, bare);
                 assert!(
                     outcome.error.is_none(),
-                    "example {count}: {:?}",
+                    "{language} example {count}: {:?}",
                     outcome.error
                 );
                 assert_ne!(outcome.exit_code, Some(-1), "example {count} trapped");
@@ -379,7 +470,7 @@ mod tests {
             }
         }
 
-        assert!(!runnable, "unterminated runnable assembly fence");
+        assert!(!runnable, "unterminated runnable code fence");
         assert!(count > 0, "the Guide should contain runnable examples");
         assert!(
             expectation_count > 0,

@@ -1,0 +1,8 @@
+name = "fibonacci"
+title = "09.3 (solution): fibonacci"
+root = "fibonacci.hll"
+target = "hosted"
+entry = "_start"
+stdlib = "hosted"
+import_closure = true
+mangle_symbols = false

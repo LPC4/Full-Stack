@@ -1334,6 +1334,8 @@ version = "0.1.0"
 dependencies = [
  "asm_to_binary",
  "fs_utils",
+ "hll_to_ir",
+ "ir_to_asm",
  "serde",
  "serde-wasm-bindgen",
  "virtual_machine",
