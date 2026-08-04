@@ -175,3 +175,33 @@ kind = "chapter"
 slug = "glossary"
 title = "Glossary"
 
+[[page]]
+kind = "section"
+slug = "glossary/cpu-and-execution"
+title = "CPU and execution"
+
+[[page]]
+kind = "section"
+slug = "glossary/memory-and-devices"
+title = "Memory and devices"
+
+[[page]]
+kind = "section"
+slug = "glossary/assembly-and-executable-files"
+title = "Assembly and executable files"
+
+[[page]]
+kind = "section"
+slug = "glossary/compilers-and-languages"
+title = "Compilers and languages"
+
+[[page]]
+kind = "section"
+slug = "glossary/functions-and-the-abi"
+title = "Functions and the ABI"
+
+[[page]]
+kind = "section"
+slug = "glossary/debugger"
+title = "Debugger"
+

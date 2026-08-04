@@ -34,8 +34,8 @@ RISC-V takes the opposite mindset: keep the CPU instructions minimal and let the
 what the name means: RISC stands for Reduced Instruction Set Computer, and the V is there because it's the fifth
 RISC design.
 
-I chose RISC-V because it's way simpler to emulate (fewer instructions) and because I agree with the mindset of
-keeping the assembly simple. (x86 actually also gets broken down into a RISC-like microcode, inside the CPU itself.)
+I chose RISC-V because its instruction formats are much more regular, which makes it simpler to emulate, and because
+I agree with the mindset of keeping the assembly simple.
 
 You can find the RISC-V specifications as used in this project
 [here](repo:crates/asm-to-binary/_RISCV_SPECIFICATIONS.md). It's not necessary to start memorizing them: most of it
@@ -124,8 +124,8 @@ Every allocation pushes the end of the heap towards higher addresses.
 
 ![](figures/the_stack_and_the_heap.svg)
 
-You can probably see the danger: if the stack grows down too far, or the heap grows up too far, they meet and start
-overwriting each other. That is an overflow. This is exactly the *stack overflow* error you've probably seen.
+You can probably see the danger: if the stack uses more memory than was reserved for it, that is a *stack overflow*.
+In this simple layout, the stack and heap might meet and start overwriting each other.
 
 Let's use the stack in a small example. We reserve some stack space, store two numbers in it, load them
 back, and add them:
@@ -169,7 +169,7 @@ The fields don't line up with byte boundaries, so regroup those same 32 bits int
 
 ![](figures/how_the_cpu_reads_instructions_4.svg)
 
-Compare that to x86, where an instruction can be any amount of bytes and there are many different encodings:
+Compare that to x86, where instructions vary from 1 to 15 bytes and there are many different encodings:
 
 ```x86
 push rax                 # 1 byte:   50
@@ -608,8 +608,9 @@ The innermost `fact(1)` took the base-case branch before storing anything, so it
 return. As those returns come in, `ret` and the epilogue pop the frames off one at a time, and the answers
 multiply their way back up to `fact(5) = 120`.
 
-Now we understand fully where that *stack overflow* error comes from. When a chain of calls becomes too long, each
-frame pushes the stack a little further down, until it reaches the heap and the two start overwriting each other.
+Now we can see how recursion can cause a *stack overflow*. Each call pushes the stack a little further down, and a
+long enough chain eventually uses more memory than was reserved for the stack. In this layout, it can then
+reach the heap and corrupt its data.
 
 There's also a less known sibling error: *stack underflow*. The stack grows downwards, so the place it started from is the
 highest address it will ever use, and an underflow is `sp` climbing back past that starting point: popping more than
@@ -667,13 +668,12 @@ Take this bit pattern:
 
 ![](figures/bit_representations.svg)
 
-All three are correct. Those eight bytes are of a string we're going to print in a moment,
-but if you hand them to a float instruction it will happily tell you they're a number
-with forty-one digits in front of the decimal point, and it isn't wrong. Nothing in the register
-says "this is text".
+All three are correct. Those eight bytes are of a string we're going to print in a moment, but if you load the same
+bits into a floating-point register, a floating-point instruction will happily tell you they're a number with
+forty-one digits in front of the decimal point, and it isn't wrong. Nothing in either register says "this is text".
 
-That's why `add` and `fadd` are separate instructions even though both "add two registers", and why `ld` and
-`lb` are separate, and why there are signed and unsigned comparisons. The register only stores bits. The
+That's why `add` and `fadd` are separate instructions using different register files, why `ld` and `lb` load
+different amounts of data, and why there are signed and unsigned comparisons. A register only stores bits. The
 meaning arrives with the instruction you pick.
 
 ### An address is also just a number
@@ -1010,16 +1010,13 @@ buf:                  # a label, like in .data
 needs 8000 bytes of zeroes at `buf`. Whoever loads the program is expected to provide them by zeroing that region
 before the first instruction runs.
 
-That last part is worth looking into, because there is no loader here to do it. QEMU copies our program into RAM and
-jumps straight to `_start`. Nothing in that sequence zeroes anything.
+Here, QEMU is that loader. When we give it `hello.elf`, it reads the sizes stored in the file and fills `buf`'s
+place in RAM with 8000 zero bytes before starting the program. So `buf` is guaranteed to contain zeroes when
+`_start` begins.
 
-In practice, you can put something in `.bss` on QEMU and read zeroes back, but only by luck: the emulator hands the
-machine a block of memory that happens to already be zero. Nothing promised us that. Real hardware powers on
-with whatever was in the RAM, and the next machine you try might not be so clean. A program that depends on `.bss`
-being zero without zeroing it is relying on the emulator/machine being nice to it.
-
-So the rule is that whoever loads a program is responsible for clearing its `.bss`, and here nobody is, which means
-it's us. Zeroing `.bss` is one of the first things a kernel does on boot, and now you know what it's for.
+That changes if you boot a raw binary, because a raw file has no ELF segment metadata telling a loader which extra
+memory should start at zero. A boot protocol could do this separately, but otherwise the startup code must clear `.bss`
+before using it.
 
 So both sections stay in the script even though they're empty. Leaving them out doesn't make the program smaller,
 so it's nice to have.
@@ -1201,7 +1198,10 @@ are in that folder and can be opened in the browser too.
 
 ### From HLL to an executable
 
-The pipeline diagram ended at machine code, but the IDE has one more button next to `IR` and `ASM`: `ELF`. ELF
+When you press `build` on a HLL file in the IDE, the spine on the left side of the code lights up. This spine shows you
+all the intermediate stages that the code goes through, from HLL code to an executable.
+
+Our pipeline diagram from before ended at machine code, but the IDE has one more button next to `IR` and `ASM`: `ELF`. ELF
 stands for *Executable and Linkable Format*, and it is the final file produced by the linker.
 
 Before, we encoded our assembly directly, placed those bytes into a CPU and started executing them. There were
@@ -1470,10 +1470,6 @@ The template is
 [`09_hll_functions/fibonacci_template.hll`](repo:programs/lessons/09_hll_functions/fibonacci_template.hll), with
 the run configuration `09.2 (template): fibonacci`. It checks the first two numbers before calling
 `fibonacci(12)`, so the finished program should stop with exit code `144`.
-
-Once it works, open the generated IR. Find the branch for the `0` and `1` case, the branch that controls the loop
-and the jump that takes execution back around. Then start the debugger and step through a few iterations of the
-loop. This is the same ordinary control flow you wrote in HLL, just spread across explicit basic blocks.
 
 If you get stuck, the finished version is
 [`09_hll_functions/fibonacci.hll`](repo:programs/lessons/09_hll_functions/fibonacci.hll), with the run configuration
