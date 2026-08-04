@@ -63,10 +63,21 @@
     });
   }
 
-  function initSidebar() {
+  function initSidebar(savedScroll) {
     var active = document.querySelector('.chapter-list a[aria-current="page"]');
     var sidebar = document.getElementById("sidebar");
-    if (active && sidebar && active.offsetTop > sidebar.clientHeight - 80) {
+    if (!active || !sidebar) return;
+
+    if (typeof savedScroll === "number") {
+      sidebar.scrollTop = savedScroll;
+      var top = active.offsetTop;
+      var bottom = top + active.offsetHeight;
+      if (top < sidebar.scrollTop + 16) {
+        sidebar.scrollTop = Math.max(0, top - 16);
+      } else if (bottom > sidebar.scrollTop + sidebar.clientHeight - 16) {
+        sidebar.scrollTop = bottom - sidebar.clientHeight + 16;
+      }
+    } else if (active.offsetTop > sidebar.clientHeight - 80) {
       sidebar.scrollTop = active.offsetTop - sidebar.clientHeight / 2;
     }
   }
@@ -92,10 +103,10 @@
     var pending = false;
 
     function mark() {
-      var line = window.scrollY + 120;
+      var line = window.innerHeight / 2 + 1;
       var found = targets[0];
       targets.forEach(function (entry) {
-        if (entry.node.offsetTop <= line) found = entry;
+        if (entry.node.getBoundingClientRect().top <= line) found = entry;
       });
       if (!found || found.link === current) return;
       if (current) current.classList.remove("is-active");
@@ -437,8 +448,8 @@
     });
   }
 
-  function initPage() {
-    initSidebar();
+  function initPage(sidebarScroll) {
+    initSidebar(sidebarScroll);
     initOutline();
     initSandboxes();
   }
@@ -567,6 +578,8 @@
     var body = document.querySelector(".body");
     var pagenav = document.querySelector(".pagenav");
     if (!nextBody || !nextPagenav || !body || !pagenav || !parsed.title) return false;
+    var sidebar = document.getElementById("sidebar");
+    var sidebarScroll = sidebar ? sidebar.scrollTop : null;
 
     resolveUrls(nextBody, url);
     resolveUrls(nextPagenav, url);
@@ -584,7 +597,7 @@
     pagenav.replaceWith(document.adoptNode(nextPagenav));
     if (menuButton) menuButton.setAttribute("aria-expanded", "false");
 
-    initPage();
+    initPage(sidebarScroll);
     prefetchAdjacentPages();
     setScroll(url, options.savedScroll);
 

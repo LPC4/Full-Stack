@@ -321,6 +321,9 @@ body.sidebar-right .sidebar { border-right: none; border-left: 1px solid var(--b
   line-height: 1.3;
   margin: 2em 0 0.6em;
 }
+.chapter h2, .chapter h3, .chapter h4, .chapter h5, .chapter h6 {
+  scroll-margin-top: 50vh;
+}
 .chapter h2 { font-size: 1.5em; }
 .chapter h3 { font-size: 1.25em; }
 .chapter h4 { font-size: 1.1em; }
@@ -708,6 +711,10 @@ pre.code.wrapped .ln {
 .outline .lvl-6 a { padding-left: 40px; }
 
 /* --- Responsive --- */
+@media (min-width: 1181px) {
+  body:not(.no-outline) .content { padding-bottom: max(96px, 50vh); }
+}
+
 @media (max-width: 1180px) {
   .outline { display: none; }
   body { --outline-width: 0px; }
