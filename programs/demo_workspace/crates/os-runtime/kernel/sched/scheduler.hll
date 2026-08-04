@@ -1,5 +1,4 @@
 ; Round-robin scheduler. current_process is the running PCB; ready_queue_head is the queue.
-; schedule(frame, 1) = yield (re-enqueue as READY), schedule(frame, 2) = exit (mark EXITED).
 
 layout  := import("layout")
 mem     := import("mem")
@@ -8,14 +7,14 @@ runtime := import("runtime")
 klog    := import("klog")
 syscall := import("syscall")
 
-; PCB_IDX_* indices and PROC_* states come from the shared kernel layout (layout.hll).
+; PCB records and process states come from the shared kernel layout.
 
-current_process:  u64* = null
-ready_queue_head: u64* = null
-; EXITED processes waiting to be reaped by their parent (linked via field [2]).
-zombie_head:      u64* = null
+current_process:  layout.Pcb* = null
+ready_queue_head: layout.Pcb* = null
+; EXITED processes waiting to be reaped by their parent (linked via Pcb.next).
+zombie_head:      layout.Pcb* = null
 ; The single process BLOCKED waiting for UART input. Woken by the UART RX interrupt. null if none.
-input_waiter:     u64* = null
+input_waiter:     layout.Pcb* = null
 
 export scheduler_init: () {
     current_process  = null
@@ -26,82 +25,86 @@ export scheduler_init: () {
 }
 
 ; Return the currently running PCB (null if none).
-export scheduler_current: () -> u64* {
+export scheduler_current: () -> layout.Pcb* {
     return current_process
 }
 
 ; Append pcb to the tail of the ready queue.
-export scheduler_add: (pcb: u64*) {
-    pcb[PCB_IDX_LINK] = 0
+export scheduler_add: (pcb: layout.Pcb*) {
+    pcb.next = null
     if ready_queue_head == null {
         ready_queue_head = pcb
         return
     }
-    curr: u64* = ready_queue_head
-    while curr[PCB_IDX_LINK] != 0 {
-        curr = (curr[PCB_IDX_LINK]) as u64*
+    curr: layout.Pcb* = ready_queue_head
+    while curr.next != null {
+        curr = curr.next
     }
-    curr[PCB_IDX_LINK] = pcb as u64
+    curr.next = pcb
 }
 
 ; --- Context switch ---
-; Save the current frame, restore the next process. action: 0/1 yield, 2 exit,
-; 3 block. See OS spec ch.5.4 and 7.3.
-export schedule: (frame: u64*, action: u64) {
+; Save the current frame, restore the next process. See OS spec ch.5.4 and 7.3.
+export schedule: (frame: layout.TrapFrame*, action: layout.SysAction) {
     ; A block with nothing else to run would strand the caller: leave it RUNNING
     ; to retry and clear the waiter.
-    if action == 3 {
-        if ready_queue_head == null {
-            input_waiter = null
-            return
+    match action {
+        Block -> {
+            if ready_queue_head == null {
+                input_waiter = null
+                return
+            }
         }
+        _ -> {}
     }
 
     if current_process != null {
-        mem.memcpy((current_process as u64 + PCB_OFF_TRAP_FRAME) as u8*, frame as u8*, TF_BYTES)
+        mem.memcpy((&current_process.frame) as u8*, frame as u8*, TF_BYTES)
 
-        if action == 2 {
-            current_process[PCB_IDX_STATE] = PROC_EXITED
-            syscall.fb_release_on_exit(current_process)
-        } else {
-            if action == 3 {
-                current_process[PCB_IDX_STATE] = PROC_BLOCKED
-            } else {
-                current_process[PCB_IDX_STATE] = PROC_READY
+        match action {
+            ExitSchedule -> {
+                current_process.state = PROC_EXITED
+                syscall.fb_release_on_exit(current_process)
+            }
+            Block -> {
+                current_process.state = PROC_BLOCKED
+            }
+            _ -> {
+                current_process.state = PROC_READY
                 scheduler_add(current_process)
             }
         }
     }
 
-    next: u64* = ready_queue_head
+    next: layout.Pcb* = ready_queue_head
     if next == null {
         return
     }
-    ready_queue_head = (next[PCB_IDX_LINK]) as u64*
-    next[PCB_IDX_LINK] = 0
+    ready_queue_head = next.next
+    next.next = null
 
     current_process = next
     ; Switch into the next process's address space before restoring its context.
-    vmm.switch(next[PCB_IDX_PAGE_ROOT])
-    mem.memcpy(frame as u8*, (next as u64 + PCB_OFF_TRAP_FRAME) as u8*, TF_BYTES)
+    vmm.switch(next.page_root)
+    mem.memcpy(frame as u8*, (&next.frame) as u8*, TF_BYTES)
 }
 
 ; Record the process about to block on UART input so the RX interrupt can wake
 ; it. There is only one such reader at a time (the foreground input consumer).
-export scheduler_set_input_waiter: (pcb: u64*) {
+export scheduler_set_input_waiter: (pcb: layout.Pcb*) {
     input_waiter = pcb
 }
 
 ; Wake the input-blocked process to the front of the ready queue; 1 if woken.
 ; Called from the UART RX interrupt. See OS spec ch.6.4.
 export scheduler_wake_input_waiter: () -> u64 {
-    w: u64* = input_waiter
+    w: layout.Pcb* = input_waiter
     if w == null {
         return 0
     }
     input_waiter = null
-    w[PCB_IDX_STATE] = PROC_READY
-    w[PCB_IDX_LINK] = ready_queue_head as u64
+    w.state = PROC_READY
+    w.next = ready_queue_head
     ready_queue_head = w
     return 1
 }
@@ -118,12 +121,12 @@ export scheduler_ready_empty: () -> u64 {
 ; Return 1 if a READY process with the given pid is still queued, 0 otherwise.
 ; The shell polls this after exec to wait for a launched program to finish.
 export scheduler_pid_in_queue: (pid: u64) -> u64 {
-    curr: u64* = ready_queue_head
+    curr: layout.Pcb* = ready_queue_head
     while curr != null {
-        if curr[PCB_IDX_PID] == pid {
+        if curr.pid == pid {
             return 1
         }
-        curr = (curr[PCB_IDX_LINK]) as u64*
+        curr = curr.next
     }
     return 0
 }
@@ -132,12 +135,12 @@ export scheduler_pid_in_queue: (pid: u64) -> u64 {
 ; 0 if it is a zombie or unknown.
 export scheduler_pid_alive: (pid: u64) -> u64 {
     if current_process != null {
-        if current_process[PCB_IDX_PID] == pid {
+        if current_process.pid == pid {
             return 1
         }
     }
     if input_waiter != null {
-        if input_waiter[PCB_IDX_PID] == pid {
+        if input_waiter.pid == pid {
             return 1
         }
     }
@@ -147,48 +150,48 @@ export scheduler_pid_alive: (pid: u64) -> u64 {
 ; --- Zombie (EXITED, unreaped) bookkeeping ---
 
 ; Add an EXITED process to the zombie list so its parent can later reap its
-; exit code. Reuses the [2] link field (the process is no longer ready).
-export scheduler_make_zombie: (pcb: u64*) {
-    pcb[PCB_IDX_LINK] = zombie_head as u64
+; exit code. Reuses Pcb.next (the process is no longer ready).
+export scheduler_make_zombie: (pcb: layout.Pcb*) {
+    pcb.next = zombie_head
     zombie_head = pcb
 }
 
 ; Find the EXITED zombie with this exact pid (pids are unique), or null.
-export scheduler_find_zombie_pid: (pid: u64) -> u64* {
-    curr: u64* = zombie_head
+export scheduler_find_zombie_pid: (pid: u64) -> layout.Pcb* {
+    curr: layout.Pcb* = zombie_head
     while curr != null {
-        if curr[PCB_IDX_PID] == pid {
+        if curr.pid == pid {
             return curr
         }
-        curr = (curr[PCB_IDX_LINK]) as u64*
+        curr = curr.next
     }
     return null
 }
 
 ; Find an EXITED child of parent_pid awaiting reaping. Returns its PCB or null.
-export scheduler_find_zombie_child: (parent_pid: u64) -> u64* {
-    curr: u64* = zombie_head
+export scheduler_find_zombie_child: (parent_pid: u64) -> layout.Pcb* {
+    curr: layout.Pcb* = zombie_head
     while curr != null {
-        if curr[PCB_IDX_PARENT_PID] == parent_pid {
+        if curr.parent_pid == parent_pid {
             return curr
         }
-        curr = (curr[PCB_IDX_LINK]) as u64*
+        curr = curr.next
     }
     return null
 }
 
 ; Unlink a reaped zombie from the zombie list. The PCB itself is left allocated
 ; (page-table teardown is deferred; leaking is safe for now).
-export scheduler_remove_zombie: (pcb: u64*) {
+export scheduler_remove_zombie: (pcb: layout.Pcb*) {
     if zombie_head == pcb {
-        zombie_head = (pcb[PCB_IDX_LINK]) as u64*
+        zombie_head = pcb.next
         return
     }
-    prev: u64* = zombie_head
+    prev: layout.Pcb* = zombie_head
     while prev != null {
-        nxt: u64* = (prev[PCB_IDX_LINK]) as u64*
+        nxt: layout.Pcb* = prev.next
         if nxt == pcb {
-            prev[PCB_IDX_LINK] = pcb[PCB_IDX_LINK]
+            prev.next = pcb.next
             return
         }
         prev = nxt
@@ -198,21 +201,21 @@ export scheduler_remove_zombie: (pcb: u64*) {
 ; Ctrl-C teardown: unlink the first READY child of parent_pid and mark it EXITED
 ; (PCB/page tables leaked); 1 if killed. See OS spec ch.6.5.
 export scheduler_kill_child: (parent_pid: u64) -> u64 {
-    prev: u64* = 0 as u64*
-    curr: u64* = ready_queue_head
+    prev: layout.Pcb* = null
+    curr: layout.Pcb* = ready_queue_head
     while curr != null {
-        if curr[PCB_IDX_PARENT_PID] == parent_pid {
+        if curr.parent_pid == parent_pid {
             if prev == null {
-                ready_queue_head = (curr[PCB_IDX_LINK]) as u64*
+                ready_queue_head = curr.next
             } else {
-                prev[PCB_IDX_LINK] = curr[PCB_IDX_LINK]
+                prev.next = curr.next
             }
-            curr[PCB_IDX_STATE] = PROC_EXITED
+            curr.state = PROC_EXITED
             syscall.fb_release_on_exit(curr)
             return 1
         }
         prev = curr
-        curr = (curr[PCB_IDX_LINK]) as u64*
+        curr = curr.next
     }
     return 0
 }
@@ -220,21 +223,21 @@ export scheduler_kill_child: (parent_pid: u64) -> u64 {
 ; Pid-targeted Ctrl-C teardown: unlink the READY process with this exact pid and
 ; mark it EXITED (PCB/page tables leaked); 1 if killed. See OS spec ch.6.5.
 export scheduler_kill_pid: (pid: u64) -> u64 {
-    prev: u64* = 0 as u64*
-    curr: u64* = ready_queue_head
+    prev: layout.Pcb* = null
+    curr: layout.Pcb* = ready_queue_head
     while curr != null {
-        if curr[PCB_IDX_PID] == pid {
+        if curr.pid == pid {
             if prev == null {
-                ready_queue_head = (curr[PCB_IDX_LINK]) as u64*
+                ready_queue_head = curr.next
             } else {
-                prev[PCB_IDX_LINK] = curr[PCB_IDX_LINK]
+                prev.next = curr.next
             }
-            curr[PCB_IDX_STATE] = PROC_EXITED
+            curr.state = PROC_EXITED
             syscall.fb_release_on_exit(curr)
             return 1
         }
         prev = curr
-        curr = (curr[PCB_IDX_LINK]) as u64*
+        curr = curr.next
     }
     return 0
 }
@@ -242,25 +245,25 @@ export scheduler_kill_pid: (pid: u64) -> u64 {
 ; Return 1 if any READY or zombie process has parent_pid as its parent.
 ; Used by wait to distinguish "no children" from "children still running".
 export scheduler_has_children: (parent_pid: u64) -> u64 {
-    curr: u64* = ready_queue_head
+    curr: layout.Pcb* = ready_queue_head
     while curr != null {
-        if curr[PCB_IDX_PARENT_PID] == parent_pid {
+        if curr.parent_pid == parent_pid {
             return 1
         }
-        curr = (curr[PCB_IDX_LINK]) as u64*
+        curr = curr.next
     }
     ; A child sleeping on input has left the ready queue but is still alive.
     if input_waiter != null {
-        if input_waiter[PCB_IDX_PARENT_PID] == parent_pid {
+        if input_waiter.parent_pid == parent_pid {
             return 1
         }
     }
-    z: u64* = zombie_head
+    z: layout.Pcb* = zombie_head
     while z != null {
-        if z[PCB_IDX_PARENT_PID] == parent_pid {
+        if z.parent_pid == parent_pid {
             return 1
         }
-        z = (z[PCB_IDX_LINK]) as u64*
+        z = z.next
     }
     return 0
 }

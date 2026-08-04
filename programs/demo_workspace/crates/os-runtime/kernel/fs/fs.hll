@@ -14,6 +14,27 @@ const FS_DIRENT_SIZE       = 36
 const FS_FD_ENTRY_SIZE     = 32
 const FS_INODE_BLOCKS      = 44
 
+struct DiskInode {
+    node_type: u16,
+    parent: u16,
+    size: u32,
+    name: u8[32],
+    blocks: u16[44],
+}
+
+struct DiskDirEntry {
+    name: u8[32],
+    inode: u16,
+    reserved: u16,
+}
+
+struct OpenFile {
+    valid: u64,
+    inode: u64,
+    flags: u64,
+    pos: u64,
+}
+
 ; Open flags.
 const FS_OPEN_RO     = 0
 const FS_OPEN_RW     = 1
@@ -33,23 +54,6 @@ const FS_SB_FREE_INODES  = 16
 const FS_SB_FREE_BLOCKS  = 20
 const FS_SB_INODE_BITMAP = 24
 
-; Inode byte offsets within each 64-byte record.
-const FS_IN_TYPE   = 0
-const FS_IN_PARENT = 2
-const FS_IN_SIZE   = 4
-const FS_IN_NAME   = 8
-const FS_IN_BLOCKS = 40
-
-; DirEntry byte offsets within each 36-byte record.
-const FS_DE_NAME  = 0
-const FS_DE_INODE = 32
-
-; FdEntry byte offsets (each field is u64).
-const FS_FDE_VALID = 0
-const FS_FDE_INODE = 8
-const FS_FDE_FLAGS = 16
-const FS_FDE_POS   = 24
-
 ; Path separator '/' and string terminator.
 const FS_SLASH = '/'
 
@@ -58,6 +62,7 @@ const FS_SLASH = '/'
 utilities := import("utilities")
 mem := import("mem")
 klog := import("klog")
+runtime := import("runtime")
 
 ; --- Global state ---
 
@@ -78,29 +83,9 @@ export fs_rd32: (addr: u64) -> u64 {
     return (@p) as u64
 }
 
-export fs_rd64: (addr: u64) -> u64 {
-    p: u64* = addr as u64*
-    return @p
-}
-
-export fs_wr8: (addr: u64, val: u64) {
-    p: u8* = addr as u8*
-    @p = val as u8
-}
-
-export fs_wr16: (addr: u64, val: u64) {
-    p: u16* = addr as u16*
-    @p = val as u16
-}
-
 export fs_wr32: (addr: u64, val: u64) {
     p: u32* = addr as u32*
     @p = val as u32
-}
-
-export fs_wr64: (addr: u64, val: u64) {
-    p: u64* = addr as u64*
-    @p = val
 }
 
 ; --- Address helpers ---
@@ -121,26 +106,43 @@ export fs_fd_pa: (fd: u64) -> u64 {
     return fs_fd_table_pa + fd * FS_FD_ENTRY_SIZE
 }
 
+fs_inode_ptr: (idx: u64) -> DiskInode* {
+    return fs_inode_pa(idx) as DiskInode*
+}
+
+fs_dirent_ptr: (blk: u64, slot: u64) -> DiskDirEntry* {
+    return fs_dirent_pa(blk, slot) as DiskDirEntry*
+}
+
+fs_fd_ptr: (fd: u64) -> OpenFile* {
+    return fs_fd_pa(fd) as OpenFile*
+}
+
 ; --- Inode field accessors ---
 
 export fs_inode_type: (idx: u64) -> u64 {
-    return (fs_rd16(fs_inode_pa(idx) + FS_IN_TYPE)) % 256
+    inode: DiskInode* = fs_inode_ptr(idx)
+    return inode.node_type as u64 % 256
 }
 
 export fs_inode_size: (idx: u64) -> u64 {
-    return fs_rd32(fs_inode_pa(idx) + FS_IN_SIZE)
+    inode: DiskInode* = fs_inode_ptr(idx)
+    return inode.size as u64
 }
 
 export fs_inode_set_size: (idx: u64, sz: u64) {
-    fs_wr32(fs_inode_pa(idx) + FS_IN_SIZE, sz)
+    inode: DiskInode* = fs_inode_ptr(idx)
+    inode.size = sz as u32
 }
 
 export fs_inode_block: (idx: u64, slot: u64) -> u64 {
-    return fs_rd16(fs_inode_pa(idx) + FS_IN_BLOCKS + slot * 2)
+    inode: DiskInode* = fs_inode_ptr(idx)
+    return inode.blocks[slot] as u64
 }
 
 export fs_inode_set_block: (idx: u64, slot: u64, blk: u64) {
-    fs_wr16(fs_inode_pa(idx) + FS_IN_BLOCKS + slot * 2, blk)
+    inode: DiskInode* = fs_inode_ptr(idx)
+    inode.blocks[slot] = blk as u16
 }
 
 ; --- String helpers ---
@@ -255,7 +257,8 @@ export fs_free_inode: (idx: u64) {
     @p = (b as u64 | (1 << (idx % 8))) as u8
     free: u64 = fs_rd32(fs_image_base + FS_SB_FREE_INODES)
     fs_wr32(fs_image_base + FS_SB_FREE_INODES, free + 1)
-    fs_wr8(fs_inode_pa(idx), FS_TYPE_FREE)
+    inode: DiskInode* = fs_inode_ptr(idx)
+    inode.node_type = FS_TYPE_FREE as u16
 }
 
 ; --- Directory operations ---
@@ -271,11 +274,11 @@ export fs_find_in_dir: (dir_inode: u64, name: u8*) -> i64 {
             break
         }
         for slot in 0..FS_DIRENTS_PER_BLOCK {
-            de: u64 = fs_dirent_pa(blk, slot)
-            np: u8* = de as u8*
+            de: DiskDirEntry* = fs_dirent_ptr(blk, slot)
+            np: u8* = &de.name[0]
             if @np != 0 {
                 if fs_streq(np, name) == 1 {
-                    return fs_rd16(de + FS_DE_INODE) as i64
+                    return de.inode as i64
                 }
             }
         }
@@ -298,11 +301,12 @@ export fs_add_dirent: (dir_inode: u64, child_name: u8*, child_inode: u64) -> i64
             blk = new_blk
         }
         for slot in 0..FS_DIRENTS_PER_BLOCK {
-            de: u64 = fs_dirent_pa(blk, slot)
-            np: u8* = de as u8*
+            de: DiskDirEntry* = fs_dirent_ptr(blk, slot)
+            np: u8* = &de.name[0]
             if @np == 0 {
                 fs_strncpy(np, child_name, FS_NAME_LEN)
-                fs_wr16(de + FS_DE_INODE, child_inode)
+                de.inode = child_inode as u16
+                de.reserved = 0 as u16
                 fs_inode_set_size(dir_inode, fs_inode_size(dir_inode) + 1)
                 return 0
             }
@@ -320,8 +324,8 @@ export fs_remove_dirent: (dir_inode: u64, name: u8*) -> i64 {
             break
         }
         for slot in 0..FS_DIRENTS_PER_BLOCK {
-            de: u64 = fs_dirent_pa(blk, slot)
-            np: u8* = de as u8*
+            de: DiskDirEntry* = fs_dirent_ptr(blk, slot)
+            np: u8* = &de.name[0]
             if @np != 0 {
                 if fs_streq(np, name) == 1 {
                     @np = 0 as u8
@@ -439,15 +443,13 @@ export fs_create_at: (parent_inode: u64, name: u8*, node_type: u64) -> i64 {
     if new_idx < 0 {
         return -1 as i64
     }
-    base: u64 = fs_inode_pa(new_idx as u64)
-    fs_wr8(base + FS_IN_TYPE, node_type)
-    fs_wr16(base + FS_IN_PARENT, parent_inode)
-    fs_wr32(base + FS_IN_SIZE, 0)
-    fs_strncpy((base + FS_IN_NAME) as u8*, name, FS_NAME_LEN)
-    slot: u64 = 0
-    while slot < FS_INODE_BLOCKS {
-        fs_inode_set_block(new_idx as u64, slot, 0)
-        slot = slot + 1
+    inode: DiskInode* = fs_inode_ptr(new_idx as u64)
+    inode.node_type = node_type as u16
+    inode.parent = parent_inode as u16
+    inode.size = 0 as u32
+    fs_strncpy(&inode.name[0], name, FS_NAME_LEN)
+    for slot in 0..FS_INODE_BLOCKS {
+        inode.blocks[slot] = 0 as u16
     }
     if fs_add_dirent(parent_inode, name, new_idx as u64) < 0 {
         fs_free_inode(new_idx as u64)
@@ -461,6 +463,11 @@ export fs_create_at: (parent_inode: u64, name: u8*, node_type: u64) -> i64 {
 ; Mount the filesystem image at base_pa. Validates the magic number, allocates
 ; the kernel fd table, and logs the inode census.
 export fs_init: (base_pa: u64, image_size: u64) {
+    if size_of<DiskInode>() != FS_INODE_SIZE or
+       size_of<DiskDirEntry>() != FS_DIRENT_SIZE or
+       size_of<OpenFile>() != FS_FD_ENTRY_SIZE {
+        runtime.panic("filesystem layout mismatch".ptr)
+    }
     if fs_rd32(base_pa) != FS_MAGIC32 {
         klog.warn("[  FS  ] bad magic, not mounting".ptr)
         return
@@ -468,9 +475,9 @@ export fs_init: (base_pa: u64, image_size: u64) {
     fs_image_base = base_pa
     fs_image_size = image_size
 
-    fd_table: u8* = utilities.malloc(FS_MAX_FD * FS_FD_ENTRY_SIZE)
+    fd_table: u8* = utilities.malloc(FS_MAX_FD * size_of<OpenFile>())
     fs_fd_table_pa = fd_table as u64
-    mem.memset(fd_table, 0, FS_MAX_FD * FS_FD_ENTRY_SIZE)
+    mem.memset(fd_table, 0, FS_MAX_FD * size_of<OpenFile>())
     fs_ready = 1
 
     files: i64 = 0
@@ -516,16 +523,16 @@ export fs_open: (path: u8*, flags: u64) -> i64 {
     }
     fd: u64 = 2
     while fd < FS_MAX_FD {
-        slot: u64 = fs_fd_pa(fd)
-        if fs_rd64(slot + FS_FDE_VALID) == 0 {
-            fs_wr64(slot + FS_FDE_VALID, 1)
-            fs_wr64(slot + FS_FDE_INODE, inode as u64)
+        slot: OpenFile* = fs_fd_ptr(fd)
+        if slot.valid == 0 {
+            slot.valid = 1
+            slot.inode = inode as u64
             if flags == FS_OPEN_RO {
-                fs_wr64(slot + FS_FDE_FLAGS, FS_OPEN_RO)
+                slot.flags = FS_OPEN_RO
             } else {
-                fs_wr64(slot + FS_FDE_FLAGS, FS_OPEN_RW)
+                slot.flags = FS_OPEN_RW
             }
-            fs_wr64(slot + FS_FDE_POS, 0)
+            slot.pos = 0
             return fd as i64
         }
         fd = fd + 1
@@ -545,11 +552,11 @@ export fs_read: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
     if len == 0 {
         return 0
     }
-    slot: u64 = fs_fd_pa(fd as u64)
-    if fs_rd64(slot + FS_FDE_VALID) == 0 {
+    slot: OpenFile* = fs_fd_ptr(fd as u64)
+    if slot.valid == 0 {
         return -1 as i64
     }
-    inode: u64 = fs_rd64(slot + FS_FDE_INODE)
+    inode: u64 = slot.inode
     size: u64 = fs_inode_size(inode)
     if offset >= size {
         return -1 as i64
@@ -592,14 +599,14 @@ export fs_write: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
     if len == 0 {
         return 0
     }
-    slot: u64 = fs_fd_pa(fd as u64)
-    if fs_rd64(slot + FS_FDE_VALID) == 0 {
+    slot: OpenFile* = fs_fd_ptr(fd as u64)
+    if slot.valid == 0 {
         return -1 as i64
     }
-    if fs_rd64(slot + FS_FDE_FLAGS) == FS_OPEN_RO {
+    if slot.flags == FS_OPEN_RO {
         return -1 as i64
     }
-    inode: u64 = fs_rd64(slot + FS_FDE_INODE)
+    inode: u64 = slot.inode
     done: u64 = 0
     while done < len {
         file_off: u64 = offset + done
@@ -641,14 +648,14 @@ export fs_truncate: (fd: i64, len: u64) -> i64 {
     if fd < 2 {
         return -1 as i64
     }
-    slot: u64 = fs_fd_pa(fd as u64)
-    if fs_rd64(slot + FS_FDE_VALID) == 0 {
+    slot: OpenFile* = fs_fd_ptr(fd as u64)
+    if slot.valid == 0 {
         return -1 as i64
     }
-    if fs_rd64(slot + FS_FDE_FLAGS) == FS_OPEN_RO {
+    if slot.flags == FS_OPEN_RO {
         return -1 as i64
     }
-    inode: u64 = fs_rd64(slot + FS_FDE_INODE)
+    inode: u64 = slot.inode
     if len >= fs_inode_size(inode) {
         return 0
     }
@@ -671,11 +678,11 @@ export fs_fd_size: (fd: i64) -> u64 {
     if fd < 2 {
         return 0
     }
-    slot: u64 = fs_fd_pa(fd as u64)
-    if fs_rd64(slot + FS_FDE_VALID) == 0 {
+    slot: OpenFile* = fs_fd_ptr(fd as u64)
+    if slot.valid == 0 {
         return 0
     }
-    return fs_inode_size(fs_rd64(slot + FS_FDE_INODE))
+    return fs_inode_size(slot.inode)
 }
 
 ; Return the implicit sequential position for fd, or 0 if fd is invalid.
@@ -683,7 +690,8 @@ export fs_get_pos: (fd: i64) -> u64 {
     if fd < 2 {
         return 0
     }
-    return fs_rd64(fs_fd_pa(fd as u64) + FS_FDE_POS)
+    slot: OpenFile* = fs_fd_ptr(fd as u64)
+    return slot.pos
 }
 
 ; Set the implicit sequential position for fd.
@@ -691,7 +699,8 @@ export fs_set_pos: (fd: i64, pos: u64) {
     if fd < 2 {
         return
     }
-    fs_wr64(fs_fd_pa(fd as u64) + FS_FDE_POS, pos)
+    slot: OpenFile* = fs_fd_ptr(fd as u64)
+    slot.pos = pos
 }
 
 ; Release a file descriptor slot.
@@ -702,11 +711,11 @@ export fs_close: (fd: i64) {
     if fd < 2 {
         return
     }
-    slot: u64 = fs_fd_pa(fd as u64)
-    fs_wr64(slot + FS_FDE_VALID, 0)
-    fs_wr64(slot + FS_FDE_INODE, 0)
-    fs_wr64(slot + FS_FDE_FLAGS, 0)
-    fs_wr64(slot + FS_FDE_POS, 0)
+    slot: OpenFile* = fs_fd_ptr(fd as u64)
+    slot.valid = 0
+    slot.inode = 0
+    slot.flags = 0
+    slot.pos = 0
 }
 
 ; Create a file (type=1) or directory (type=2) under parent_path.
@@ -752,12 +761,12 @@ export fs_readdir: (path: u8*, index: u64, name_buf: u8*) -> i64 {
             break
         }
         for slot in 0..FS_DIRENTS_PER_BLOCK {
-            de: u64 = fs_dirent_pa(blk, slot)
-            np: u8* = de as u8*
+            de: DiskDirEntry* = fs_dirent_ptr(blk, slot)
+            np: u8* = &de.name[0]
             if @np != 0 {
                 if count == index {
                     fs_strncpy(name_buf, np, FS_NAME_LEN)
-                    child: u64 = fs_rd16(de + FS_DE_INODE)
+                    child: u64 = de.inode as u64
                     return fs_inode_type(child) as i64
                 }
                 count = count + 1
@@ -878,8 +887,8 @@ export fs_rename: (old_path: u8*, new_path: u8*) -> i64 {
         fs_add_dirent(old_parent as u64, &old_name[0], inode as u64)
         return -1 as i64
     }
-    base: u64 = fs_inode_pa(inode as u64)
-    fs_strncpy((base + FS_IN_NAME) as u8*, &new_name[0], FS_NAME_LEN)
-    fs_wr16(base + FS_IN_PARENT, new_parent as u64)
+    moved: DiskInode* = fs_inode_ptr(inode as u64)
+    fs_strncpy(&moved.name[0], &new_name[0], FS_NAME_LEN)
+    moved.parent = new_parent as u16
     return 0
 }

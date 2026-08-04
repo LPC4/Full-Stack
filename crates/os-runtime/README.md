@@ -58,10 +58,10 @@ running process every tick, and `sret` resumes whichever process is next in the 
 | `kernel/core/checks.hll` | Boot-time `memory_self_test`, `pmm_ops_test` diagnostics |
 | `kernel/mm/pmm.hll` | Physical page allocator (4 KiB pages, bump + free-list, double-free guard) |
 | `kernel/mm/vmm.hll` | Sv39 page tables: `vmm_init`, `vmm_enable`, `vmm_map`, `vmm_map_1gib`, `vmm_map_range` |
-| `kernel/sched/process.hll` | 352-byte PCB (pid, state, saved trap frame, page-table root, parent pid, exit code), per-pid user stack slots, `process_create`, `process_peek_pid` |
+| `kernel/sched/process.hll` | 384-byte typed PCB (pid, state, saved trap frame, page-table root, parent pid, exit code, framebuffer state), canonical user stack, `process_create`, `process_peek_pid` |
 | `kernel/sched/scheduler.hll` | Round-robin ready queue, `schedule`, queue introspection for exec/wait |
-| `kernel/core/syscall.hll` | U-mode ecall dispatch table (see below) |
-| `kernel/fs/fs.hll` | Inode-based read-write filesystem mounted from an injected image |
+| `kernel/core/syscall.hll` | Typed U-mode ecall match dispatch and syscall trace ring (see below) |
+| `kernel/fs/fs.hll` | Inode-based read-write filesystem with typed disk and descriptor records |
 
 ## Filesystem
 

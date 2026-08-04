@@ -172,7 +172,7 @@ spawn_user_process: () {
 
     ; Create the PCB first so its private page-table root becomes the active root;
     ; the code pages below are then mapped into that per-process address space.
-    pcb: u64* = process.create(user_entry)
+    pcb: layout.Pcb* = process.create(user_entry)
 
     for i in 0..pages {
         dst_page: u8* = pmm.alloc()

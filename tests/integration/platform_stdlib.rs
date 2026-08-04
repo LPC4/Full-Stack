@@ -982,6 +982,13 @@ kmain: () {
 // The kernel stdlib prefixes rodata labels with "__kern_str_" so they never
 // clash with user-code "str_" labels.
 fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
+    run_kernel_hll_with_layout_prelude(user_src, true)
+}
+
+fn run_kernel_hll_with_layout_prelude(
+    user_src: &str,
+    include_layout_prelude: bool,
+) -> (String, Option<i64>) {
     let snippet_manifest = BuildManifest::from_file(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/kernel_snippet.build"),
@@ -996,8 +1003,9 @@ fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
 
     let mut user_pipeline = CompilationPipeline::new();
     user_pipeline.set_write_artifacts(false);
-    // user_src is kernel source (a kmain); give it the shared kernel layout header.
-    user_pipeline.set_source_prelude(os_runtime::kernel::LAYOUT);
+    if include_layout_prelude {
+        user_pipeline.set_source_prelude(os_runtime::kernel::LAYOUT);
+    }
     let user = user_pipeline.compile(user_src).expect("user compile");
     let (_, user_tokens) = user_pipeline.compile_ir_to_assembly_with_tokens(&user.ir_program);
     let mut user_obj = user_pipeline.assemble(&user_tokens).expect("user assemble");
@@ -1127,7 +1135,7 @@ const MY_KERNEL_EXAMPLE: &str = os_runtime::kernel::MY_KERNEL;
 
 #[test]
 fn my_kernel_example_program() {
-    let (uart, exit) = run_kernel_hll(MY_KERNEL_EXAMPLE);
+    let (uart, exit) = run_kernel_hll_with_layout_prelude(MY_KERNEL_EXAMPLE, false);
     // When no user binary is present the kernel shuts down cleanly after
     // spawn_user_process returns.  Verify the critical checkpoints.
     assert!(

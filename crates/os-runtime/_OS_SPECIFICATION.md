@@ -190,10 +190,11 @@ every context switch. The VM's TLB is also flushed on any `satp` change.
 
 ### 5.1 Process control block (PCB)
 
-A process is a 384-byte PCB allocated with `kmalloc`. `layout.hll` exports typed
-`Pcb` and `TrapFrame` views with this exact field order; the `PCB_OFF_*`,
-`PCB_IDX_*`, and `TF_*` constants remain the ABI ground truth for asm and raw
-pointer code.
+A process is a 384-byte PCB allocated with `kmalloc`. `layout.hll` exports the
+canonical HLL `Pcb` and `TrapFrame` types with this exact field order. Process,
+scheduler, syscall, and trap-dispatch code use typed pointers and field access.
+The `PCB_OFF_*`, `PCB_IDX_*`, and `TF_*` constants remain the ABI ground truth
+for assembly and inspector code outside the typed HLL boundary.
 
 ```
 Offset  Size  Field
@@ -214,15 +215,16 @@ Offset  Size  Field
 
 The `trap_frame` layout matches the on-stack frame built by the trap entry (6.1),
 so `schedule` saves/restores context with a single `memcpy` of those 288 bytes.
-A host-side layout assertion checks the typed views against the offsets above.
+A host-side layout assertion checks the typed views against the offsets above,
+and `process_init` checks the compiler-computed sizes before scheduling starts.
 
 ### 5.2 Address space and initial trap frame
 
 `process_create` gives the process a fresh root (4.3), maps 4 stack pages just
 below `USER_STACK_BASE` (`0x8000_0000`) with R+W+U, and pre-populates the trap
-frame so the first `sret` enters U-mode: `frame[2]` (sp) = stack top,
-`frame[32]` (sepc) = entry, `frame[35]` (sstatus) = `0x13` (U-mode, IRQs on). The
-full integer/FP register ABI is the standard RISC-V convention; see
+frame so the first `sret` enters U-mode: `frame.x2` (sp) = stack top,
+`frame.sepc` = entry, and `frame.sstatus` = `0x13` (U-mode, IRQs on). The full
+integer/FP register ABI is the standard RISC-V convention; see
 `_RISCV_SPECIFICATIONS.md` section 8.
 
 ### 5.3 States and the ready queue
@@ -237,7 +239,7 @@ READY -> RUNNING -> {READY, BLOCKED, EXITED}.
 `schedule(frame, action)` saves the live frame into `current_process`, sets its
 next state per `action` (7.3), dequeues the head of the ready queue, switches into
 its root (`vmm_switch`), and restores its frame. The CLINT timer interrupt (6.3)
-calls `schedule(frame, 1)` every 1,000,000 cycles, giving preemptive round-robin
+calls `schedule(frame, Schedule)` every 1,000,000 cycles, giving preemptive round-robin
 even for compute-bound processes that never yield.
 
 ### 5.5 fork and exec
@@ -278,7 +280,7 @@ advances `sepc` by 4 before returning.
 
 ### 6.3 Timer preemption
 
-The timer interrupt re-arms `MTIMECMP` (`timer_set`) and calls `schedule(frame, 1)`
+The timer interrupt re-arms `MTIMECMP` (`timer_set`) and calls `schedule(frame, Schedule)`
 to round-robin the ready queue.
 
 ### 6.4 UART RX wake model
@@ -355,27 +357,30 @@ reaps a background job that finished first.
 
 ### 7.3 Scheduler actions
 
-`syscall_dispatch` returns an action that `trap_handler` passes to `schedule`:
+`syscall_dispatch` returns a `SysAction` that `trap_handler` either handles as
+`Continue` or passes to `schedule`:
 
-| Constant | Value | Meaning |
-|----------|-------|---------|
-| `SYSACT_CONTINUE` | 0 | Resume the current process unchanged |
-| `SYSACT_SCHEDULE` | 1 | Yield: re-enqueue READY, switch to next |
-| `SYSACT_EXIT_SCHEDULE` | 2 | Exit: mark EXITED, switch to next |
-| `SYSACT_BLOCK` | 3 | Sleep the caller (input wait); not re-enqueued (6.4) |
+| Variant | Meaning |
+|---------|---------|
+| `Continue` | Resume the current process unchanged |
+| `Schedule` | Yield: re-enqueue READY, switch to next |
+| `ExitSchedule` | Exit: mark EXITED, switch to next |
+| `Block` | Sleep the caller (input wait); not re-enqueued (6.4) |
 
 `syscall_dispatch` is a thin wrapper that records every ecall into a bounded trace
-ring before returning the action; the heavy switch lives in `syscall_dispatch_inner`.
+ring before returning the action; the inner dispatch uses a scalar `match` on the
+syscall number.
 
-**Syscall trace ring.** `trace_ring` is a fixed `u64[TRACE_ENTRIES * TRACE_FIELDS]`
-global written by `trace_record`. Each entry is `TRACE_FIELDS` (8) words: a
-monotonic `seq` (0 marks an empty slot), the caller `pid`, the syscall number, the
-first four args captured before dispatch, and the result (`a0` after dispatch). The
-slot for `seq` is `(seq - 1) % TRACE_ENTRIES`, so the ring keeps the most recent
-`TRACE_ENTRIES` calls. `trace_record` publishes lock-free: it fills the slot, writes
-its `seq`, then advances the `trace_seq` counter last, so a reader that samples
-mid-write sees either the old counter or a fully written newest entry (never a torn
-one). It is a read-only inspector feed: the GUI strace panel
+**Syscall trace ring.** `trace_ring` is a fixed `TraceEntry[256]` global written by
+`trace_record`. Each exact 64-byte entry contains eight `u64` fields: a monotonic
+`seq` (0 marks an empty slot), the caller `pid`, the syscall number, the first four
+args captured before dispatch, and the result (`a0` after dispatch). The slot for
+`seq` is `(seq - 1) % 256`, so the ring keeps the most recent 256 calls.
+`trace_record` publishes lock-free: it fills the record, writes its `seq`, then
+advances the `trace_seq` counter last, so a reader that samples mid-write sees either
+the old counter or a fully written newest entry (never a torn one). A host-side
+layout assertion protects the inspector ABI. It is a read-only inspector feed: the
+GUI strace panel
 (`os_view::capture_trace`) drains it from guest memory each frame and renders the
 newest calls, filterable by pid, with negative returns highlighted. The kernel never
 reads the ring back.
@@ -551,14 +556,18 @@ The image is a contiguous region of 4 KiB blocks:
 Each 128-byte inode stores a type (free/file/dir), parent inode, size, a 32-byte
 name, and up to 44 direct block pointers (176 KiB max file -- enough for executable
 images). Directories store 36-byte entries (32-byte name + inode index). Paths are
-absolute and resolved from the root directory at inode 0.
+absolute and resolved from the root directory at inode 0. `fs.hll` maps these records
+through the exact-layout `DiskInode` and `DiskDirEntry` types after computing their
+image addresses. Superblock access remains byte-oriented.
 
 ### 8.3 Descriptors and operations
 
 Open files use a 16-slot kernel descriptor table; fds 0 and 1 are reserved for the
 UART, so file fds start at 2. `fs_open`/`read`/`write`/`close` plus
 `fs_create`/`mkdir`/`rename`/`stat`/`readdir`/`unlink`/`rmdir` back the
-corresponding syscalls (7.2).
+corresponding syscalls (7.2). Each 32-byte slot is an `OpenFile` record containing
+four `u64` fields: validity, inode, flags, and sequential position. Host-side offset
+assertions and an `fs_init` compiler-size gate protect all three typed layouts.
 
 ### 8.4 Image injection
 

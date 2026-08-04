@@ -459,18 +459,18 @@ fn syscall_hll_defines_dispatch() {
 }
 
 #[test]
-fn syscall_hll_action_constants_defined() {
+fn kernel_layout_defines_syscall_actions() {
     assert!(
-        kernel::SYSCALL.contains("SYSACT_CONTINUE"),
-        "syscall.hll must define SYSACT_CONTINUE"
+        kernel::LAYOUT.contains("enum SysAction"),
+        "layout.hll must define SysAction"
     );
     assert!(
-        kernel::SYSCALL.contains("SYSACT_SCHEDULE"),
-        "syscall.hll must define SYSACT_SCHEDULE"
+        kernel::LAYOUT.contains("Continue") && kernel::LAYOUT.contains("Schedule"),
+        "SysAction must define Continue and Schedule"
     );
     assert!(
-        kernel::SYSCALL.contains("SYSACT_EXIT_SCHEDULE"),
-        "syscall.hll must define SYSACT_EXIT_SCHEDULE"
+        kernel::LAYOUT.contains("ExitSchedule") && kernel::LAYOUT.contains("Block"),
+        "SysAction must define ExitSchedule and Block"
     );
 }
 

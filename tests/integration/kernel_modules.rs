@@ -160,6 +160,84 @@ fn pcb_and_trap_frame_struct_layout_matches_offsets() {
     assert_eq!(offset, 384, "Pcb must stay PCB_SIZE");
 }
 
+#[test]
+fn filesystem_struct_layout_matches_disk_format() {
+    use std::mem::{offset_of, size_of};
+
+    #[allow(dead_code)]
+    #[repr(C)]
+    struct DiskInode {
+        node_type: u16,
+        parent: u16,
+        size: u32,
+        name: [u8; 32],
+        blocks: [u16; 44],
+    }
+
+    #[allow(dead_code)]
+    #[repr(C)]
+    struct DiskDirEntry {
+        name: [u8; 32],
+        inode: u16,
+        reserved: u16,
+    }
+
+    #[allow(dead_code)]
+    #[repr(C)]
+    struct OpenFile {
+        valid: u64,
+        inode: u64,
+        flags: u64,
+        pos: u64,
+    }
+
+    assert_eq!(size_of::<DiskInode>(), 128);
+    assert_eq!(offset_of!(DiskInode, node_type), 0);
+    assert_eq!(offset_of!(DiskInode, parent), 2);
+    assert_eq!(offset_of!(DiskInode, size), 4);
+    assert_eq!(offset_of!(DiskInode, name), 8);
+    assert_eq!(offset_of!(DiskInode, blocks), 40);
+
+    assert_eq!(size_of::<DiskDirEntry>(), 36);
+    assert_eq!(offset_of!(DiskDirEntry, name), 0);
+    assert_eq!(offset_of!(DiskDirEntry, inode), 32);
+    assert_eq!(offset_of!(DiskDirEntry, reserved), 34);
+
+    assert_eq!(size_of::<OpenFile>(), 32);
+    assert_eq!(offset_of!(OpenFile, valid), 0);
+    assert_eq!(offset_of!(OpenFile, inode), 8);
+    assert_eq!(offset_of!(OpenFile, flags), 16);
+    assert_eq!(offset_of!(OpenFile, pos), 24);
+}
+
+#[test]
+fn syscall_trace_entry_layout_matches_inspector_format() {
+    use std::mem::{offset_of, size_of};
+
+    #[allow(dead_code)]
+    #[repr(C)]
+    struct TraceEntry {
+        seq: u64,
+        pid: u64,
+        num: u64,
+        a0: u64,
+        a1: u64,
+        a2: u64,
+        a3: u64,
+        result: u64,
+    }
+
+    assert_eq!(size_of::<TraceEntry>(), 64);
+    assert_eq!(offset_of!(TraceEntry, seq), 0);
+    assert_eq!(offset_of!(TraceEntry, pid), 8);
+    assert_eq!(offset_of!(TraceEntry, num), 16);
+    assert_eq!(offset_of!(TraceEntry, a0), 24);
+    assert_eq!(offset_of!(TraceEntry, a1), 32);
+    assert_eq!(offset_of!(TraceEntry, a2), 40);
+    assert_eq!(offset_of!(TraceEntry, a3), 48);
+    assert_eq!(offset_of!(TraceEntry, result), 56);
+}
+
 // --- Frame-size guard ---
 // Every block-local gets its own slot, so a big function can push a frame past
 // the RV immediate range and panic the assembler (syscall_dispatch hit this).

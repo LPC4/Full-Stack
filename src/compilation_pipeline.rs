@@ -1381,8 +1381,8 @@ fn sanitize_artifact_component(value: &str) -> String {
 
 // --- Filesystem layout ---
 
-/// Canonical on-disk filesystem layout constants, mirroring `FS_*` in
-/// `kernel/fs/fs.hll`. Filesystem layout: see _`OS_SPECIFICATION.md`.
+/// Canonical host-side filesystem layout. Shared constants mirror `FS_*` in
+/// `kernel/fs/fs.hll`; record offsets mirror its typed disk structs.
 pub mod fs_layout {
     /// Block size in bytes (`FS_BLOCK_SIZE`).
     pub const BLOCK_SIZE: usize = 4096;
@@ -1406,14 +1406,14 @@ pub mod fs_layout {
     /// the boot RAM window (see `_OS_SPECIFICATION.md` 8.4), not a format cap.
     pub const MAX_DATA_BLOCKS: usize = 640;
 
-    // Inode field offsets (FS_IN_*).
+    // DiskInode field offsets.
     pub const IN_TYPE: usize = 0;
     pub const IN_PARENT: usize = 2;
     pub const IN_SIZE: usize = 4;
     pub const IN_NAME: usize = 8;
     pub const IN_BLOCKS: usize = 40;
 
-    // Directory-entry field offsets (FS_DE_*).
+    // DiskDirEntry field offsets.
     pub const DE_NAME: usize = 0;
     pub const DE_INODE: usize = 32;
 
@@ -1744,8 +1744,7 @@ mod fs_image_tests {
         panic!("const {name} not found in fs.hll");
     }
 
-    // Host image builder and kernel must agree on the on-disk layout byte for
-    // byte; fs.hll is the source of truth, this guards fs_layout from drifting.
+    // Shared host-builder and kernel constants must not drift.
     #[test]
     fn fs_layout_matches_fs_hll() {
         let path = concat!(
@@ -1763,13 +1762,6 @@ mod fs_image_tests {
             ("FS_DIRENT_SIZE", fs_layout::DIRENT_SIZE as i64),
             ("FS_DIRENTS_PER_BLOCK", fs_layout::DIRENTS_PER_BLOCK as i64),
             ("FS_INODE_BLOCKS", fs_layout::MAX_DIRECT_BLOCKS as i64),
-            ("FS_IN_TYPE", fs_layout::IN_TYPE as i64),
-            ("FS_IN_PARENT", fs_layout::IN_PARENT as i64),
-            ("FS_IN_SIZE", fs_layout::IN_SIZE as i64),
-            ("FS_IN_NAME", fs_layout::IN_NAME as i64),
-            ("FS_IN_BLOCKS", fs_layout::IN_BLOCKS as i64),
-            ("FS_DE_NAME", fs_layout::DE_NAME as i64),
-            ("FS_DE_INODE", fs_layout::DE_INODE as i64),
             ("FS_SB_BLOCK_COUNT", fs_layout::SB_BLOCK_COUNT as i64),
             ("FS_SB_FREE_INODES", fs_layout::SB_FREE_INODES as i64),
             ("FS_SB_FREE_BLOCKS", fs_layout::SB_FREE_BLOCKS as i64),

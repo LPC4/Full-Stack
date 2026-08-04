@@ -45,7 +45,7 @@ export struct TrapFrame {
 export struct Pcb {
     pid: u64,
     state: u64,
-    next: u64,
+    next: Pcb*,
     user_stack_pa: u64,
     entry_pc: u64,
     frame: TrapFrame,
@@ -56,6 +56,13 @@ export struct Pcb {
     stdin_fd: u64,
     fb_mapped: u64,
     heap_brk: u64,
+}
+
+export enum SysAction {
+    Continue
+    Schedule
+    ExitSchedule
+    Block
 }
 
 ; --- Process states ---
@@ -76,6 +83,7 @@ export const PCB_OFF_PARENT_PID    = 336
 export const PCB_OFF_EXIT_CODE     = 344
 export const PCB_OFF_STDOUT_FD     = 352
 export const PCB_OFF_STDIN_FD      = 360
+export const PCB_OFF_FB_MAPPED     = 368
 export const PCB_OFF_HEAP_BRK      = 376
 export const PCB_SIZE              = 384
 
