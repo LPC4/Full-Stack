@@ -1,4 +1,44 @@
-; Shared cc AST record layouts.
-struct Node { name: u8[16], kind: i64, a: i64, b: i64, c: i64, next: i64 }
+; Shared cc compiler record layouts.
+enum TokenKind {
+    TokEof
+    TokInt
+    TokIdent
+    TokLParen
+    TokRParen
+    TokLBrace
+    TokRBrace
+    TokComma
+    TokColon
+    TokArrow
+    TokAssign
+    TokPlus
+    TokMinus
+    TokStar
+    TokSlash
+    TokPct
+    TokLt
+    TokLe
+    TokGt
+    TokGe
+    TokEq
+    TokNe
+}
+
+struct Token { text: u8[16], kind: TokenKind, val: i64 }
+
+enum NodeKind {
+    NodeInt
+    NodeVar
+    NodeBinop
+    NodeCall
+    NodeDecl
+    NodeAssign
+    NodeIf
+    NodeWhile
+    NodeReturn
+    NodeExpr
+}
+
+struct Node { name: u8[16], kind: NodeKind, op: TokenKind, a: i64, b: i64, c: i64, next: i64 }
 
 struct Fn { name: u8[16], nparams: i64, nlocals: i64, body: i64 }

@@ -67,6 +67,14 @@ const USER_ARG_BASE  = 0x7FF00000
 const USER_ARG_FLAGS = VMM_R + VMM_W + VMM_U
 const USER_ARG_MAX   = 4095
 
+struct ExecOptions {
+    path: u8*,
+    arg: u8*,
+    out_path: u8*,
+    in_path: u8*,
+    out_append: u64,
+}
+
 ; Framebuffer device: 75 pixel pages (320x240x4 bytes) then 1 control page whose
 ; DBMODE register (offset 8) selects single (0) or double (1) buffering. Spec 7.5.
 const FB_PHYS_BASE   = 0x10020000
@@ -172,6 +180,7 @@ export load_elf_segments: (fd: i64, hdr: u8*) -> i64 {
     phentsize: u64 = rd_u16(hdr, 54)   ; e_phentsize
     phnum: u64 = rd_u16(hdr, 56)       ; e_phnum
     ph: u8* = utilities.malloc(64)
+    defer utilities.kfree(ph)
     loaded: i64 = 0
     pi: u64 = 0
     while pi < phnum {
@@ -211,8 +220,8 @@ export load_elf_segments: (fd: i64, hdr: u8*) -> i64 {
 
 ; Load a static ELF64 into a new process and enqueue it; arg staged at USER_ARG_BASE,
 ; out_path/in_path redirect child stdio (out_append seeks to end). pid or -1. OS spec 5.5/7.7.
-export sys_exec_impl: (path: u8*, arg: u8*, out_path: u8*, in_path: u8*, out_append: u64) -> i64 {
-    fd: i64 = fs.open(path, 0)
+export sys_exec_impl: (options: ExecOptions) -> i64 {
+    fd: i64 = fs.open(options.path, 0)
     if fd < 2 {
         return -1 as i64
     }
@@ -221,21 +230,21 @@ export sys_exec_impl: (path: u8*, arg: u8*, out_path: u8*, in_path: u8*, out_app
     ; path strings readable; the FS-table fds stay valid past the root switch below.
     out_fd: i64 = 0
     in_fd:  i64 = 0
-    if out_path != null {
-        out_fd = fs.open(out_path, 2)  ; create (implies RW)
+    if options.out_path != null {
+        out_fd = fs.open(options.out_path, 2)  ; create (implies RW)
         if out_fd < 2 {
             fs.close(fd)
             return -1 as i64
         }
-        if out_append != 0 {
+        if options.out_append != 0 {
             fs.set_pos(out_fd, fs.fd_size(out_fd))
         } else {
             fs.truncate(out_fd, 0)
             fs.set_pos(out_fd, 0)
         }
     }
-    if in_path != null {
-        in_fd = fs.open(in_path, 0)  ; read-only
+    if options.in_path != null {
+        in_fd = fs.open(options.in_path, 0)  ; read-only
         if in_fd < 2 {
             if out_fd >= 2 {
                 fs.close(out_fd)
@@ -247,11 +256,12 @@ export sys_exec_impl: (path: u8*, arg: u8*, out_path: u8*, in_path: u8*, out_app
 
     ; Stage the argument into a kernel buffer before process_create switches roots.
     arg_buf: u8* = utilities.malloc(USER_ARG_MAX + 1)
+    defer utilities.kfree(arg_buf)
     mem.memset(arg_buf, 0, USER_ARG_MAX + 1)
-    if arg != null {
+    if options.arg != null {
         ai: u64 = 0
         while ai < USER_ARG_MAX {
-            c: u8 = @(arg + ai)
+            c: u8 = @(options.arg + ai)
             if c == 0 {
                 break
             }
@@ -264,6 +274,7 @@ export sys_exec_impl: (path: u8*, arg: u8*, out_path: u8*, in_path: u8*, out_app
     ; Read the ELF header and validate the magic; the entry is the absolute VA in
     ; e_entry. The in-VM assembler and the host both link user code at USER_CODE_BASE.
     hdr: u8* = utilities.malloc(64)
+    defer utilities.kfree(hdr)
     hn: i64 = fs.read(fd, hdr, 0, 64)
     if hn < 64 {
         fs.close(fd)
@@ -787,15 +798,26 @@ export syscall_dispatch_inner: (frame: layout.TrapFrame*) -> layout.SysAction {
 
         SYSCALL_EXEC -> {
             ; Args read inline to keep syscall_dispatch's (already large) frame small.
-            result: i64 = sys_exec_impl(frame.x10 as u8*, frame.x11 as u8*, null, null, 0)
+            result: i64 = sys_exec_impl(ExecOptions {
+                .path = frame.x10 as u8*,
+                .arg = frame.x11 as u8*,
+                .out_path = null as u8*,
+                .in_path = null as u8*,
+                .out_append = 0,
+            })
             frame.x10 = result as u64
             return Continue
         }
 
         SYSCALL_EXEC_REDIR -> {
             ; a0=path, a1=arg, a2=out_path, a3=in_path, a4=out_append.
-            r: i64 = sys_exec_impl(frame.x10 as u8*, frame.x11 as u8*,
-                                   frame.x12 as u8*, frame.x13 as u8*, frame.x14)
+            r: i64 = sys_exec_impl(ExecOptions {
+                .path = frame.x10 as u8*,
+                .arg = frame.x11 as u8*,
+                .out_path = frame.x12 as u8*,
+                .in_path = frame.x13 as u8*,
+                .out_append = frame.x14,
+            })
             frame.x10 = r as u64
             return Continue
         }
