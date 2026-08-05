@@ -4,10 +4,14 @@ cstr := import("cstr")
 text := import("text")
 
 ; Object symbol table: null, locals, globals, then undefined externals.
-sym_pool: u8* = null
-sym_val: i64* = null
-sym_shndx: i64* = null
-sym_name_off: i64* = null
+struct Symbol {
+    name: u8[16],
+    value: i64,
+    shndx: i64,
+    name_off: i64,
+}
+
+symbols: Symbol[128] = []
 nsym: i64 = 0
 first_global: i64 = 0
 
@@ -33,16 +37,18 @@ push_sym: (name: u8*, value: i64, shndx: i64) {
         as_state.fail("too many symbols".ptr)
         return
     }
-    dst: u8* = sym_pool + (nsym as u64) * 16
+    sym: Symbol* = &symbols[nsym]
+    dst: u8* = sym as u8*
     text.copy_name16(dst, name)
-    sym_val[nsym] = value
-    sym_shndx[nsym] = shndx
+    sym.value = value
+    sym.shndx = shndx
     nsym = nsym + 1
 }
 
 sym_index: (name: u8*) -> i64 {
     for i in 1..nsym {
-        cand: u8* = sym_pool + (i as u64) * 16
+        sym: Symbol* = &symbols[i]
+        cand: u8* = sym as u8*
         if cstr.eq(cand, name) == 1 {
             return i
         }
@@ -58,8 +64,9 @@ build_symbols: () {
         nm: u8* = lab as u8*
         if as_state.is_globl(nm) == 0 {
             shndx: i64 = 1
-            if lab.sec == 1 {
-                shndx = 2
+            match lab.sec {
+                TextSection -> {}
+                DataSection -> { shndx = 2 }
             }
             push_sym(nm, lab.addr, shndx)
         }
@@ -70,8 +77,9 @@ build_symbols: () {
         nm: u8* = lab as u8*
         if as_state.is_globl(nm) == 1 {
             shndx: i64 = 1
-            if lab.sec == 1 {
-                shndx = 2
+            match lab.sec {
+                TextSection -> {}
+                DataSection -> { shndx = 2 }
             }
             push_sym(nm, lab.addr, shndx)
         }
@@ -112,13 +120,6 @@ wr_shdr: (off: u64, nm: u64, sht: u64, flg: u64, so: u64, sz: u64, lnk: u64, inf
 
 ; Layout: ehdr, .text, .data, .rela.text, .symtab, .strtab, .shstrtab, shdrs.
 export write_object: () -> u64 {
-    if sym_pool == null {
-        sym_pool = new(u8, 2048)
-        sym_val = new(i64, 128)
-        sym_shndx = new(i64, 128)
-        sym_name_off = new(i64, 128)
-    }
-
     build_symbols()
 
     text_off: u64 = 64
@@ -131,8 +132,9 @@ export write_object: () -> u64 {
     strtab_off: u64 = symtab_off + symtab_len
     cursor: u64 = 1
     for si in 1..nsym {
-        sym_name_off[si] = cursor as i64
-        nm: u8* = sym_pool + (si as u64) * 16
+        sym: Symbol* = &symbols[si]
+        sym.name_off = cursor as i64
+        nm: u8* = sym as u8*
         cursor = cursor + cstr.len(nm) + 1
     }
     strtab_len: u64 = cursor
@@ -174,9 +176,9 @@ export write_object: () -> u64 {
         rn: u8* = r as u8*
         eoff: u64 = rela_off + (ri as u64) * 24
         rtype: u64 = match r.kind {
-            1 -> 17
-            2 -> 23
-            _ -> 19
+            Jal       -> 17
+            PcrelHi20 -> 23
+            _         -> 19
         }
         sidx: i64 = sym_index(rn)
         if sidx < 0 {
@@ -196,19 +198,17 @@ export write_object: () -> u64 {
             bind = 1
         }
         noff: u64 = 0
+        sym: Symbol* = &symbols[si]
         if si > 0 {
-            no: i64 = sym_name_off[si]
-            noff = no as u64
+            noff = sym.name_off as u64
         }
-        shx: i64 = sym_shndx[si]
-        val: i64 = sym_val[si]
-        wr_sym(eoff, noff, bind, shx as u64, val as u64)
+        wr_sym(eoff, noff, bind, sym.shndx as u64, sym.value as u64)
     }
 
     for si in 1..nsym {
-        nm: u8* = sym_pool + (si as u64) * 16
-        no: i64 = sym_name_off[si]
-        out_str(strtab_off + (no as u64), nm)
+        sym: Symbol* = &symbols[si]
+        nm: u8* = sym as u8*
+        out_str(strtab_off + (sym.name_off as u64), nm)
     }
 
     ; --- Section headers ---
