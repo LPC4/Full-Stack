@@ -7,47 +7,10 @@ codegen := import("./cc_codegen.hll")
 
 const ARG_BASE = 0x7FF00000
 
-; Token kinds.
-const TK_EOF = 0
-const TK_INT = 1
-const TK_IDENT = 2
-const TK_LPAREN = 3
-const TK_RPAREN = 4
-const TK_LBRACE = 5
-const TK_RBRACE = 6
-const TK_COMMA = 7
-const TK_COLON = 8
-const TK_ARROW = 9
-const TK_ASSIGN = 10
-const TK_PLUS = 11
-const TK_MINUS = 12
-const TK_STAR = 13
-const TK_SLASH = 14
-const TK_PCT = 15
-const TK_LT = 16
-const TK_LE = 17
-const TK_GT = 18
-const TK_GE = 19
-const TK_EQ = 20
-const TK_NE = 21
-
-; AST node kinds.
-const ND_INT = 1
-const ND_VAR = 2
-const ND_BINOP = 3
-const ND_CALL = 4
-const ND_DECL = 5
-const ND_ASSIGN = 6
-const ND_IF = 7
-const ND_WHILE = 8
-const ND_RETURN = 9
-const ND_EXPR = 10
-
 ; --- Compiler state ---
 src: u8* = null
 src_len: u64 = 0
 
-struct Token { text: u8[16], kind: i64, val: i64 }
 toks: Token* = null
 ntok: i64 = 0
 
@@ -116,7 +79,7 @@ export emit_int: (v: i64) {
 }
 
 ; --- Tokenizer ---
-push_tok: (kind: i64, val: i64) {
+push_tok: (kind: TokenKind, val: i64) {
     if ntok < 2048 {
         t: Token* = &toks[ntok]
         t.kind = kind
@@ -125,6 +88,37 @@ push_tok: (kind: i64, val: i64) {
         @d = 0 as u8
         ntok = ntok + 1
     }
+}
+
+token_tag: (kind: TokenKind) -> i64 {
+    return match kind {
+        TokEof    -> 0
+        TokInt    -> 1
+        TokIdent  -> 2
+        TokLParen -> 3
+        TokRParen -> 4
+        TokLBrace -> 5
+        TokRBrace -> 6
+        TokComma  -> 7
+        TokColon  -> 8
+        TokArrow  -> 9
+        TokAssign -> 10
+        TokPlus   -> 11
+        TokMinus  -> 12
+        TokStar   -> 13
+        TokSlash  -> 14
+        TokPct    -> 15
+        TokLt     -> 16
+        TokLe     -> 17
+        TokGt     -> 18
+        TokGe     -> 19
+        TokEq     -> 20
+        TokNe     -> 21
+    }
+}
+
+kind_is: (actual: TokenKind, expected: TokenKind) -> bool {
+    return token_tag(actual) == token_tag(expected)
 }
 
 set_tok_txt: (idx: i64, start: u64, len: u64) {
@@ -151,49 +145,49 @@ scan_punct: (i: u64) -> u64 {
     }
     if c == '-' {
         if d == '>' {
-            push_tok(TK_ARROW, 0)
+            push_tok(TokenKind.TokArrow, 0)
             return i + 2
         }
     }
     if c == '<' {
         if d == '=' {
-            push_tok(TK_LE, 0)
+            push_tok(TokenKind.TokLe, 0)
             return i + 2
         }
     }
     if c == '>' {
         if d == '=' {
-            push_tok(TK_GE, 0)
+            push_tok(TokenKind.TokGe, 0)
             return i + 2
         }
     }
     if c == '=' {
         if d == '=' {
-            push_tok(TK_EQ, 0)
+            push_tok(TokenKind.TokEq, 0)
             return i + 2
         }
     }
     if c == '!' {
         if d == '=' {
-            push_tok(TK_NE, 0)
+            push_tok(TokenKind.TokNe, 0)
             return i + 2
         }
     }
     match c {
-        '(' -> { push_tok(TK_LPAREN, 0) }
-        ')' -> { push_tok(TK_RPAREN, 0) }
-        '{' -> { push_tok(TK_LBRACE, 0) }
-        '}' -> { push_tok(TK_RBRACE, 0) }
-        ',' -> { push_tok(TK_COMMA, 0) }
-        ':' -> { push_tok(TK_COLON, 0) }
-        '=' -> { push_tok(TK_ASSIGN, 0) }
-        '+' -> { push_tok(TK_PLUS, 0) }
-        '-' -> { push_tok(TK_MINUS, 0) }
-        '*' -> { push_tok(TK_STAR, 0) }
-        '/' -> { push_tok(TK_SLASH, 0) }
-        '%' -> { push_tok(TK_PCT, 0) }
-        '<' -> { push_tok(TK_LT, 0) }
-        '>' -> { push_tok(TK_GT, 0) }
+        '(' -> { push_tok(TokenKind.TokLParen, 0) }
+        ')' -> { push_tok(TokenKind.TokRParen, 0) }
+        '{' -> { push_tok(TokenKind.TokLBrace, 0) }
+        '}' -> { push_tok(TokenKind.TokRBrace, 0) }
+        ',' -> { push_tok(TokenKind.TokComma, 0) }
+        ':' -> { push_tok(TokenKind.TokColon, 0) }
+        '=' -> { push_tok(TokenKind.TokAssign, 0) }
+        '+' -> { push_tok(TokenKind.TokPlus, 0) }
+        '-' -> { push_tok(TokenKind.TokMinus, 0) }
+        '*' -> { push_tok(TokenKind.TokStar, 0) }
+        '/' -> { push_tok(TokenKind.TokSlash, 0) }
+        '%' -> { push_tok(TokenKind.TokPct, 0) }
+        '<' -> { push_tok(TokenKind.TokLt, 0) }
+        '>' -> { push_tok(TokenKind.TokGt, 0) }
         _   -> { perr("bad character".ptr) }
     }
     return i + 1
@@ -236,7 +230,7 @@ tokenize: () {
                         }
                     }
                     idx: i64 = ntok
-                    push_tok(TK_IDENT, 0)
+                    push_tok(TokenKind.TokIdent, 0)
                     set_tok_txt(idx, start, i - start)
                 } else {
                     if text.is_digit(c) {
@@ -250,7 +244,7 @@ tokenize: () {
                                 break
                             }
                         }
-                        push_tok(TK_INT, v)
+                        push_tok(TokenKind.TokInt, v)
                     } else {
                         if c == '\'' {
                             i = i + 1
@@ -269,7 +263,7 @@ tokenize: () {
                             } else {
                                 perr("unterminated char literal".ptr)
                             }
-                            push_tok(TK_INT, cv)
+                            push_tok(TokenKind.TokInt, cv)
                         } else {
                             i = scan_punct(i)
                         }
@@ -278,16 +272,16 @@ tokenize: () {
             }
         }
     }
-    push_tok(TK_EOF, 0)
+    push_tok(TokenKind.TokEof, 0)
 }
 
 ; --- Token cursor ---
-cur_kind: () -> i64 {
+cur_kind: () -> TokenKind {
     if pos < ntok {
         t: Token* = &toks[pos]
         return t.kind
     }
-    return TK_EOF
+    return TokenKind.TokEof
 }
 
 cur_val: () -> i64 {
@@ -299,20 +293,20 @@ cur_txt: () -> u8* {
     return (&toks[pos]) as u8*
 }
 
-nxt_kind: () -> i64 {
+nxt_kind: () -> TokenKind {
     if pos + 1 < ntok {
         t: Token* = &toks[pos + 1]
         return t.kind
     }
-    return TK_EOF
+    return TokenKind.TokEof
 }
 
 adv: () {
     pos = pos + 1
 }
 
-expect: (k: i64, msg: u8*) {
-    if cur_kind() == k {
+expect: (k: TokenKind, msg: u8*) {
+    if kind_is(cur_kind(), k) {
         adv()
     } else {
         perr(msg)
@@ -320,10 +314,11 @@ expect: (k: i64, msg: u8*) {
 }
 
 ; --- AST ---
-mk: (kind: i64) -> i64 {
+mk: (kind: NodeKind) -> i64 {
     id: i64 = nnode
     nd: Node* = &nodes[id]
     nd.kind = kind
+    nd.op = TokenKind.TokEof
     nd.a = 0
     nd.b = 0
     nd.c = 0
@@ -355,82 +350,82 @@ find_local: (name: u8*) -> i64 {
 }
 
 ; --- Expressions ---
-is_mulop: (k: i64) -> i64 {
+is_mulop: (k: TokenKind) -> i64 {
     return match k {
-        TK_STAR  -> 1
-        TK_SLASH -> 1
-        TK_PCT   -> 1
+        TokStar  -> 1
+        TokSlash -> 1
+        TokPct   -> 1
         _        -> 0
     }
 }
 
-is_addop: (k: i64) -> i64 {
+is_addop: (k: TokenKind) -> i64 {
     return match k {
-        TK_PLUS  -> 1
-        TK_MINUS -> 1
+        TokPlus  -> 1
+        TokMinus -> 1
         _        -> 0
     }
 }
 
-is_relop: (k: i64) -> i64 {
+is_relop: (k: TokenKind) -> i64 {
     return match k {
-        TK_LT -> 1
-        TK_LE -> 1
-        TK_GT -> 1
-        TK_GE -> 1
+        TokLt -> 1
+        TokLe -> 1
+        TokGt -> 1
+        TokGe -> 1
         _     -> 0
     }
 }
 
-is_eqop: (k: i64) -> i64 {
+is_eqop: (k: TokenKind) -> i64 {
     return match k {
-        TK_EQ -> 1
-        TK_NE -> 1
+        TokEq -> 1
+        TokNe -> 1
         _     -> 0
     }
 }
 
 parse_primary: () -> i64 {
-    k: i64 = cur_kind()
+    k: TokenKind = cur_kind()
     match k {
-    TK_INT -> {
+    TokInt -> {
         v: i64 = cur_val()
         adv()
-        n: i64 = mk(ND_INT)
+        n: i64 = mk(NodeKind.NodeInt)
         nd: Node* = &nodes[n]
         nd.a = v
         return n
     }
-    TK_LPAREN -> {
+    TokLParen -> {
         adv()
         e: i64 = parse_expr()
-        expect(TK_RPAREN, "expected )".ptr)
+        expect(TokenKind.TokRParen, "expected )".ptr)
         return e
     }
-    TK_IDENT -> {
+    TokIdent -> {
         nm: u8[24] = []
         text.copy_name16(&nm[0], cur_txt())
         adv()
-        if cur_kind() == TK_LPAREN {
+        if kind_is(cur_kind(), TokenKind.TokLParen) {
             adv()
-            n: i64 = mk(ND_CALL)
+            n: i64 = mk(NodeKind.NodeCall)
             set_name(n, &nm[0])
             astart: i64 = ncallarg
             cnt: i64 = 0
-            if cur_kind() != TK_RPAREN {
+            if kind_is(cur_kind(), TokenKind.TokRParen) == false {
                 while 1 == 1 {
                     a: i64 = parse_expr()
                     call_args[ncallarg] = a
                     ncallarg = ncallarg + 1
                     cnt = cnt + 1
-                    if cur_kind() == TK_COMMA {
+                    if kind_is(cur_kind(), TokenKind.TokComma) {
                         adv()
                     } else {
                         break
                     }
                 }
             }
-            expect(TK_RPAREN, "expected ) in call".ptr)
+            expect(TokenKind.TokRParen, "expected ) in call".ptr)
             nd: Node* = &nodes[n]
             nd.b = astart
             nd.c = cnt
@@ -441,7 +436,7 @@ parse_primary: () -> i64 {
             perr("unknown variable".ptr)
             slot = 0
         }
-        n: i64 = mk(ND_VAR)
+        n: i64 = mk(NodeKind.NodeVar)
         nd: Node* = &nodes[n]
         nd.a = slot
         return n
@@ -449,18 +444,18 @@ parse_primary: () -> i64 {
     _ -> {}
     }
     perr("expected expression".ptr)
-    return mk(ND_INT)
+    return mk(NodeKind.NodeInt)
 }
 
 parse_mul: () -> i64 {
     n: i64 = parse_primary()
     while is_mulop(cur_kind()) == 1 {
-        op: i64 = cur_kind()
+        op: TokenKind = cur_kind()
         adv()
         r: i64 = parse_primary()
-        b: i64 = mk(ND_BINOP)
+        b: i64 = mk(NodeKind.NodeBinop)
         nd: Node* = &nodes[b]
-        nd.a = op
+        nd.op = op
         nd.b = n
         nd.c = r
         n = b
@@ -471,12 +466,12 @@ parse_mul: () -> i64 {
 parse_add: () -> i64 {
     n: i64 = parse_mul()
     while is_addop(cur_kind()) == 1 {
-        op: i64 = cur_kind()
+        op: TokenKind = cur_kind()
         adv()
         r: i64 = parse_mul()
-        b: i64 = mk(ND_BINOP)
+        b: i64 = mk(NodeKind.NodeBinop)
         nd: Node* = &nodes[b]
-        nd.a = op
+        nd.op = op
         nd.b = n
         nd.c = r
         n = b
@@ -487,12 +482,12 @@ parse_add: () -> i64 {
 parse_rel: () -> i64 {
     n: i64 = parse_add()
     while is_relop(cur_kind()) == 1 {
-        op: i64 = cur_kind()
+        op: TokenKind = cur_kind()
         adv()
         r: i64 = parse_add()
-        b: i64 = mk(ND_BINOP)
+        b: i64 = mk(NodeKind.NodeBinop)
         nd: Node* = &nodes[b]
-        nd.a = op
+        nd.op = op
         nd.b = n
         nd.c = r
         n = b
@@ -503,12 +498,12 @@ parse_rel: () -> i64 {
 parse_expr: () -> i64 {
     n: i64 = parse_rel()
     while is_eqop(cur_kind()) == 1 {
-        op: i64 = cur_kind()
+        op: TokenKind = cur_kind()
         adv()
         r: i64 = parse_rel()
-        b: i64 = mk(ND_BINOP)
+        b: i64 = mk(NodeKind.NodeBinop)
         nd: Node* = &nodes[b]
-        nd.a = op
+        nd.op = op
         nd.b = n
         nd.c = r
         n = b
@@ -518,13 +513,13 @@ parse_expr: () -> i64 {
 
 ; --- Statements and functions ---
 parse_stmt: () -> i64 {
-    k: i64 = cur_kind()
-    if k == TK_IDENT {
+    k: TokenKind = cur_kind()
+    if kind_is(k, TokenKind.TokIdent) {
         t: u8* = cur_txt()
         if cstr.eq(t, "return".ptr) == 1 {
             adv()
             e: i64 = parse_expr()
-            n: i64 = mk(ND_RETURN)
+            n: i64 = mk(NodeKind.NodeReturn)
             nd: Node* = &nodes[n]
             nd.a = e
             return n
@@ -532,10 +527,10 @@ parse_stmt: () -> i64 {
         if cstr.eq(t, "if".ptr) == 1 {
             adv()
             c: i64 = parse_expr()
-            expect(TK_LBRACE, "expected { after if".ptr)
+            expect(TokenKind.TokLBrace, "expected { after if".ptr)
             body: i64 = parse_block()
-            expect(TK_RBRACE, "expected } after if".ptr)
-            n: i64 = mk(ND_IF)
+            expect(TokenKind.TokRBrace, "expected } after if".ptr)
+            n: i64 = mk(NodeKind.NodeIf)
             nd: Node* = &nodes[n]
             nd.a = c
             nd.b = body
@@ -544,32 +539,32 @@ parse_stmt: () -> i64 {
         if cstr.eq(t, "while".ptr) == 1 {
             adv()
             c: i64 = parse_expr()
-            expect(TK_LBRACE, "expected { after while".ptr)
+            expect(TokenKind.TokLBrace, "expected { after while".ptr)
             body: i64 = parse_block()
-            expect(TK_RBRACE, "expected } after while".ptr)
-            n: i64 = mk(ND_WHILE)
+            expect(TokenKind.TokRBrace, "expected } after while".ptr)
+            n: i64 = mk(NodeKind.NodeWhile)
             nd: Node* = &nodes[n]
             nd.a = c
             nd.b = body
             return n
         }
-        k1: i64 = nxt_kind()
-        if k1 == TK_COLON {
+        k1: TokenKind = nxt_kind()
+        if kind_is(k1, TokenKind.TokColon) {
             nm: u8[24] = []
             text.copy_name16(&nm[0], cur_txt())
             adv()
             adv()
-            expect(TK_IDENT, "expected type in decl".ptr)
-            expect(TK_ASSIGN, "expected = in decl".ptr)
+            expect(TokenKind.TokIdent, "expected type in decl".ptr)
+            expect(TokenKind.TokAssign, "expected = in decl".ptr)
             e: i64 = parse_expr()
             slot: i64 = add_local(&nm[0])
-            n: i64 = mk(ND_DECL)
+            n: i64 = mk(NodeKind.NodeDecl)
             nd: Node* = &nodes[n]
             nd.a = slot
             nd.b = e
             return n
         }
-        if k1 == TK_ASSIGN {
+        if kind_is(k1, TokenKind.TokAssign) {
             nm: u8[24] = []
             text.copy_name16(&nm[0], cur_txt())
             adv()
@@ -580,7 +575,7 @@ parse_stmt: () -> i64 {
                 perr("assignment to unknown variable".ptr)
                 slot = 0
             }
-            n: i64 = mk(ND_ASSIGN)
+            n: i64 = mk(NodeKind.NodeAssign)
             nd: Node* = &nodes[n]
             nd.a = slot
             nd.b = e
@@ -588,7 +583,7 @@ parse_stmt: () -> i64 {
         }
     }
     e: i64 = parse_expr()
-    n: i64 = mk(ND_EXPR)
+    n: i64 = mk(NodeKind.NodeExpr)
     nd: Node* = &nodes[n]
     nd.a = e
     return n
@@ -598,11 +593,11 @@ parse_block: () -> i64 {
     head: i64 = -1
     tail: i64 = -1
     while 1 == 1 {
-        k: i64 = cur_kind()
-        if k == TK_RBRACE {
+        k: TokenKind = cur_kind()
+        if kind_is(k, TokenKind.TokRBrace) {
             break
         }
-        if k == TK_EOF {
+        if kind_is(k, TokenKind.TokEof) {
             break
         }
         s: i64 = parse_stmt()
@@ -621,43 +616,43 @@ parse_block: () -> i64 {
 }
 
 parse_function: () {
-    if cur_kind() != TK_IDENT {
+    if kind_is(cur_kind(), TokenKind.TokIdent) == false {
         perr("expected function name".ptr)
         return
     }
     fidx: i64 = nfn
     text.copy_name16((&fns[fidx]) as u8*, cur_txt())
     adv()
-    expect(TK_COLON, "expected : after function name".ptr)
-    expect(TK_LPAREN, "expected ( before params".ptr)
+    expect(TokenKind.TokColon, "expected : after function name".ptr)
+    expect(TokenKind.TokLParen, "expected ( before params".ptr)
     loc_count = 0
     np: i64 = 0
-    if cur_kind() != TK_RPAREN {
+    if kind_is(cur_kind(), TokenKind.TokRParen) == false {
         while 1 == 1 {
-            if cur_kind() != TK_IDENT {
+            if kind_is(cur_kind(), TokenKind.TokIdent) == false {
                 perr("expected parameter name".ptr)
                 break
             }
             pn: u8[24] = []
             text.copy_name16(&pn[0], cur_txt())
             adv()
-            expect(TK_COLON, "expected : in parameter".ptr)
-            expect(TK_IDENT, "expected parameter type".ptr)
+            expect(TokenKind.TokColon, "expected : in parameter".ptr)
+            expect(TokenKind.TokIdent, "expected parameter type".ptr)
             add_local(&pn[0])
             np = np + 1
-            if cur_kind() == TK_COMMA {
+            if kind_is(cur_kind(), TokenKind.TokComma) {
                 adv()
             } else {
                 break
             }
         }
     }
-    expect(TK_RPAREN, "expected ) after params".ptr)
-    expect(TK_ARROW, "expected ->".ptr)
-    expect(TK_IDENT, "expected return type".ptr)
-    expect(TK_LBRACE, "expected { before body".ptr)
+    expect(TokenKind.TokRParen, "expected ) after params".ptr)
+    expect(TokenKind.TokArrow, "expected ->".ptr)
+    expect(TokenKind.TokIdent, "expected return type".ptr)
+    expect(TokenKind.TokLBrace, "expected { before body".ptr)
     head: i64 = parse_block()
-    expect(TK_RBRACE, "expected } after body".ptr)
+    expect(TokenKind.TokRBrace, "expected } after body".ptr)
     f: Fn* = &fns[fidx]
     f.nparams = np
     f.nlocals = loc_count
@@ -668,7 +663,7 @@ parse_function: () {
 parse_program: () {
     pos = 0
     nfn = 0
-    while cur_kind() != TK_EOF {
+    while kind_is(cur_kind(), TokenKind.TokEof) == false {
         parse_function()
         if err_flag != 0 {
             return

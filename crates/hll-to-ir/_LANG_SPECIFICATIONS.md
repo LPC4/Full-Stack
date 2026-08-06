@@ -1,17 +1,10 @@
 # HLL Language Specification
 
-HLL is a small systems language built around a consistency-first memory model. Memory
-operations are explicit and deterministic: there are no hidden conversions, no hidden
-ownership, and no hidden dispatch. This document is the normative specification of the
-language the `hll-to-ir` front end implements. Sections describing unbuilt machinery are
-collected in the non-normative roadmap appendix and are clearly marked.
+HLL is a small systems language. Memory perations are explicit and deterministic: there 
+are no hidden conversions, no hidden ownership, and no hidden dispatch. This document 
+is the normative specification of the language the `hll-to-ir` front end implements.
 
-There is one HLL language and one compiler. Earlier drafts of this document described a
-predecessor dialect; that dialect and its compiler mode no longer exist.
-
-## 1. Core design principles
-
-HLL enforces a consistent pointer and place model.
+## 1. Design principles
 
 1. Pointers are always pointers. If a type contains `*`, it is a pointer type. There are no
    implicit conversions between `T` and `T*`.

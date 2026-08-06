@@ -7,6 +7,7 @@ validation rules the assembler enforces. Section 9 also records exactly which di
 and relocations this implementation emits.
 
 ## 1. Architecture overview
+
 - **Base:** RV64I (64-bit integer registers, PC-relative branches/jumps, two's complement
   arithmetic)
 - **Extensions:** M (hardware mul/div), A (atomic memory ops), F (32-bit FP), D (64-bit FP)

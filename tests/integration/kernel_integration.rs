@@ -1470,6 +1470,78 @@ msg:
     );
 }
 
+#[test]
+fn kernel_shell_assembles_section_and_data_directives() {
+    let source = b"\
+.section .text
+.globl _start
+_start:
+  la t0, bytes
+  lbu t1, 0(t0)
+  li t2, 7
+  bne t1, t2, fail
+  lw t1, 4(t0)
+  li t2, 42
+  bne t1, t2, fail
+  lbu t1, 8(t0)
+  li t2, 65
+  bne t1, t2, fail
+  lbu t1, 9(t0)
+  li t2, 66
+  bne t1, t2, fail
+  lbu t1, 10(t0)
+  bne t1, zero, fail
+  la t0, robyte
+  lbu t1, 0(t0)
+  li t2, 9
+  bne t1, t2, fail
+  la t0, zeroed
+  lbu t1, 0(t0)
+  bne t1, zero, fail
+  li a0, 42
+  li a7, 93
+  ecall
+fail:
+  li a0, 1
+  li a7, 93
+  ecall
+.section .data
+bytes:
+  .byte 7
+  .zero 3
+  .word 42
+  .ascii \"A\"
+  .asciz \"B\"
+.rodata
+robyte:
+  .byte 9
+.bss
+zeroed:
+  .zero 1
+";
+
+    let (outcome, uart) = run_tool_session(
+        &["as"],
+        &[("/directives.s", source)],
+        "as /directives.s /directives.elf\nrun /directives.elf\nexit\n",
+        200_000_000,
+    );
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    assert!(
+        uart.contains("as: wrote /directives.elf"),
+        "assembler failed; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("[exit 42]"),
+        "section or data directive encoding changed; uart={uart:?}"
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not exit cleanly; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
 // Host-built static ELFs must run unmodified: sys_exec maps each PT_LOAD at its
 // p_vaddr, zeroes BSS, and jumps e_entry.
 #[test]

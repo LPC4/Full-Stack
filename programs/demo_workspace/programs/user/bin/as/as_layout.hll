@@ -1,5 +1,15 @@
 ; Shared assembler record layouts.
-struct Label { name: u8[16], addr: i64, sec: i64 }
+enum Section {
+    TextSection
+    DataSection
+}
 
-; kind: 0 = CALL_PLT, 1 = JAL, 2 = LA/PCREL_HI20.
-struct Reloc { sym: u8[16], off: i64, kind: i64 }
+struct Label { name: u8[16], addr: i64, sec: Section }
+
+enum RelocKind {
+    CallPlt
+    Jal
+    PcrelHi20
+}
+
+struct Reloc { sym: u8[16], off: i64, kind: RelocKind }

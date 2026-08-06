@@ -12,6 +12,10 @@ export kmalloc: (size: u64) -> u8* {
     return ptr
 }
 
+export kfree: (ptr: u8*) {
+    memory_allocator.free(ptr)
+}
+
 ; Write exit code to SYSCON (0x10010000) to halt the VM or QEMU.
 ; Falls back to a WFI loop if the SYSCON write doesn't halt (real hardware).
 export kshutdown: (code: i64) {

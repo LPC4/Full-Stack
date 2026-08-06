@@ -150,7 +150,8 @@ page that is still mapped: pages are only reused after an explicit `pmm_free`.
 
 ### 4.2 Kernel heap (`kmalloc` / `malloc`)
 
-`kmalloc` (`utilities.hll`) wraps the stdlib `malloc` and panics on OOM. The
+`kmalloc` (`utilities.hll`) wraps the stdlib `malloc` and panics on OOM; `kfree`
+returns temporary kernel allocations to the stdlib free list. The
 allocator (`stdlib/core/memory_allocator.hll`) is bump-plus-free-list over the
 raw source in `stdlib/core/heap_source.hll`: a 64 KiB bootstrap `heap_buffer` in
 kernel BSS, plus the `KHEAP_BASE .. KHEAP_END` region `boot_heap` registers via
@@ -248,7 +249,10 @@ even for compute-bound processes that never yield.
 (`vmm_fork_copy`) and trap frame, sets the child's `a0` to 0, and enqueues it.
 `exec` (syscall 103) loads a static ELF (7.4) into a fresh per-process root at
 `0x4000_0000`, parents the child to its launcher (captured before the root
-switches), and enqueues it. `process_peek_pid` reports the next pid to be assigned.
+switches), and enqueues it. Its executable, argument, and redirection inputs are
+grouped in an internal options record; temporary argument and ELF buffers are
+released on every ordinary return. `process_peek_pid` reports the next pid to be
+assigned.
 
 ### 5.6 Zombies and reaping
 
@@ -479,7 +483,7 @@ released in `sys_exit` when the process ends.
 The shell parses `> >> <` as space-separated operators in `cmd_exec` and launches
 via `sh_launch_redir`.
 
-**Pipes (`a | b | c`, PLAN v3 1.2).** Implemented as a *sequential temp-file
+**Pipes (`a | b | c`).** Implemented as a *sequential temp-file
 pipeline*, not a blocking ring-buffer object: each stage runs to completion with its
 stdout bound to a temp file (`/.pipeN`) that the next stage reads as stdin, reusing
 the redirection path above. The shell splits the line on `|` (`cmd_pipe`, max 4
@@ -495,7 +499,7 @@ this system produces) but not a streaming/concurrent pipe. The blocking
 `sys_pipe`/`dup2` ring buffer is intentionally not built (no practical need at this
 scale).
 
-**Builtin redirection (PLAN v3 1.3).** Shell builtins (`ls cat echo pwd jobs help`)
+**Builtin redirection.** Shell builtins (`ls cat echo pwd jobs help`)
 run inside the shell process, not an exec'd child, so they bypass the per-PCB fd
 table. They instead use a shell-side *output sink* and *input source*: two globals
 `sh_sink_fd` and `sh_src_fd` (0 = console / none, else an open FS fd). The `sh_out*`

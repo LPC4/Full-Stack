@@ -5,8 +5,6 @@ and the RISC-V back end. The front end (`hll-to-ir`) builds an `IrProgram`; the 
 (`ir-to-asm`) consumes that structure directly. Its textual form is the canonical human-readable
 dump used by diagnostics, tests, goldens, the IDE, and the Guide.
 
-IR 2.0 is a hard syntax cut. The project does not parse or preserve the former IR 1.x spelling.
-
 ## 1. Design principles
 
 1. Static single assignment for virtual registers. Every temporary and parameter register is
