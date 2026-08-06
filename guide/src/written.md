@@ -919,7 +919,7 @@ So we'll have to change `exit` accordingly.
 exit:                  # exit(code): virt's poweroff device wants magic values, not raw codes
   li   t0, 0x100000    # the SiFive test finisher
   beqz a0, exit_pass   # if zero pass 0x5555
-  slli a0, a0, 16      # a code rides in the upper 16 bits
+  slli a0, a0, 16      # a code sits in the upper 16 bits
   li   t1, 0x3333      # 0x3333 = "fail, code attached"
   or   a0, a0, t1      # or the exit code (upper 16 bits) so we have a0=[exit:16][magic:16] (can't use ori here!)
   sw   a0, 0(t0)       # sw instead of sd
@@ -1475,4 +1475,202 @@ If you get stuck, the finished version is
 [`09_hll_functions/fibonacci.hll`](repo:programs/lessons/09_hll_functions/fibonacci.hll), with the run configuration
 `09.3 (solution): fibonacci`.
 
-For a quick reminder of the systems terminology used so far, see the [glossary](../../glossary/).
+For a quick reminder of the terminology used so far, see the [glossary](../../glossary/).
+
+## Runtimes and Standard Libraries
+
+Open the [`08: HLL compiler pipeline`](repo:programs/lessons/08_hll/compiler_pipeline.hll) example again and click debug. 
+Instead of pressing run and advance one instruction at a time. The first instruction is not in `main`. You land in 
+a file called `runtime.hll`. That’s the *runtime*, a small piece of code that wraps your program so it can start and stop 
+cleanly without you having to interact with any type of hardware or assembly.
+
+Let’s go over it.
+
+### Entry stub
+
+The label at the very top of the runtime is `_start`. This is the true entry point recorded in the ELF. The loader
+jumps here at execution, not to `main`. Here’s what `_start` looks like:
+
+```hll
+external main: () -> i32
+sys := import("sys")
+
+export _start: () {
+    code: i32 = main()
+    sys.exit(code as i64)
+}
+```
+
+`external main` tells the compiler that somebody else will provide `main`. That somebody else is you! The runtime calls 
+`main`, captures whatever it returns into `code`, and then calls `sys.exit(code)`.
+
+Step forward once. You’ll see the machine jump into the small `main` function that does 1 + 1 and returns 2. Step through that
+and you’re back in `_start`, about to call `sys.exit`. That's all the runtime is: it gives `main` a clean stage
+to run on and makes sure the machine stops when it’s done.
+
+### Exit function
+
+Step into `sys.exit`. You’ll find a small assembly wrapper in the standard library:
+
+```hll
+export sys_exit: (code: i64) {
+    _a0 = code as u64
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        li a7, 93
+        ecall
+    }
+}
+```
+
+The exit code is stored in a global variable `_a0`. Inline assembly loads it into register `a0`, puts the number 93 
+into `a7`, and then executes an instruction we haven’t seen before: `ecall`.
+
+`ecall` is short for *environment call*. Think of it like a `jal` where you don’t know the destination. Instead of jumping 
+to a label in your own code, the CPU pauses your program and hands control to a special handler that the machine 
+prepared ahead of time. The number in `a7` tells that handler which service you want, in this case it's exiting with a 
+specific code.
+
+In our hosted setup, that handler lives in ROM and only knows a few basic services. Syscall 93 means "exit". 
+When the `ecall` fires, the handler reads the exit code and writes it to the SYSCON device, shutting the machine off 
+exactly like the `exit` function we wrote by hand in the assembly chapter. The difference is that we never had to know 
+the SYSCON address: the standard library and the ROM handler hide that from us.
+
+### The handler is just code
+
+Here's what I didn't realize at first: the handler isn't a CPU feature, or some piece of silicon that "knows"
+what syscall 93 means. `ecall` only does one thing, it's a trap. It stops your program, saves enough state to
+resume later, and jumps to one fixed address that was set up ahead of time. What happens at that address is just
+normal assembly code, written by whoever built the machine. Here's the relevant part of our
+[real ROM handler](repo:crates/os-runtime/boot/trap.s):
+
+```asm
+_m_trap:
+    csrr t0, mcause             # why did we trap? there's more than one reason, we'll see this next chapter
+    li t1, 8
+    beq t0, t1, _dispatch_ecall
+    li t1, 9
+    beq t0, t1, _dispatch_ecall
+    li t1, 11
+    beq t0, t1, _dispatch_ecall
+    mret                        # not something we care about, so continue
+
+_dispatch_ecall:
+    li t0, 64
+    beq a7, t0, sys_write
+    li t0, 93
+    beq a7, t0, sys_exit
+    li t0, 94
+    beq a7, t0, sys_exit
+    li t0, 214
+    beq a7, t0, sys_brk
+    j sys_unknown
+
+sys_exit:
+    li t0, 268500992            # = 0x1001_0000 = SYSCON
+    sd a0, 0(t0)
+    j _advance_mepc_and_mret
+
+_advance_mepc_and_mret:
+    csrr t0, mepc
+    addi t0, t0, 4
+    csrw mepc, t0
+    mret                        # resume program
+```
+
+The first three comparisons check `mcause` (more on what that means next chapter). Once the handler knows it's actually 
+looking at an environment call, it compares `a7` against each syscall number and branches to whichever one matches, 
+exactly the same `if`/`match` chain you'd write in HLL. `sys_exit` rebuilds `0x1001_0000` in a register, writes the exit code
+from `a0` to that SYSCON address, and then bumps `mepc` past the `ecall` so that `mret` would resume at the next
+instruction, if the machine were still running by that point.
+
+Nobody wrote a syscall table into the hardware. Someone (in this case, me) wrote this code. You could've
+used a jump table instead, same idea, and `ecall` just guarantees you land at the top of it with `a7` and `a0`
+untouched. Everything past that point is regular RISC-V code.
+
+Which also means: the handler can do whatever it wants with syscall 93. Ours treats it as "exit". Nothing about
+`ecall` itself enforces that, a different handler could interpret 93 as something else entirely, or not recognize
+it at all. The convention only decides where numbers go, `a7` for the syscall, `a0`-`a6` for arguments. What happens
+after is decided by whoever creates the system.
+
+### Why abstract it?
+
+You might wonder: if we can just write to `0x10010000` and stop the machine, why not do that directly in HLL? 
+The answer is *protection*.
+
+Right now, every program we write runs in the most privileged mode the CPU offers (M-mode). Any instruction can 
+touch any memory address, including the devices. That’s fine when you’re the only program on the machine. But a 
+real computer runs many programs at once. If one of them could write to the power-off device, it could kill every 
+other program instantly. If it could read the keyboard buffer directly, it could steal your passwords.
+
+To stop that, CPUs have *privilege modes*: a small set of rings that decide what code is allowed to do:
+
+| Mode | What runs there | What it can touch                             |
+|------|-----------------|-----------------------------------------------|
+| M-mode (machine) | Firmware, early boot code | Everything, all memory, all devices           |
+| S-mode (supervisor) | The operating‑system kernel | Memory and devices the firmware allows        |
+| U-mode (user) | Ordinary programs | Only what the kernel explicitly maps for them |
+
+Our earlier assembly programs ran in M‑mode because there was nothing beneath them. The hosted examples in this chapter 
+also run in M‑mode, but they use `ecall` to ask the ROM handler to do privileged things like shutting down. This isn’t 
+true protection, though, the program could still reach SYSCON if it really wanted to, but it’s the same pattern a 
+protected system uses. When we boot our kernel later, programs will run in U‑mode. An `ecall` from there will trap into 
+the S‑mode kernel handler, which checks whether the request is allowed before touching any hardware (or maybe doing another 
+`ecall` into the M-mode handler if needed). That’s how a machine stays stable and doesn't just hard-crash when a program 
+tries to do something it's not supposed to.
+
+And the hardware does enforce this. If a U-mode program tries to use a `j` to jump to M-mode code, or tries to write 
+to a protected memory address, the CPU hardware blocks it and throws an error. `ecall` is the only way to jump upward 
+in privilege.
+
+The important take‑away is: `ecall` is a protected jump to code that runs at a higher privilege level. 
+It might lead to the ROM (hosted mode) or to the kernel (OS mode), but from the program’s point of view it’s the same 
+instruction.
+
+(There’s a standard called SBI that defines the calls between a kernel and M‑mode firmware, but we don’t need it yet. 
+When we write the kernel, we’ll use SBI to shut down the machine, start other CPU cores, and set timers.)
+
+### Watch it happen
+
+To watch the same layers do more than return a number, modify the program to print a message
+before returning:
+
+```hll
+console := import("console")
+
+main: () -> i32 {
+    console.println("Hello from the runtime!")
+    return 0
+}
+```
+
+Now, let's follow the whole path in the debugger. Click Debug, and choose `instr` as the step unit:
+
+1. Step through `_start`, into `main`, and back to `_start`. (Here you can view how the stdlib dispatches println)
+2. Step into `sys.exit`.  In the disassembly view, watch its inline assembly load the return value into `a0` and the
+   syscall number `93` into `a7`.
+3. Step into the `ecall`. Instead of halting immediately, the CPU jumps to the ROM handler.
+4. Continue stepping through the ROM until you reach the final two instructions:
+
+```asm
+00000184  lui  t0, 0x10010
+00000188  sd   a0, 0(t0)
+```
+
+The instructions before these are part of the privilege machinery. We will come back to permission checking later. 
+For now, the important instruction is the `lui`: it builds the SYSCON address `0x1001_0000` in `t0`. The `sd` then 
+writes the exit code from `a0` to that address, and the machine halts.
+
+You have now followed the entire program: HLL code, the runtime that calls it, the standard
+library wrapper, the `ecall`, and the ROM handler that talks to the hardware.
+
+Assembly gives you total control, but it also makes you manage every address and convention by hand. The runtime and standard 
+library collect the work shared by every program, starting, stopping, and talking to hardware, behind a handful of HLL 
+functions. The lower layers remain available in the debugger, but from here on we can stay in HLL unless we
+choose to look beneath them.
+
+## Standard Library
+
+
+

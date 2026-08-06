@@ -172,6 +172,41 @@ title = "Exercise"
 
 [[page]]
 kind = "chapter"
+slug = "runtimes-and-standard-libraries"
+title = "Runtimes and Standard Libraries"
+
+[[page]]
+kind = "section"
+slug = "runtimes-and-standard-libraries/entry-stub"
+title = "Entry stub"
+
+[[page]]
+kind = "section"
+slug = "runtimes-and-standard-libraries/exit-function"
+title = "Exit function"
+
+[[page]]
+kind = "section"
+slug = "runtimes-and-standard-libraries/the-handler-is-just-code"
+title = "The handler is just code"
+
+[[page]]
+kind = "section"
+slug = "runtimes-and-standard-libraries/why-abstract-it"
+title = "Why abstract it?"
+
+[[page]]
+kind = "section"
+slug = "runtimes-and-standard-libraries/watch-it-happen"
+title = "Watch it happen"
+
+[[page]]
+kind = "chapter"
+slug = "standard-library"
+title = "Standard Library"
+
+[[page]]
+kind = "chapter"
 slug = "glossary"
 title = "Glossary"
 
