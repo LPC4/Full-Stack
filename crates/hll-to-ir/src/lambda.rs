@@ -216,7 +216,8 @@ fn collect_target_binders(target: &AssignTarget, binders: &mut HashSet<String>) 
                 }
             }
         }
-        AssignTarget::Dereference(inner) | AssignTarget::FieldAccess { expr: inner, .. } => {
+        AssignTarget::Dereference(inner) => collect_expression_binders(inner, binders),
+        AssignTarget::FieldAccess { expr: inner, .. } => {
             collect_target_binders(inner, binders);
         }
         AssignTarget::ArrayIndex { expr, index } => {

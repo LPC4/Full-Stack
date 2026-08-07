@@ -288,9 +288,8 @@ fn resolve_expression(expr: &mut Expression, catalog: &AssociatedCatalog) -> Res
 
 fn resolve_target(target: &mut AssignTarget, catalog: &AssociatedCatalog) -> Result<(), String> {
     match target {
-        AssignTarget::Dereference(inner) | AssignTarget::FieldAccess { expr: inner, .. } => {
-            resolve_target(inner, catalog)
-        }
+        AssignTarget::Dereference(inner) => resolve_expression(inner, catalog),
+        AssignTarget::FieldAccess { expr: inner, .. } => resolve_target(inner, catalog),
         AssignTarget::ArrayIndex { expr, index } => {
             resolve_target(expr, catalog)?;
             resolve_expression(index, catalog)

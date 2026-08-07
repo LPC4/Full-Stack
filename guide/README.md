@@ -83,8 +83,9 @@ title. Within every source, `###` starts a page and deeper headings form the on-
 
 Code fences tagged `asm`, `hll`, `ir`, `ast`, `sh`, `ld`, or `x86` use the shared syntax
 highlighter. Use `runnable` for an assembly fragment that should receive an entry point and clean
-halt automatically, or for a standalone HLL program with a `main` function. Use `runnable=bare`
-only for a complete assembly program:
+halt automatically, or for a standalone HLL program with a `main` function. Runnable HLL programs
+may import and use the hosted standard library. Use `runnable=bare` only for a complete assembly
+program:
 
 ````markdown
 ```asm,runnable

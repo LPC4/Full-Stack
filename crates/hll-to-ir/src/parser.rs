@@ -1896,9 +1896,7 @@ impl<'a> Parser<'a> {
             Expression::Unary {
                 op: UnaryOp::Dereference,
                 expr,
-            } => Ok(AssignTarget::Dereference(Box::new(
-                self.expression_to_target(*expr)?,
-            ))),
+            } => Ok(AssignTarget::Dereference(expr)),
             Expression::Primary(PrimaryExpr::FieldAccess { expr, field }) => {
                 Ok(AssignTarget::FieldAccess {
                     expr: Box::new(self.expression_to_target(*expr)?),

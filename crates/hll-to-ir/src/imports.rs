@@ -348,7 +348,8 @@ fn collect_assign_target_refs(target: &AssignTarget, refs: &mut HashSet<String>)
         AssignTarget::Identifier(name) => {
             refs.insert(name.clone());
         }
-        AssignTarget::Dereference(inner) | AssignTarget::FieldAccess { expr: inner, .. } => {
+        AssignTarget::Dereference(inner) => collect_expr_refs(inner, refs),
+        AssignTarget::FieldAccess { expr: inner, .. } => {
             collect_assign_target_refs(inner, refs);
         }
         AssignTarget::ArrayIndex { expr, index } => {
@@ -773,7 +774,8 @@ fn rewrite_assign_target(
         }
     }
     match target {
-        AssignTarget::Dereference(inner) | AssignTarget::FieldAccess { expr: inner, .. } => {
+        AssignTarget::Dereference(inner) => rewrite_expr(inner, aliases)?,
+        AssignTarget::FieldAccess { expr: inner, .. } => {
             rewrite_assign_target(inner, aliases)?;
         }
         AssignTarget::ArrayIndex { expr, index } => {
@@ -1144,9 +1146,8 @@ impl Mangler<'_> {
     fn assign_target(&mut self, target: &mut AssignTarget) {
         match target {
             AssignTarget::Identifier(name) => self.mangle_ref(name),
-            AssignTarget::Dereference(inner) | AssignTarget::FieldAccess { expr: inner, .. } => {
-                self.assign_target(inner);
-            }
+            AssignTarget::Dereference(inner) => self.expr(inner),
+            AssignTarget::FieldAccess { expr: inner, .. } => self.assign_target(inner),
             AssignTarget::ArrayIndex { expr, index } => {
                 self.assign_target(expr);
                 self.expr(index);
@@ -1856,7 +1857,7 @@ fn render_struct_fields(
 fn render_assign_target(target: &AssignTarget) -> Result<String, String> {
     Ok(match target {
         AssignTarget::Identifier(name) => name.clone(),
-        AssignTarget::Dereference(inner) => format!("@{}", render_assign_target(inner)?),
+        AssignTarget::Dereference(inner) => format!("@{}", render_expr(inner)?),
         AssignTarget::FieldAccess { expr, field } => {
             format!("{}.{}", render_assign_target(expr)?, field)
         }

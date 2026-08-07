@@ -1089,6 +1089,28 @@ main: () -> i32 {
     }
 
     #[test]
+    fn computed_pointer_dereference_is_assignable() {
+        let output = compile_hll(
+            r#"
+main: () -> i32 {
+    arr: i32[2] = [4, 5]
+    base: i32* = &arr[0]
+    i := 1
+    @(base + i) = 9
+    return arr[1]
+}
+"#,
+        )
+        .expect("computed pointer dereference should compile");
+
+        let ir = format!("{}", output.ir);
+        assert!(
+            ir.contains("store i32 9"),
+            "expected store through computed pointer: {ir}"
+        );
+    }
+
+    #[test]
     fn pointer_member_access_loads_the_field_value() {
         compile_hll(
             r#"

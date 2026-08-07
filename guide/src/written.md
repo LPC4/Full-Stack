@@ -1672,5 +1672,99 @@ choose to look beneath them.
 
 ## Standard Library
 
+Every language ends up needing the same handful of things: printing, reading input, growing arrays, managing
+memory. Rewriting all of that for every single program would be pointless, so most languages ship it prebuilt as
+a standard library. HLL does so too, this chapter goes over some of the most useful pieces of ours.
+
+We'll start with the heap.
+
+### Dynamic memory allocation
+
+There's still a large elephant in the room: heap management. We haven't really used the heap
+in any of our programs. The heap supports dynamic memory allocation: choosing an allocation's
+size at runtime instead of at compile time.
+
+For example, a dynamic array needs to grow whenever it becomes full. A function's stack frame
+has a fixed size, and is freed when the function returns, so someone outside the function can't
+use the stack-allocated memory. A heap allocation remains valid until the program explicitly frees it,
+which makes it possible for another function to use it too.
+
+Let's look at a HLL example:
+
+<! MAKE A LINK TO THE CODE BELOW IN LESSON 10, MAYBE PUT A SMALL SNIPPER OF BUILD SEQUENCE, BUT NOT THIS BIG>
+```hll,runnable
+console := import("console")
+
+; Creates a dynamic array on the heap and return it.
+build_sequence: (size: i64) -> i32* {
+    seq: i32* = new(i32, size)
+    
+    i: i64 = 0
+    while i < size {
+        seq[i] = ((i + 1) * 10) as i32
+        i = i + 1
+    }
+    
+    ; Returning a stack-allocated array here would be an error.
+    return seq
+}
+
+process_and_sum: (data: i32*, size: i64) -> i32 {
+    sum: i32 = 0
+    i: i64 = 0
+    
+    ; We can read this memory because it lives on the heap.
+    while i < size {
+        sum = sum + data[i]
+        i = i + 1
+    }
+    return sum
+}
+
+main: () -> i32 {
+    count: i64 = 5
+    
+    ; Allocate and populate memory in one function
+    my_data: i32* = build_sequence(count)
+    
+    ; Guarantee deallocation when main exits
+    defer free(my_data)
+    
+    ; Share that exact same memory with a different function
+    total: i32 = process_and_sum(my_data, count)
+    
+    console.print_int(total)  ; 150
+    
+    return 0
+}
+```
+
+In `build_sequence` we're setting up an array on the heap. `new` allocates memory: the standard library finds an
+open spot on the heap for you and returns a pointer to it. Under the hood it's a wrapper for `malloc`, which we'll
+get to in a moment.
+
+`new` allocates only `n * sizeof(type)` bytes, so if you accidentally access memory outside that range, you get
+undefined behavior. It's called undefined because you don't know what'll actually be there: you could be
+overwriting another allocation sitting right next to yours, writing into a device, overwriting another program, or
+you could get lucky and have it run perfectly fine anyway. The point is that with raw pointers you have to be careful 
+and stay in bounds.
+
+This is also why returning a pointer to a stack-allocated array would've been a bug in build_sequence. 
+You allocate it on the function stack frame, free the frame and then return the pointer to the freed memory. 
+Then, once you go into a new function, its stack frame will overwrite the old one, overwriting the array data, 
+and you'll get a garbage pointer.
+
+With the pointer from new, we build the array `[10, 20, 30, 40, 50]` and hand it back to main. From there,
+`defer free(my_data)` says: right before main returns, run free(my_data) and give that memory back so it can
+be reused. You could just call `free(my_data)` directly at the end of main instead, but defer is cleaner,
+especially when a function has more than one return point.
+
+You don't strictly have to free memory before your program exits either, the operating system reclaims
+everything a process was using the moment it exits. But it's still good practice to always free what you allocate: it 
+makes your intent explicit, and it's the only option once your program runs for longer than a single `main` call and needs 
+that memory back while it's still alive. 
+
+Next we'll look at allocator itself to see how it decides where a new allocation actually lands.
+
 
 

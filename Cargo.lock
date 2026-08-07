@@ -287,7 +287,7 @@ dependencies = [
 
 [[package]]
 name = "asm_to_binary"
-version = "0.1.0"
+version = "1.0.0"
 
 [[package]]
 name = "async-broadcast"
@@ -1662,7 +1662,7 @@ checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 
 [[package]]
 name = "hll_to_ir"
-version = "0.1.0"
+version = "2.0.1"
 dependencies = [
  "fs_utils",
  "log",
@@ -1824,7 +1824,7 @@ dependencies = [
 
 [[package]]
 name = "ir_to_asm"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "asm_to_binary",
  "hll_to_ir",
@@ -2559,7 +2559,7 @@ dependencies = [
 
 [[package]]
 name = "os_runtime"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "asm_to_binary",
  "hll_to_ir",
@@ -3735,7 +3735,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "virtual_machine"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "asm_to_binary",
  "os_runtime",

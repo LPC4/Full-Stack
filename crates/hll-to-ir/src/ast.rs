@@ -376,7 +376,7 @@ pub enum Pattern {
 #[derive(Debug, Clone, PartialEq)]
 pub enum AssignTarget {
     Identifier(String),
-    Dereference(Box<Self>),
+    Dereference(Box<Expression>),
     FieldAccess {
         expr: Box<Self>,
         field: String,

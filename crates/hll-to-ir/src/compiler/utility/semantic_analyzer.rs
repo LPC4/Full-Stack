@@ -2128,10 +2128,7 @@ impl SemanticAnalyzer {
                 }
                 Ok(())
             }
-            AssignTarget::Dereference(inner) => {
-                // For @x, check that x is a pointer
-                self.check_assign_target(inner)
-            }
+            AssignTarget::Dereference(inner) => self.check_dereference_target(inner),
             AssignTarget::FieldAccess { .. } | AssignTarget::ArrayIndex { .. } => {
                 // These should already exist
                 self.check_assign_target(target)
@@ -2157,7 +2154,7 @@ impl SemanticAnalyzer {
                 }
                 Ok(())
             }
-            AssignTarget::Dereference(inner) => self.check_assign_target(inner),
+            AssignTarget::Dereference(inner) => self.check_dereference_target(inner),
             AssignTarget::FieldAccess { expr, field: _ } => self.check_assign_target(expr),
             AssignTarget::ArrayIndex { expr, index } => {
                 self.check_assign_target(expr)?;
@@ -2168,6 +2165,18 @@ impl SemanticAnalyzer {
                 self.error("Nested struct destructuring not supported".to_owned());
                 Err(())
             }
+        }
+    }
+
+    fn check_dereference_target(&mut self, expression: &Expression) -> Result<(), ()> {
+        let type_name = self.infer_expression_type(expression)?;
+        if matches!(self.resolve_type_string(&type_name), IrType::Pointer(_)) {
+            Ok(())
+        } else {
+            self.error(format!(
+                "dereference assignment requires a pointer, found `{type_name}`"
+            ));
+            Err(())
         }
     }
 

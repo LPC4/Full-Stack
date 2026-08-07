@@ -2003,7 +2003,10 @@ fn rewrite_target_calls(
     queued: &mut HashSet<String>,
 ) -> Result<(), String> {
     match target {
-        AssignTarget::Dereference(inner) | AssignTarget::FieldAccess { expr: inner, .. } => {
+        AssignTarget::Dereference(inner) => {
+            rewrite_expression_calls(inner, substitutions, definitions, queue, queued)?;
+        }
+        AssignTarget::FieldAccess { expr: inner, .. } => {
             rewrite_target_calls(inner, substitutions, definitions, queue, queued)?;
         }
         AssignTarget::ArrayIndex { expr, index } => {
@@ -2195,7 +2198,8 @@ pub(crate) fn substitute_expression_types(
 
 fn substitute_target_types(target: &mut AssignTarget, substitutions: &Substitutions) {
     match target {
-        AssignTarget::Dereference(inner) | AssignTarget::FieldAccess { expr: inner, .. } => {
+        AssignTarget::Dereference(inner) => substitute_expression_types(inner, substitutions),
+        AssignTarget::FieldAccess { expr: inner, .. } => {
             substitute_target_types(inner, substitutions);
         }
         AssignTarget::ArrayIndex { expr, index } => {

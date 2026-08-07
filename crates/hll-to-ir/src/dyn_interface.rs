@@ -704,7 +704,8 @@ fn rewrite_target(
 ) -> Result<(), String> {
     use crate::ast::AssignTarget;
     match target {
-        AssignTarget::Dereference(inner) | AssignTarget::FieldAccess { expr: inner, .. } => {
+        AssignTarget::Dereference(inner) => rewrite_expression(inner, environment, context),
+        AssignTarget::FieldAccess { expr: inner, .. } => {
             rewrite_target(inner, environment, context)
         }
         AssignTarget::ArrayIndex { expr, index } => {

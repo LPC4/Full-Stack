@@ -206,6 +206,16 @@ slug = "standard-library"
 title = "Standard Library"
 
 [[page]]
+kind = "section"
+slug = "standard-library/dynamic-memory-allocation"
+title = "Dynamic memory allocation"
+
+[[page]]
+kind = "section"
+slug = "standard-library/freeing-the-memory"
+title = "Freeing the memory"
+
+[[page]]
 kind = "chapter"
 slug = "glossary"
 title = "Glossary"

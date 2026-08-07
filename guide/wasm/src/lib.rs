@@ -1,10 +1,14 @@
 //! Compiles and runs Guide snippets on the real VM, and re-highlights edited source.
 
-use asm_to_binary::{AssembledOutput, Assembler, parse_asm_source};
-use hll_to_ir::{CompileConfig, HllCompiler, TargetMode};
+use asm_to_binary::{AssembledOutput, Assembler, ObjectLinker, parse_asm_source};
+use hll_to_ir::imports::ModuleAlias;
+use hll_to_ir::{CompileConfig, HllCompiler, IrType, TargetMode};
 use ir_to_asm::CompilerRv64;
 use serde::Serialize;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use virtual_machine::RunResult;
+use virtual_machine::bus::ELF_LOAD_BASE;
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
 #[cfg(target_arch = "wasm32")]
@@ -200,48 +204,174 @@ pub fn run(source: &str, max_steps: u64, bare: bool) -> Outcome {
     outcome_from_result(&vm, result)
 }
 
-/// Compiles a standalone HLL program and runs its `main` return value as the exit code.
-pub fn run_hll(source: &str, max_steps: u64) -> Outcome {
+type HostedObjects = Vec<(String, AssembledOutput)>;
+type HostedResult = Result<HostedObjects, String>;
+
+thread_local! {
+    static HOSTED_STDLIB: RefCell<Option<HostedResult>> = const { RefCell::new(None) };
+}
+
+fn module_member_aliases(
+    alias: &str,
+    key: &str,
+    exports: &HashSet<String>,
+) -> HashMap<String, String> {
+    let mut aliases = HashMap::new();
+    let mut sorted_exports: Vec<&String> = exports.iter().collect();
+    sorted_exports.sort();
+    for prefix in [alias, key] {
+        let prefix = prefix.trim_end_matches(".hll");
+        if prefix.is_empty() {
+            continue;
+        }
+        let prefix = format!("{prefix}_");
+        for export in &sorted_exports {
+            let Some(short) = export.strip_prefix(&prefix) else {
+                continue;
+            };
+            if short.is_empty() {
+                continue;
+            }
+            match aliases.get(short) {
+                Some(existing) if existing != *export => {
+                    aliases.remove(short);
+                }
+                Some(_) => {}
+                None => {
+                    aliases.insert(short.to_owned(), (*export).clone());
+                }
+            }
+        }
+    }
+    aliases
+}
+
+fn resolve_stdlib_imports(
+    source: &str,
+    modules: &[(&str, &str)],
+) -> Result<(Option<String>, HashMap<String, ModuleAlias>), String> {
+    let mut prelude = String::new();
+    let mut aliases = HashMap::new();
+    for (alias, path) in hll_to_ir::imports::collect_module_imports(source)? {
+        let key = path.trim_end_matches(".hll");
+        let Some((module_name, module_source)) =
+            modules.iter().find(|(module_name, _)| *module_name == key)
+        else {
+            return Err(format!(
+                "HLL sandbox cannot resolve hosted standard-library module `{path}`"
+            ));
+        };
+        let exports = hll_to_ir::imports::collect_exports(module_source)?;
+        prelude.push_str(&hll_to_ir::imports::extract_interface(module_source)?);
+        aliases.insert(
+            alias.clone(),
+            ModuleAlias {
+                prefix: String::new(),
+                mangled: HashSet::new(),
+                namespaced: hll_to_ir::imports::collect_exported_interfaces(module_source)?,
+                member_aliases: module_member_aliases(&alias, module_name, &exports),
+                declared: hll_to_ir::imports::collect_declaration_names(module_source)?,
+                exports,
+            },
+        );
+    }
+    Ok(((!prelude.is_empty()).then_some(prelude), aliases))
+}
+
+fn compile_hll_object(
+    name: &str,
+    source: &str,
+    modules: &[(&str, &str)],
+    type_prelude: &[(String, IrType)],
+) -> Result<(AssembledOutput, bool), String> {
+    let (source_prelude, module_aliases) = resolve_stdlib_imports(source, modules)?;
     let compiler = HllCompiler::new(CompileConfig {
         target: TargetMode::Hosted,
         strict: true,
-        source_file: Some(SNIPPET.to_owned()),
+        string_prefix: Some(format!("__guide_{name}_str_")),
+        type_prelude: type_prelude.to_vec(),
+        source_prelude,
+        module_aliases,
+        source_file: Some(name.to_owned()),
         ..CompileConfig::default()
     });
-    let output = match compiler.compile(source) {
-        Ok(output) => output,
-        Err(diagnostics) => {
-            let message = diagnostics
-                .iter()
-                .map(|diagnostic| diagnostic.render(SNIPPET))
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            return Outcome::failed(message);
-        }
-    };
-    if !output
+    let output = compiler.compile(source).map_err(|diagnostics| {
+        diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.render(name))
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    })?;
+    let has_main = output
         .ir
         .functions
         .iter()
-        .any(|function| function.name == "main")
-    {
+        .any(|function| function.name == "main");
+    let (_, tokens) = CompilerRv64::new().compile_with_tokens(&output.ir);
+    let mut assembled = Assembler::assemble(&tokens).map_err(|error| error.message)?;
+    let globals: Vec<String> = assembled
+        .symbols_iter()
+        .filter(|(symbol, _)| !symbol.starts_with('.') && !symbol.contains("__"))
+        .map(|(symbol, _)| symbol.to_owned())
+        .collect();
+    for symbol in globals {
+        assembled.mark_entry_global(&symbol);
+    }
+    Ok((assembled, has_main))
+}
+
+fn compile_hosted_stdlib() -> HostedResult {
+    let modules = hll_to_ir::stdlib::get_stdlib_modules_for_mode(TargetMode::Hosted);
+    let type_prelude = hll_to_ir::stdlib::get_stdlib_type_prelude();
+    modules
+        .iter()
+        .map(|(name, source)| {
+            compile_hll_object(name, source, &modules, &type_prelude)
+                .map(|(object, _)| ((*name).to_owned(), object))
+        })
+        .collect()
+}
+
+fn hosted_stdlib() -> HostedResult {
+    HOSTED_STDLIB.with(|cache| {
+        cache
+            .borrow_mut()
+            .get_or_insert_with(compile_hosted_stdlib)
+            .clone()
+    })
+}
+
+/// Compiles a standalone HLL program and runs its `main` return value as the exit code.
+pub fn run_hll(source: &str, max_steps: u64) -> Outcome {
+    let stdlib = match hosted_stdlib() {
+        Ok(stdlib) => stdlib,
+        Err(error) => return Outcome::failed(error),
+    };
+    let modules = hll_to_ir::stdlib::get_stdlib_modules_for_mode(TargetMode::Hosted);
+    let type_prelude = hll_to_ir::stdlib::get_stdlib_type_prelude();
+    let (user, has_main) = match compile_hll_object(SNIPPET, source, &modules, &type_prelude) {
+        Ok(output) => output,
+        Err(error) => return Outcome::failed(error),
+    };
+    if !has_main {
         return Outcome::failed("HLL sandbox programs need a `main` function");
     }
 
-    let entry = ".section .text\n\
-                 .globl _start\n\
-                 _start:\n\
-                   jal  ra, main\n\
-                   li   t0, 0x10010000\n\
-                   sd   a0, 0(t0)\n";
-    let mut tokens = parse_asm_source(Some(SNIPPET), entry);
-    let (_, compiled) = CompilerRv64::new().compile_with_tokens(&output.ir);
-    tokens.extend(compiled);
-    let assembled = match Assembler::assemble(&tokens) {
+    let mut link_modules: Vec<(&str, &AssembledOutput)> = stdlib
+        .iter()
+        .map(|(name, object)| (name.as_str(), object))
+        .collect();
+    link_modules.push((SNIPPET, &user));
+    let mut assembled = match ObjectLinker::link(&link_modules) {
         Ok(assembled) => assembled,
         Err(error) => return Outcome::failed(error.message),
     };
-    let mut vm = VirtualMachine::new(&assembled);
+    assembled.mark_entry_global("_start");
+    let elf = assembled.to_elf(ELF_LOAD_BASE);
+    let mut vm = match VirtualMachine::from_elf(&elf) {
+        Ok(vm) => vm,
+        Err(error) => return Outcome::failed(format!("could not load HLL program: {error}")),
+    };
     let result = vm.run(max_steps);
     outcome_from_result(&vm, result)
 }
@@ -444,6 +574,8 @@ mod tests {
                     );
                 } else if source.contains("# 'H'") {
                     assert_eq!(outcome.uart, "Hi\n");
+                } else if source.contains("arr: i32* = new(i32, count)") {
+                    assert_eq!(outcome.uart, "150");
                 }
                 for (name, expected_value) in &expected {
                     let register = outcome

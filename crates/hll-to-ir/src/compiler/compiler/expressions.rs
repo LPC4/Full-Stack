@@ -1953,13 +1953,10 @@ impl HighLevelCompiler {
             AssignTarget::Identifier(name) => {
                 Some(Expression::Primary(PrimaryExpr::Identifier(name.clone())))
             }
-            AssignTarget::Dereference(inner) => {
-                let inner_expr = Self::assign_target_to_expression(inner)?;
-                Some(Expression::Unary {
-                    op: UnaryOp::Dereference,
-                    expr: Box::new(inner_expr),
-                })
-            }
+            AssignTarget::Dereference(inner) => Some(Expression::Unary {
+                op: UnaryOp::Dereference,
+                expr: inner.clone(),
+            }),
             AssignTarget::FieldAccess { expr, field } => {
                 let base_expr = Self::assign_target_to_expression(expr)?;
                 Some(Expression::Primary(PrimaryExpr::FieldAccess {
