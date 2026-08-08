@@ -8,15 +8,19 @@ pub struct Fence<'a> {
     pub runnable: bool,
     // A runnable snippet that is already a whole program, needing no wrapper.
     pub bare: bool,
+    // Show the nonzero-registers dump after a runnable snippet runs (default on).
+    pub registers: bool,
     pub expected: Option<&'a str>,
 }
 
-// Info strings look like "asm", "asm,runnable" or "asm,runnable expect=t0:5|t1:8".
+// Info strings look like "asm", "asm,runnable", "asm,runnable expect=t0:5|t1:8",
+// or "asm,runnable registers=false" to hide the register dump after running.
 pub fn parse_fence(info: &str) -> Fence<'_> {
     let mut parts = info.split(&[',', ' '][..]).filter(|p| !p.is_empty());
     let tag = parts.next().unwrap_or("");
     let mut fence = Fence {
         tag,
+        registers: true,
         ..Default::default()
     };
     for part in parts {
@@ -26,6 +30,8 @@ pub fn parse_fence(info: &str) -> Fence<'_> {
                 fence.runnable = true;
                 fence.bare = true;
             }
+            "registers=true" => fence.registers = true,
+            "registers=false" => fence.registers = false,
             value if value.starts_with("expect=") => {
                 fence.expected = value.strip_prefix("expect=");
             }
@@ -50,9 +56,14 @@ pub fn render(fence: &Fence<'_>, source: &str) -> String {
     let inner = highlight_html(fence.tag, source);
     let wrap = if fence.bare { "bare" } else { "snippet" };
     let expected = escape(fence.expected.unwrap_or(""));
+    let registers = if fence.registers {
+        ""
+    } else {
+        " data-registers=\"false\""
+    };
     let raw = escape(source);
     format!(
-        "<div class=\"sandbox\" data-lang=\"{tag}\" data-wrap=\"{wrap}\" data-expect=\"{expected}\">\
+        "<div class=\"sandbox\" data-lang=\"{tag}\" data-wrap=\"{wrap}\" data-expect=\"{expected}\"{registers}>\
 <div class=\"sandbox-bar\"><span class=\"sandbox-title\">{tag}</span>\
 <button class=\"sandbox-run\" type=\"button\">Run</button>\
 <button class=\"sandbox-reset\" type=\"button\">Reset</button></div>\
@@ -82,6 +93,14 @@ mod tests {
 
         let expected = parse_fence("asm,runnable expect=t0:5|a0:12");
         assert_eq!(expected.expected, Some("t0:5|a0:12"));
+    }
+
+    #[test]
+    fn registers_default_to_on_and_can_be_toggled_off() {
+        assert!(parse_fence("asm,runnable").registers);
+        assert!(parse_fence("asm,runnable registers=true").registers);
+        assert!(!parse_fence("asm,runnable registers=false").registers);
+        assert!(!parse_fence("asm,runnable expect=a0:12 registers=false").registers);
     }
 
     // Lines share one box in the sandbox and get their own in a listing, so the
@@ -116,6 +135,17 @@ mod tests {
         let fence = parse_fence("asm,runnable expect=t0:5|a0:12");
         let html = render(&fence, "li t0, 5\n");
         assert!(html.contains("data-expect=\"t0:5|a0:12\""));
+    }
+
+    #[test]
+    fn disabled_registers_are_marked_on_the_sandbox() {
+        let fence = parse_fence("asm,runnable registers=false");
+        let html = render(&fence, "li t0, 5\n");
+        assert!(html.contains("data-registers=\"false\""));
+        assert!(html.contains("data-expect=\"\""));
+        // Registers are on by default, so the attribute is only present when disabled.
+        let on = render(&parse_fence("asm,runnable"), "li t0, 5\n");
+        assert!(!on.contains("data-registers"));
     }
 
     #[test]

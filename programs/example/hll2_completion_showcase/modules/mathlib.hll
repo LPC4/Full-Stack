@@ -3,63 +3,63 @@
 export const BIAS = 40
 
 export triple: (n: i32) -> i32 {
-    return n * 3
+	return n * 3
 }
 
 export inc: (n: i32) -> i32 {
-    return n + 1
+	return n + 1
 }
 
 export struct Offset {
-    value: i32,
+	value: i32,
 }
 
 export interface Applicable {
-    apply: (self: Self*, n: i32) -> i32
+	apply: (self: Self*, n: i32) -> i32
 }
 
 ; Exported generic declarations retain their public interface bounds.
 export struct BoundOffset<T: Applicable> {
-    item: T,
+	item: T,
 }
 
 export impl Offset {
-    apply: (self: Offset*, n: i32) -> i32 {
-        return n + self.value
-    }
+	apply: (self: Offset*, n: i32) -> i32 {
+		return n + self.value
+	}
 }
 
 private_seed: () -> i32 {
-    return 7
+	return 7
 }
 
 ; --- Cross-module generics and the iterable contract ---
 ; An exported generic travels as a body, so the importer specializes it. The body
 ; may call this module's own exports (`inc`), which keep their module prefix.
 export bumped_max: <T>(a: T, b: T) -> T {
-    if a > b { return inc(a) as T }
-    return inc(b) as T
+	if a > b { return inc(a) as T }
+	return inc(b) as T
 }
 
 export const LANES = 3
 
 ; An exported container satisfies the iterable contract with `len` and `at`.
 export struct Lane {
-    slots: i32[LANES],
-    used: i64,
+	slots: i32[LANES],
+	used: i64,
 }
 
 export impl Lane {
-    len: (self: Lane*) -> i64 { return self.used }
-    at: (self: Lane*, index: i64) -> i32 { return self.slots[index] }
+	len: (self: Lane*) -> i64 { return self.used }
+	at: (self: Lane*, index: i64) -> i32 { return self.slots[index] }
 }
 
 ; A generic that iterates whatever the importer hands it: the contract is checked
 ; where the specialization happens.
 export total_of: <T>(container: T*) -> i32 {
-    total: i32 = 0
-    for value in container {
-        total += value
-    }
-    return total
+	total: i32 = 0
+	for value in container {
+		total += value
+	}
+	return total
 }

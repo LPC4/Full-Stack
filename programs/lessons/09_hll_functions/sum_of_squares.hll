@@ -1,11 +1,11 @@
 square: (value: i32) -> i32 {
-    return value * value
+	return value * value
 }
 
 sum_of_squares: (a: i32, b: i32) -> i32 {
-    return square(a) + square(b)
+	return square(a) + square(b)
 }
 
 main: () -> i32 {
-    return sum_of_squares(3, 4)
+	return sum_of_squares(3, 4)
 }

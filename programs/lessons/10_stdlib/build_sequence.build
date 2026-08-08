@@ -1,0 +1,8 @@
+name = "build_sequence"
+title = "10: heap and the standard library"
+root = "build_sequence.hll"
+target = "hosted"
+entry = "_start"
+stdlib = "hosted"
+import_closure = true
+mangle_symbols = false

@@ -115,3 +115,10 @@ present = "terminal"
 max_steps_per_frame = 200000
 debug = true
 breakpoint = "fibonacci"
+
+[[config]]
+type = "hosted"
+build = "10_stdlib/build_sequence.build"
+present = "terminal"
+max_steps_per_frame = 200000
+debug = false

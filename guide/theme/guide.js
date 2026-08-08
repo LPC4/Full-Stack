@@ -174,25 +174,32 @@
   }
 
   function applyTabEdit(editor, outdent) {
+    var TAB = 4;
     var source = sourceText(editor);
     var start = editor.selectionStart;
     var end = editor.selectionEnd;
 
+    // The IDE indents with real spaces aligned to multiples of four, so the
+    // sandbox does the same: code copied between the page and the editor keeps
+    // the same indentation, and backspace removes one space at a time.
     if (!outdent && start === end) {
       var lineStart = source.lastIndexOf("\n", start - 1) + 1;
-      var spaces = 2 - ((start - lineStart) % 2);
+      var spaces = TAB - ((start - lineStart) % TAB);
       editor.setRangeText(" ".repeat(spaces), start, end, "end");
       editor.dispatchEvent(new Event("input", { bubbles: true }));
       return;
     }
 
     var edits = lineStarts(source, start, end).map(function (at) {
-      if (!outdent) return { at: at, remove: 0, insert: "  " };
+      if (!outdent) return { at: at, remove: 0, insert: " ".repeat(TAB) };
       if (source.charAt(at) === "\t") return { at: at, remove: 1, insert: "" };
-      var spaces = source.slice(at, at + 2).match(/^ +/);
-      return { at: at, remove: spaces ? spaces[0].length : 0, insert: "" };
+      var count = source.slice(at).match(/^ +/);
+      count = count ? count[0].length : 0;
+      if (!count) return null;
+      var remove = count % TAB === 0 ? Math.min(TAB, count) : count % TAB;
+      return { at: at, remove: remove, insert: "" };
     }).filter(function (edit) {
-      return edit.insert || edit.remove;
+      return edit && (edit.insert || edit.remove);
     });
     if (!edits.length) return;
 
@@ -239,6 +246,9 @@
       return;
     }
 
+    // A sandbox can opt out of the register dump with registers=false in its
+    // fence info; the dump is shown by default.
+    var showRegisters = sandbox.dataset.registers !== "false";
     var expected = expectedRegisters(sandbox.dataset.expect);
     var expectedNames = Object.keys(expected);
     var registers = (result.registers || [])
@@ -268,18 +278,20 @@
     title.appendChild(resultElement("span", "sandbox-result-status", status));
     heading.appendChild(title);
 
-    var radix = resultElement("div", "sandbox-radix");
-    radix.setAttribute("role", "group");
-    radix.setAttribute("aria-label", "Register number format");
-    var decimalButton = resultElement("button", "active", "Decimal");
-    var hexButton = resultElement("button", "", "Hex");
-    decimalButton.type = "button";
-    hexButton.type = "button";
-    decimalButton.setAttribute("aria-pressed", "true");
-    hexButton.setAttribute("aria-pressed", "false");
-    radix.appendChild(decimalButton);
-    radix.appendChild(hexButton);
-    heading.appendChild(radix);
+    if (showRegisters) {
+      var radix = resultElement("div", "sandbox-radix");
+      radix.setAttribute("role", "group");
+      radix.setAttribute("aria-label", "Register number format");
+      var decimalButton = resultElement("button", "active", "Decimal");
+      var hexButton = resultElement("button", "", "Hex");
+      decimalButton.type = "button";
+      hexButton.type = "button";
+      decimalButton.setAttribute("aria-pressed", "true");
+      hexButton.setAttribute("aria-pressed", "false");
+      radix.appendChild(decimalButton);
+      radix.appendChild(hexButton);
+      heading.appendChild(radix);
+    }
     output.appendChild(heading);
 
     if (result.uart) {
@@ -289,77 +301,79 @@
       output.appendChild(uartSection);
     }
 
-    var registerSection = resultElement("section", "sandbox-result-section");
-    registerSection.appendChild(
-      resultElement("div", "sandbox-output-label", "Nonzero registers")
-    );
-    var valueCells = [];
-    var expectedCells = [];
-    if (registers.length) {
-      var table = resultElement("table", "sandbox-registers");
-      var head = document.createElement("thead");
-      var headerRow = document.createElement("tr");
-      ["Register", "Value"].concat(expectedNames.length ? ["Expected"] : []).forEach(function (label) {
-        headerRow.appendChild(resultElement("th", "", label));
-      });
-      head.appendChild(headerRow);
-      table.appendChild(head);
-      var body = document.createElement("tbody");
-
-      registers.forEach(function (entry) {
-        var row = document.createElement("tr");
-        row.appendChild(resultElement("th", "sandbox-register-name", entry.name));
-        var valueCell = resultElement("td", "sandbox-register-value");
-        row.appendChild(valueCell);
-        valueCells.push({ node: valueCell, value: entry.value });
-
-        if (expectedNames.length) {
-          var expectedCell = document.createElement("td");
-          if (Object.prototype.hasOwnProperty.call(expected, entry.name)) {
-            var matches = entry.value === expected[entry.name];
-            expectedCell.className = matches ? "expected-match" : "expected-mismatch";
-            expectedCells.push({
-              node: expectedCell,
-              value: expected[entry.name],
-              suffix: matches ? " match" : " expected",
-            });
-          } else {
-            expectedCell.textContent = "-";
-          }
-          row.appendChild(expectedCell);
-        }
-        body.appendChild(row);
-      });
-      table.appendChild(body);
-      registerSection.appendChild(table);
-    } else {
+    if (showRegisters) {
+      var registerSection = resultElement("section", "sandbox-result-section");
       registerSection.appendChild(
-        resultElement("div", "sandbox-empty-registers", "No nonzero registers.")
+        resultElement("div", "sandbox-output-label", "Nonzero registers")
       );
-    }
-    output.appendChild(registerSection);
+      var valueCells = [];
+      var expectedCells = [];
+      if (registers.length) {
+        var table = resultElement("table", "sandbox-registers");
+        var head = document.createElement("thead");
+        var headerRow = document.createElement("tr");
+        ["Register", "Value"].concat(expectedNames.length ? ["Expected"] : []).forEach(function (label) {
+          headerRow.appendChild(resultElement("th", "", label));
+        });
+        head.appendChild(headerRow);
+        table.appendChild(head);
+        var body = document.createElement("tbody");
 
-    function display(value, format) {
-      return format === "hex" ? "0x" + value.toString(16) : value.toString(10);
-    }
+        registers.forEach(function (entry) {
+          var row = document.createElement("tr");
+          row.appendChild(resultElement("th", "sandbox-register-name", entry.name));
+          var valueCell = resultElement("td", "sandbox-register-value");
+          row.appendChild(valueCell);
+          valueCells.push({ node: valueCell, value: entry.value });
 
-    function setRadix(format) {
-      var decimal = format === "decimal";
-      decimalButton.classList.toggle("active", decimal);
-      hexButton.classList.toggle("active", !decimal);
-      decimalButton.setAttribute("aria-pressed", decimal ? "true" : "false");
-      hexButton.setAttribute("aria-pressed", decimal ? "false" : "true");
-      valueCells.forEach(function (cell) {
-        cell.node.textContent = display(cell.value, format);
-      });
-      expectedCells.forEach(function (cell) {
-        cell.node.textContent = display(cell.value, format) + cell.suffix;
-      });
-    }
+          if (expectedNames.length) {
+            var expectedCell = document.createElement("td");
+            if (Object.prototype.hasOwnProperty.call(expected, entry.name)) {
+              var matches = entry.value === expected[entry.name];
+              expectedCell.className = matches ? "expected-match" : "expected-mismatch";
+              expectedCells.push({
+                node: expectedCell,
+                value: expected[entry.name],
+                suffix: matches ? " match" : " expected",
+              });
+            } else {
+              expectedCell.textContent = "-";
+            }
+            row.appendChild(expectedCell);
+          }
+          body.appendChild(row);
+        });
+        table.appendChild(body);
+        registerSection.appendChild(table);
+      } else {
+        registerSection.appendChild(
+          resultElement("div", "sandbox-empty-registers", "No nonzero registers.")
+        );
+      }
+      output.appendChild(registerSection);
 
-    decimalButton.addEventListener("click", function () { setRadix("decimal"); });
-    hexButton.addEventListener("click", function () { setRadix("hex"); });
-    setRadix("decimal");
+      function display(value, format) {
+        return format === "hex" ? "0x" + value.toString(16) : value.toString(10);
+      }
+
+      function setRadix(format) {
+        var decimal = format === "decimal";
+        decimalButton.classList.toggle("active", decimal);
+        hexButton.classList.toggle("active", !decimal);
+        decimalButton.setAttribute("aria-pressed", decimal ? "true" : "false");
+        hexButton.setAttribute("aria-pressed", decimal ? "false" : "true");
+        valueCells.forEach(function (cell) {
+          cell.node.textContent = display(cell.value, format);
+        });
+        expectedCells.forEach(function (cell) {
+          cell.node.textContent = display(cell.value, format) + cell.suffix;
+        });
+      }
+
+      decimalButton.addEventListener("click", function () { setRadix("decimal"); });
+      hexButton.addEventListener("click", function () { setRadix("hex"); });
+      setRadix("decimal");
+    }
 
     output.appendChild(
       resultElement("div", "sandbox-result-meta", result.steps + " steps | pc " + result.pc)

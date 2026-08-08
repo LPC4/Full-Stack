@@ -110,9 +110,17 @@ Expected register values are optional and remain visible after the reader edits 
 ```
 ````
 
+The nonzero-register dump after a run is shown by default. Pass `registers=false` to hide it
+for a snippet whose registers carry no meaning, such as a console program:
+
+````markdown
+```hll,runnable registers=false
+```
+````
+
 Runnable editors highlight changes as they are typed, wrap long lines, and grow with their source
-instead of adding an internal scrollbar. Tab and Shift+Tab indent or unindent with two spaces while
-keeping focus in the editor.
+instead of adding an internal scrollbar. Tab and Shift+Tab indent or unindent with tabs (rendered
+four columns wide, matching the IDE) while keeping focus in the editor.
 
 Use ordinary Markdown image syntax for figures. The alt text becomes the accessible caption,
 and a matching `name.dark.svg` is selected by the dark theme.

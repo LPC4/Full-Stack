@@ -65,7 +65,7 @@ pub fn populate_lessons_workspace(fs: &mut dyn WorkspaceFs) -> io::Result<()> {
 }
 
 // Titles are not listed here; they come from each manifest's `title` field.
-const LESSONS: [(&str, &str, bool); 16] = [
+const LESSONS: [(&str, &str, bool); 17] = [
     ("01_sum/sum.build", "loop", false),
     ("02_array_sum/array_sum.build", "", false),
     ("03_reverse_array/reverse_array_template.build", "", false),
@@ -86,13 +86,15 @@ const LESSONS: [(&str, &str, bool); 16] = [
         true,
     ),
     ("09_hll_functions/fibonacci.build", "fibonacci", true),
+    ("10_stdlib/build_sequence.build", "", false),
 ];
 
-const HOSTED_LESSONS: [&str; 4] = [
+const HOSTED_LESSONS: [&str; 5] = [
     "08_hll/compiler_pipeline.build",
     "09_hll_functions/sum_of_squares.build",
     "09_hll_functions/fibonacci_template.build",
     "09_hll_functions/fibonacci.build",
+    "10_stdlib/build_sequence.build",
 ];
 
 fn lesson_run_configs() -> String {
@@ -337,8 +339,10 @@ mod tests {
             "09_hll_functions/fibonacci_template.build",
             "09_hll_functions/fibonacci.hll",
             "09_hll_functions/fibonacci.build",
-            "09_hll_functions/out/ir/sum_of_squares.ir",
-            "09_hll_functions/out/asm/sum_of_squares.s",
+            "09_hll_functions/sum_of_squares.ir",
+            "09_hll_functions/sum_of_squares.s",
+            "10_stdlib/build_sequence.hll",
+            "10_stdlib/build_sequence.build",
         ] {
             assert!(
                 fs.read_file(&VPath::parse(path).expect("path")).is_ok(),

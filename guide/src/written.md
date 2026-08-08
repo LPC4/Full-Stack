@@ -131,15 +131,15 @@ Let's use the stack in a small example. We reserve some stack space, store two n
 back, and add them:
 
 ```asm,runnable expect=a0:12
-  addi sp, sp, -16    # move sp down: reserve 16 bytes of stack space
-  li   t0, 5          # t0 = 5
-  sd   t0, 0(sp)      # store the 5 at sp + 0
-  li   t1, 7          # t1 = 7
-  sd   t1, 8(sp)      # store the 7 at sp + 8
-  ld   t2, 0(sp)      # load the 5 back into t2
-  ld   t3, 8(sp)      # load the 7 back into t3
-  add  a0, t2, t3     # a0 = 5 + 7 = 12
-  addi sp, sp, 16     # move sp back up: give the stack space back
+	addi sp, sp, -16    # move sp down: reserve 16 bytes of stack space
+	li   t0, 5          # t0 = 5
+	sd   t0, 0(sp)      # store the 5 at sp + 0
+	li   t1, 7          # t1 = 7
+	sd   t1, 8(sp)      # store the 7 at sp + 8
+	ld   t2, 0(sp)      # load the 5 back into t2
+	ld   t3, 8(sp)      # load the 7 back into t3
+	add  a0, t2, t3     # a0 = 5 + 7 = 12
+	addi sp, sp, 16     # move sp back up: give the stack space back
 ```
 
 Of course, nobody would store two numbers in RAM just to add them; registers alone would do fine here. But this
@@ -216,8 +216,8 @@ alias for the address the next instruction is stored at:
 ```asm
 # This loop does t0 += 1 forever
 loop:               # a label named "loop"
-  addi t0, t0, 1
-  j    loop         # "jump": always go back to the label, so this loops forever
+	addi t0, t0, 1
+	j    loop         # "jump": always go back to the label, so this loops forever
 ```
 
 `j` is an unconditional jump: when it's read, you jump to the label it points to. All it does is set `pc` to
@@ -237,14 +237,14 @@ So let's first write a simple assembly program. No printing "hello world" just y
 sums the numbers from 1 to 10 and then stops.
 
 ```asm,runnable expect=t0:55
-  li   t0, 0          # t0 = sum, start at 0
-  li   t1, 1          # t1 = i, start at 1
-  li   t2, 10         # t2 = the limit
+	li   t0, 0          # t0 = sum, start at 0
+	li   t1, 1          # t1 = i, start at 1
+	li   t2, 10         # t2 = the limit
 loop:
-  add  t0, t0, t1     # sum = sum + i
-  addi t1, t1, 1      # i = i + 1
-  ble  t1, t2, loop   # if i <= 10, go around again   "branch if less than or equal"
-                      # when we fall through here, t0 holds 55
+	add  t0, t0, t1     # sum = sum + i
+	addi t1, t1, 1      # i = i + 1
+	ble  t1, t2, loop   # if i <= 10, go around again   "branch if less than or equal"
+	                    # when we fall through here, t0 holds 55
 ```
 
 Note that we didn't see `ble` (branch if less than or equal) earlier: it's a *pseudo-instruction*. It doesn't
@@ -299,14 +299,14 @@ puts the address of a label into a register:
 ```asm,runnable expect=t1:4|t2:8
 .data                 # what follows is data placed in memory, not code
 array:                # a label for the first byte of the array
-  .dword 4            # "emit a doubleword": place a 64-bit value in memory here
-  .dword 8
-  .dword 15
+	.dword 4            # "emit a doubleword": place a 64-bit value in memory here
+	.dword 8
+	.dword 15
 
 .text                 # back to code
-  la   t0, array      # t0 = the address of "array"        "load address"
-  ld   t1, 0(t0)      # t1 = 4, the first element
-  ld   t2, 8(t0)      # t2 = 8, the second element, 8 bytes further
+	la   t0, array      # t0 = the address of "array"        "load address"
+	ld   t1, 0(t0)      # t1 = 4, the first element
+	ld   t2, 8(t0)      # t2 = 8, the second element, 8 bytes further
 ```
 
 A label in `.data` works exactly like a label in `.text`: it's just a name for an address. The only difference
@@ -400,19 +400,19 @@ takes its arguments in registers and needs no stack looks like this:
 
 ```asm,runnable=bare expect=a0:12
 _start:
-  li   a0, 7          # first argument
-  li   a1, 12         # second argument
-  jal  ra, max        # a0 = max(7, 12); ra = the address of the next line
-  li   a1, 3
-  jal  ra, max        # a0 = max(12, 3): the first result feeds the second call
+	li   a0, 7          # first argument
+	li   a1, 12         # second argument
+	jal  ra, max        # a0 = max(7, 12); ra = the address of the next line
+	li   a1, 3
+	jal  ra, max        # a0 = max(12, 3): the first result feeds the second call
 done:
-  j    done           # spin here forever; the final result stays in a0
+	j    done           # spin here forever; the final result stays in a0
 
 max:                  # max(a, b): return the larger of a0 and a1
-  bge  a0, a1, max_a  # if a >= b the answer is already in a0
-  mv   a0, a1         # otherwise the answer is b   "move": pseudo for add a0, a1, x0
+	bge  a0, a1, max_a  # if a >= b the answer is already in a0
+	mv   a0, a1         # otherwise the answer is b   "move": pseudo for add a0, a1, x0
 max_a:
-  ret                 # jump back to the address in ra (ret = jalr x0, ra, 0)
+	ret                 # jump back to the address in ra (ret = jalr x0, ra, 0)
 ```
 
 ![`jal` transfers control to the function; `ret` returns to the saved address.](figures/function_call_and_return.svg)
@@ -445,17 +445,17 @@ twice:
 
 ```asm
 max3:                 # max3(a, b, c): the largest of three, via two calls to max
-  addi sp, sp, -16    # prologue: grow the stack by two 8-byte slots
-  sd   ra, 8(sp)      # save our return address; without this, ret loops forever
-  sd   s0, 0(sp)      # save s0 before using it: its value belongs to our caller
-  mv   s0, a2         # move c into s0: a call may clobber any a or t register
-  jal  ra, max        # a0 = max(a, b)
-  mv   a1, s0         # bring c back as the second argument
-  jal  ra, max        # a0 = max(max(a, b), c)
-  ld   s0, 0(sp)      # epilogue: restore what we saved, in reverse
-  ld   ra, 8(sp)
-  addi sp, sp, 16     # give the stack space back
-  ret
+	addi sp, sp, -16    # prologue: grow the stack by two 8-byte slots
+	sd   ra, 8(sp)      # save our return address; without this, ret loops forever
+	sd   s0, 0(sp)      # save s0 before using it: its value belongs to our caller
+	mv   s0, a2         # move c into s0: a call may clobber any a or t register
+	jal  ra, max        # a0 = max(a, b)
+	mv   a1, s0         # bring c back as the second argument
+	jal  ra, max        # a0 = max(max(a, b), c)
+	ld   s0, 0(sp)      # epilogue: restore what we saved, in reverse
+	ld   ra, 8(sp)
+	addi sp, sp, 16     # give the stack space back
+	ret
 ```
 
 That's [`04_functions/max3.s`](repo:programs/lessons/04_functions/max3.s), run configuration
@@ -487,21 +487,21 @@ This is a lot of theory, so here's what a frame with locals and a frame pointer 
 
 ```asm
 example:
-  addi sp, sp, -32    # prologue: frame of four 8-byte slots
+	addi sp, sp, -32    # prologue: frame of four 8-byte slots
 
-  # We will be overwriting the caller's FP (which is a saved register) so we need to push it to stack.
-  sd   fp, 16(sp)     # save the caller's frame pointer (fp is s0)
-  addi fp, sp, 32     # fp = base of this frame: the old sp (we did -32 in the prologue)
-  sd   ra, -8(fp)     # save the return address at -8(fp)
-  li   t0, 42
-  sd   t0, -24(fp)    # a local variable; same slot as 8(sp), for now
-  addi sp, sp, -16    # sp moves mid-function...
-  ld   t1, -24(fp)    # ...but the local is still at -24(fp)
-  addi sp, sp, 16
-  ld   ra, -8(fp)     # epilogue: restore in reverse
-  ld   fp, -16(fp)
-  addi sp, sp, 32
-  ret
+	# We will be overwriting the caller's FP (which is a saved register) so we need to push it to stack.
+	sd   fp, 16(sp)     # save the caller's frame pointer (fp is s0)
+	addi fp, sp, 32     # fp = base of this frame: the old sp (we did -32 in the prologue)
+	sd   ra, -8(fp)     # save the return address at -8(fp)
+	li   t0, 42
+	sd   t0, -24(fp)    # a local variable; same slot as 8(sp), for now
+	addi sp, sp, -16    # sp moves mid-function...
+	ld   t1, -24(fp)    # ...but the local is still at -24(fp)
+	addi sp, sp, 16
+	ld   ra, -8(fp)     # epilogue: restore in reverse
+	ld   fp, -16(fp)
+	addi sp, sp, 32
+	ret
 ```
 
 ![](figures/the_frame_pointer.svg)
@@ -520,31 +520,31 @@ we'll be going over it piece by piece. It's
 
 ```asm,runnable=bare expect=a0:120
 _start:
-  li   a0, 5           # n
-  jal  ra, fact        # a0 = fact(5) = 120
+	li   a0, 5           # n
+	jal  ra, fact        # a0 = fact(5) = 120
 done:
-  j    done            # spin here forever; the result stays in a0
+	j    done            # spin here forever; the result stays in a0
 
 fact:                  # fact(n): n < 2 returns 1, else n * fact(n - 1)
-  addi sp, sp, -32     # prologue: reserve a 32-byte frame
-  sd   fp, 16(sp)      # save the caller's frame pointer before we overwrite fp
-  addi fp, sp, 32      # fp = base of this frame: the old sp
-  sd   ra, -8(fp)      # save the return address at -8(fp)
-  li   t0, 2
-  blt  a0, t0, base    # n < 2: fact(n) = 1, so there is nothing to compute
-  sd   a0, -24(fp)     # keep n in a local, so the call cannot lose it
-  addi a0, a0, -1
-  jal  ra, fact        # a0 = fact(n - 1)
-  ld   t1, -24(fp)     # reload n
-  mul  a0, a0, t1      # a0 = n * fact(n - 1)
-  j    epilogue
+	addi sp, sp, -32     # prologue: reserve a 32-byte frame
+	sd   fp, 16(sp)      # save the caller's frame pointer before we overwrite fp
+	addi fp, sp, 32      # fp = base of this frame: the old sp
+	sd   ra, -8(fp)      # save the return address at -8(fp)
+	li   t0, 2
+	blt  a0, t0, base    # n < 2: fact(n) = 1, so there is nothing to compute
+	sd   a0, -24(fp)     # keep n in a local, so the call cannot lose it
+	addi a0, a0, -1
+	jal  ra, fact        # a0 = fact(n - 1)
+	ld   t1, -24(fp)     # reload n
+	mul  a0, a0, t1      # a0 = n * fact(n - 1)
+	j    epilogue
 base:
-  li   a0, 1           # fact(n) = 1 for n < 2
+	li   a0, 1           # fact(n) = 1 for n < 2
 epilogue:
-  ld   ra, -8(fp)      # restore what we saved, in reverse
-  ld   fp, -16(fp)
-  addi sp, sp, 32
-  ret
+	ld   ra, -8(fp)      # restore what we saved, in reverse
+	ld   fp, -16(fp)
+	addi sp, sp, 32
+	ret
 ```
 
 Let's read it in parts. The prologue reserves four slots and sets `fp` as early as it can, so everything after
@@ -553,10 +553,10 @@ it can address the frame off `fp`. The one thing that has to happen first is sav
 the same slot as `-16(fp)`). From there `fp` is the base of the frame and the return address goes to `-8(fp)`.
 
 ```asm
-  addi sp, sp, -32     # prologue: reserve a 32-byte frame
-  sd   fp, 16(sp)      # save the caller's frame pointer before we overwrite fp
-  addi fp, sp, 32      # fp = base of this frame: the old sp
-  sd   ra, -8(fp)      # save the return address at -8(fp)
+	addi sp, sp, -32     # prologue: reserve a 32-byte frame
+	sd   fp, 16(sp)      # save the caller's frame pointer before we overwrite fp
+	addi fp, sp, 32      # fp = base of this frame: the old sp
+	sd   ra, -8(fp)      # save the return address at -8(fp)
 ```
 
 This is still all just saving registers on the stack to use them ourselves. The third slot, at `-24(fp)`, is our local: `n`.
@@ -569,19 +569,19 @@ whole frame `fact` builds looks like this, with both names for every slot, `fp` 
 Next comes the base case, which is the only reason the recursion ever stops:
 
 ```asm
-  li   t0, 2
-  blt  a0, t0, base    # n < 2: fact(n) = 1, so there is nothing to compute
+	li   t0, 2
+	blt  a0, t0, base    # n < 2: fact(n) = 1, so there is nothing to compute
 ```
 
 If `n` is 0 or 1 then `fact(n)` is 1. That value isn't already sitting in `a0` (`a0` still holds `n`), so the
 base case has to set it explicitly and jump past the multiply that follows it. Otherwise, we make the call:
 
 ```asm
-  sd   a0, -24(fp)     # keep n in a local, so the call cannot lose it
-  addi a0, a0, -1
-  jal  ra, fact        # a0 = fact(n - 1)
-  ld   t1, -24(fp)     # reload n
-  mul  a0, a0, t1      # a0 = n * fact(n - 1)
+	sd   a0, -24(fp)     # keep n in a local, so the call cannot lose it
+	addi a0, a0, -1
+	jal  ra, fact        # a0 = fact(n - 1)
+	ld   t1, -24(fp)     # reload n
+	mul  a0, a0, t1      # a0 = n * fact(n - 1)
 ```
 
 Before the call we put `n` in `-24(fp)`, because the call is about to overwrite `a0`. When it returns `a0`
@@ -728,15 +728,15 @@ byte there, so the whole thing is two instructions: put the address in a registe
 ```asm,runnable=bare
 .globl _start
 _start:
-  li   t0, 0x10000000  # UART transmit register, fixed by the machine
-  li   t1, 72          # 'H'
-  sb   t1, 0(t0)
-  li   t1, 105         # 'i'
-  sb   t1, 0(t0)
-  li   t1, 10          # '\n'
-  sb   t1, 0(t0)
+	li   t0, 0x10000000  # UART transmit register, fixed by the machine
+	li   t1, 72          # 'H'
+	sb   t1, 0(t0)
+	li   t1, 105         # 'i'
+	sb   t1, 0(t0)
+	li   t1, 10          # '\n'
+	sb   t1, 0(t0)
 done:
-  j    done
+	j    done
 ```
 
 Note that we're using `sb`, store byte, and not the `sd` we've used everywhere else. The transmit register is one
@@ -758,19 +758,19 @@ nothing else, so it's a leaf, and just like `square` back in lesson 05 it needs 
 ```asm,runnable=bare
 .globl _start
 _start:
-  li   a0, 72          # 'H'
-  jal  ra, print_char
-  li   a0, 105         # 'i'
-  jal  ra, print_char
-  li   a0, 10          # '\n'
-  jal  ra, print_char
+	li   a0, 72          # 'H'
+	jal  ra, print_char
+	li   a0, 105         # 'i'
+	jal  ra, print_char
+	li   a0, 10          # '\n'
+	jal  ra, print_char
 done:
-  j    done
+	j    done
 
 print_char:            # print_char(c): send the byte in a0 to the console
-  li   t0, 0x10000000
-  sb   a0, 0(t0)
-  ret
+	li   t0, 0x10000000
+	sb   a0, 0(t0)
+	ret
 ```
 
 Same output, but the address only appears once now, and everything above it just talks about characters.
@@ -783,41 +783,41 @@ survive, so both get a slot in a frame:
 ```asm,runnable=bare
 .data
 msg:
-  .asciz "Hello, world!\n"   # "asciz": the bytes in ASCII + a trailing zero (c-string)
+	.asciz "Hello, world!\n"   # "asciz": the bytes in ASCII + a trailing zero (c-string)
 
 .text
 .globl _start
 _start:
-  la   a0, msg
-  jal  ra, print_string
+	la   a0, msg
+	jal  ra, print_string
 done:
-  j    done
+	j    done
 
 print_char:            # print_char(c): send the byte in a0 to the console
-  li   t0, 0x10000000
-  sb   a0, 0(t0)
-  ret
+	li   t0, 0x10000000
+	sb   a0, 0(t0)
+	ret
 
 print_string:          # print_string(s): print bytes from s until the zero
-  addi sp, sp, -32     # prologue, exactly like lesson 05
-  sd   fp, 16(sp)
-  addi fp, sp, 32
-  sd   ra, -8(fp)      # print_char overwrites ra, so save ours first
-  sd   a0, -32(fp)     # and keep the pointer: a0 is about to be the character
+	addi sp, sp, -32     # prologue, exactly like lesson 05
+	sd   fp, 16(sp)
+	addi fp, sp, 32
+	sd   ra, -8(fp)      # print_char overwrites ra, so save ours first
+	sd   a0, -32(fp)     # and keep the pointer: a0 is about to be the character
 ps_loop:
-  ld   t1, -32(fp)     # t1 = current pointer
-  lb   a0, 0(t1)       # "load byte": a0 = the byte it points at
-  beqz a0, ps_done     # "branch if equal to zero": jump if a0 is 0, so a zero byte ends the string (also a pseudo instruction)
-  jal  ra, print_char
-  ld   t1, -32(fp)     # reload: the call may have clobbered t1
-  addi t1, t1, 1       # advance one byte
-  sd   t1, -32(fp)
-  j    ps_loop
+	ld   t1, -32(fp)     # t1 = current pointer
+	lb   a0, 0(t1)       # "load byte": a0 = the byte it points at
+	beqz a0, ps_done     # "branch if equal to zero": jump if a0 is 0, so a zero byte ends the string (also a pseudo instruction)
+	jal  ra, print_char
+	ld   t1, -32(fp)     # reload: the call may have clobbered t1
+	addi t1, t1, 1       # advance one byte
+	sd   t1, -32(fp)
+	j    ps_loop
 ps_done:
-  ld   ra, -8(fp)      # epilogue
-  ld   fp, -16(fp)
-  addi sp, sp, 32
-  ret
+	ld   ra, -8(fp)      # epilogue
+	ld   fp, -16(fp)
+	addi sp, sp, 32
+	ret
 ```
 
 `.asciz` is the string version of the `.dword` we used for arrays: it drops the characters into `.data` and adds a
@@ -837,8 +837,8 @@ did with the UART:
 
 ```asm
 exit:                  # exit(code): halt the machine with the code in a0
-  li   t0, 0x10010000  # SYSCON, the power-off device
-  sd   a0, 0(t0)       # the machine stops here: nothing below this runs
+	li   t0, 0x10010000  # SYSCON, the power-off device
+	sd   a0, 0(t0)       # the machine stops here: nothing below this runs
 ```
 
 There's no `ret` at the end, and that isn't an oversight. `exit` never returns: the store is the last instruction the
@@ -848,10 +848,10 @@ So `_start` no longer needs anywhere to park the machine. The spin loop goes, an
 
 ```asm
 _start:
-  la   a0, msg
-  jal  ra, print_string
-  li   a0, 0           # exit code 0: nothing went wrong
-  jal  ra, exit
+	la   a0, msg
+	jal  ra, print_string
+	li   a0, 0           # exit code 0: nothing went wrong
+	jal  ra, exit
 ```
 
 The finished program, with `print_char`, `print_string` and `exit` all together, is
@@ -893,11 +893,11 @@ in `sp` is not something you can rely on. So we have to set it up ourselves.
 
 ```asm
 _start:
-  li   sp, 0x88000000  # virt gives 128 MB of RAM at 0x80000000, so this is the top
-  la   a0, msg
-  jal  ra, print_string
-  li   a0, 0
-  jal  ra, exit
+	li   sp, 0x88000000  # virt gives 128 MB of RAM at 0x80000000, so this is the top
+	la   a0, msg
+	jal  ra, print_string
+	li   a0, 0
+	jal  ra, exit
 ```
 
 ### The power-off device
@@ -917,15 +917,15 @@ So we'll have to change `exit` accordingly.
 
 ```asm
 exit:                  # exit(code): virt's poweroff device wants magic values, not raw codes
-  li   t0, 0x100000    # the SiFive test finisher
-  beqz a0, exit_pass   # if zero pass 0x5555
-  slli a0, a0, 16      # a code sits in the upper 16 bits
-  li   t1, 0x3333      # 0x3333 = "fail, code attached"
-  or   a0, a0, t1      # or the exit code (upper 16 bits) so we have a0=[exit:16][magic:16] (can't use ori here!)
-  sw   a0, 0(t0)       # sw instead of sd
+	li   t0, 0x100000    # the SiFive test finisher
+	beqz a0, exit_pass   # if zero pass 0x5555
+	slli a0, a0, 16      # a code sits in the upper 16 bits
+	li   t1, 0x3333      # 0x3333 = "fail, code attached"
+	or   a0, a0, t1      # or the exit code (upper 16 bits) so we have a0=[exit:16][magic:16] (can't use ori here!)
+	sw   a0, 0(t0)       # sw instead of sd
 exit_pass:
-  li   a0, 0x5555      # 0x5555 = "pass", qemu exits 0
-  sw   a0, 0(t0)       # sw instead of sd
+	li   a0, 0x5555      # 0x5555 = "pass", qemu exits 0
+	sw   a0, 0(t0)       # sw instead of sd
 ```
 
 The `li` and `or` pair is pretty interesting, because the obvious version doesn't assemble. You might expect
@@ -946,11 +946,11 @@ ENTRY(_start)
 
 SECTIONS
 {
-  . = 0x80000000;
-  .text   : { *(.text*)   }
-  .rodata : { *(.rodata*) }
-  .data   : { *(.data*)   }
-  .bss    : { *(.bss*) *(COMMON) }
+	. = 0x80000000;
+	.text   : { *(.text*)   }
+	.rodata : { *(.rodata*) }
+	.data   : { *(.data*)   }
+	.bss    : { *(.bss*) *(COMMON) }
 }
 ```
 
@@ -1003,7 +1003,7 @@ filesize for nothing. `.bss` is the fix, and it comes with one new directive:
 ```asm
 .bss
 buf:                  # a label, like in .data
-  .space 8000         # "reserve 8000 bytes here"
+	.space 8000         # "reserve 8000 bytes here"
 ```
 
 `.space` doesn't emit anything. It records a size, so all that ends up in the file is a note saying this program
@@ -1040,8 +1040,8 @@ sudo apt install qemu-system-misc gcc-riscv64-linux-gnu
 
 ```sh
 riscv64-linux-gnu-gcc -nostdlib -no-pie -T link.ld \
-    -Wl,--build-id=none,--no-warn-rwx-segments \
-    -o hello.elf hello_world.s
+	-Wl,--build-id=none,--no-warn-rwx-segments \
+	-o hello.elf hello_world.s
 ```
 
 Four flags, and they all exist for the same reason: `gcc` assumes it's building a normal program for a normal
@@ -1135,9 +1135,9 @@ translates IR into x86.
 
 All right, let's make this pipeline more concrete. Here is about the smallest useful HLL program we can write:
 
-```hll
+```hll, runnable
 main: () -> i32 {
-    return 1 + 1
+	return 1 + 1
 }
 ```
 
@@ -1155,8 +1155,8 @@ The first stage of the compiler translates that program into this IR:
 ```ir
 define main() -> i32 {
 entry:
-    $0 = add i32 1, 1
-    ret $0
+	$0 = add i32 1, 1
+	ret $0
 }
 ```
 
@@ -1170,21 +1170,21 @@ generated function looks like this:
 ```asm
 .section .text
 main:
-  addi sp, sp, -16
-  sd   ra, 8(sp)
-  sd   s2, 0(sp)
+	addi sp, sp, -16
+	sd   ra, 8(sp)
+	sd   s2, 0(sp)
 
 main__entry:
-  addi  t0, zero, 1
-  addi  t1, zero, 1
-  add   s2, t0, t1
-  addiw s2, s2, 0
-  addi  a0, s2, 0
+	addi  t0, zero, 1
+	addi  t1, zero, 1
+	add   s2, t0, t1
+	addiw s2, s2, 0
+	addi  a0, s2, 0
 
-  ld   s2, 0(sp)
-  ld   ra, 8(sp)
-  addi sp, sp, 16
-  jalr zero, 0(ra)
+	ld   s2, 0(sp)
+	ld   ra, 8(sp)
+	addi sp, sp, 16
+	jalr zero, 0(ra)
 ```
 
 The middle of the function is the translation we were looking for: load both `1`s, add them and move the result
@@ -1261,17 +1261,17 @@ disassembly, you can walk across it one instruction at a time.
 Our first program showed the pipeline, but it did not show what happens when one function calls another. For that,
 let's revisit the sum-of-squares program from the stack-frame lesson, this time written in HLL:
 
-```hll,runnable expect=a0:25
+```hll,runnable registers=false
 square: (value: i32) -> i32 {
-    return value * value
+	return value * value
 }
 
 sum_of_squares: (a: i32, b: i32) -> i32 {
-    return square(a) + square(b)
+	return square(a) + square(b)
 }
 
 main: () -> i32 {
-    return sum_of_squares(3, 4)
+	return sum_of_squares(3, 4)
 }
 ```
 
@@ -1284,37 +1284,37 @@ fsc run programs/lessons/09_hll_functions/sum_of_squares.hll
 ```
 
 The program stops with exit code `25`. Now let's look at the
-[generated IR](repo:programs/lessons/09_hll_functions/out/ir/sum_of_squares.ir):
+[generated IR](repo:programs/lessons/09_hll_functions/sum_of_squares.ir):
 
 ```ir
 define square($value: i32) -> i32 {
 entry:
-    $value_ptr = stack_alloc i32
-    store i32 $value, $value_ptr
-    $0 = load i32, $value_ptr
-    $1 = load i32, $value_ptr
-    $2 = mul i32 $0, $1
-    ret $2
+	$value_ptr = stack_alloc i32
+	store i32 $value, $value_ptr
+	$0 = load i32, $value_ptr
+	$1 = load i32, $value_ptr
+	$2 = mul i32 $0, $1
+	ret $2
 }
 
 define sum_of_squares($a: i32, $b: i32) -> i32 {
 entry:
-    $a_ptr = stack_alloc i32
-    store i32 $a, $a_ptr
-    $b_ptr = stack_alloc i32
-    store i32 $b, $b_ptr
-    $0 = load i32, $a_ptr
-    $1 = call square($0)
-    $2 = load i32, $b_ptr
-    $3 = call square($2)
-    $4 = add i32 $1, $3
-    ret $4
+	$a_ptr = stack_alloc i32
+	store i32 $a, $a_ptr
+	$b_ptr = stack_alloc i32
+	store i32 $b, $b_ptr
+	$0 = load i32, $a_ptr
+	$1 = call square($0)
+	$2 = load i32, $b_ptr
+	$3 = call square($2)
+	$4 = add i32 $1, $3
+	ret $4
 }
 
 define main() -> i32 {
 entry:
-    $0 = call sum_of_squares(3, 4)
-    ret $0
+	$0 = call sum_of_squares(3, 4)
+	ret $0
 }
 ```
 
@@ -1328,87 +1328,87 @@ Below is the compiler's generated instruction stream with its explanatory commen
 hosted standard library normally supplies `_start`, the small harness before `square` takes its
 place here by calling the generated `main` and writing its return value to SYSCON. Everything from
 `square` onward comes directly from the
-[complete generated assembly](repo:programs/lessons/09_hll_functions/out/asm/sum_of_squares.s).
+[complete generated assembly](repo:programs/lessons/09_hll_functions/sum_of_squares.s).
 
 ```asm,runnable=bare expect=a0:25
 .section .text
 .globl _start
 _start:
-  jal    ra, main
-  li     t0, 0x10010000
-  sd     a0, 0(t0)
+	jal    ra, main
+	li     t0, 0x10010000
+	sd     a0, 0(t0)
 
 square:
-  addi   sp, sp, -32
-  sd     ra, 24(sp)
-  sd     s2, 8(sp)
-  sd     s3, 16(sp)
-  addi   t0, sp, 32
-  addiw  s2, a0, 0
+	addi   sp, sp, -32
+	sd     ra, 24(sp)
+	sd     s2, 8(sp)
+	sd     s3, 16(sp)
+	addi   t0, sp, 32
+	addiw  s2, a0, 0
 square__entry:
-  addi   t0, sp, 0
-  sw     s2, 0(t0)
-  addi   t0, sp, 0
-  lw     s2, 0(t0)
-  addi   t0, sp, 0
-  lw     s3, 0(t0)
-  mul    s2, s2, s3
-  addiw  s2, s2, 0
-  addi   a0, s2, 0
-  ld     s3, 16(sp)
-  ld     s2, 8(sp)
-  ld     ra, 24(sp)
-  addi   sp, sp, 32
-  jalr   zero, 0(ra)
+	addi   t0, sp, 0
+	sw     s2, 0(t0)
+	addi   t0, sp, 0
+	lw     s2, 0(t0)
+	addi   t0, sp, 0
+	lw     s3, 0(t0)
+	mul    s2, s2, s3
+	addiw  s2, s2, 0
+	addi   a0, s2, 0
+	ld     s3, 16(sp)
+	ld     s2, 8(sp)
+	ld     ra, 24(sp)
+	addi   sp, sp, 32
+	jalr   zero, 0(ra)
 
 sum_of_squares:
-  addi   sp, sp, -48
-  sd     ra, 32(sp)
-  sd     s2, 16(sp)
-  sd     s3, 24(sp)
-  addi   t0, sp, 48
-  addiw  s2, a0, 0
-  addiw  s3, a1, 0
+	addi   sp, sp, -48
+	sd     ra, 32(sp)
+	sd     s2, 16(sp)
+	sd     s3, 24(sp)
+	addi   t0, sp, 48
+	addiw  s2, a0, 0
+	addiw  s3, a1, 0
 sum_of_squares__entry:
-  addi   t0, sp, 0
-  sw     s2, 0(t0)
-  addi   t0, sp, 8
-  sw     s3, 0(t0)
-  addi   t0, sp, 0
-  lw     s2, 0(t0)
-  addi   a0, s2, 0
-  jal    ra, square
-  addiw  s2, a0, 0
-  addi   t0, sp, 8
-  lw     s3, 0(t0)
-  addi   a0, s3, 0
-  jal    ra, square
-  addiw  s3, a0, 0
-  add    s2, s2, s3
-  addiw  s2, s2, 0
-  addi   a0, s2, 0
-  ld     s3, 24(sp)
-  ld     s2, 16(sp)
-  ld     ra, 32(sp)
-  addi   sp, sp, 48
-  jalr   zero, 0(ra)
+	addi   t0, sp, 0
+	sw     s2, 0(t0)
+	addi   t0, sp, 8
+	sw     s3, 0(t0)
+	addi   t0, sp, 0
+	lw     s2, 0(t0)
+	addi   a0, s2, 0
+	jal    ra, square
+	addiw  s2, a0, 0
+	addi   t0, sp, 8
+	lw     s3, 0(t0)
+	addi   a0, s3, 0
+	jal    ra, square
+	addiw  s3, a0, 0
+	add    s2, s2, s3
+	addiw  s2, s2, 0
+	addi   a0, s2, 0
+	ld     s3, 24(sp)
+	ld     s2, 16(sp)
+	ld     ra, 32(sp)
+	addi   sp, sp, 48
+	jalr   zero, 0(ra)
 
 main:
-  addi   sp, sp, -16
-  sd     ra, 8(sp)
-  sd     s2, 0(sp)
+	addi   sp, sp, -16
+	sd     ra, 8(sp)
+	sd     s2, 0(sp)
 main__entry:
-  addi   t0, zero, 3
-  addi   a0, t0, 0
-  addi   t1, zero, 4
-  addi   a1, t1, 0
-  jal    ra, sum_of_squares
-  addiw  s2, a0, 0
-  addi   a0, s2, 0
-  ld     s2, 0(sp)
-  ld     ra, 8(sp)
-  addi   sp, sp, 16
-  jalr   zero, 0(ra)
+	addi   t0, zero, 3
+	addi   a0, t0, 0
+	addi   t1, zero, 4
+	addi   a1, t1, 0
+	jal    ra, sum_of_squares
+	addiw  s2, a0, 0
+	addi   a0, s2, 0
+	ld     s2, 0(sp)
+	ld     ra, 8(sp)
+	addi   sp, sp, 16
+	jalr   zero, 0(ra)
 ```
 
 The arguments arrive in `a0` and `a1`, just as they did in our handwritten assembly. Before each call to `square`,
@@ -1479,9 +1479,9 @@ For a quick reminder of the terminology used so far, see the [glossary](../../gl
 
 ## Runtimes and Standard Libraries
 
-Open the [`08: HLL compiler pipeline`](repo:programs/lessons/08_hll/compiler_pipeline.hll) example again and click debug. 
-Instead of pressing run and advance one instruction at a time. The first instruction is not in `main`. You land in 
-a file called `runtime.hll`. That’s the *runtime*, a small piece of code that wraps your program so it can start and stop 
+Open the [`08: HLL compiler pipeline`](repo:programs/lessons/08_hll/compiler_pipeline.hll) example again and click debug,
+but instead of pressing run, advance one instruction at a time. The first instruction is not in `main`. You land in
+a file called [`runtime.hll`](repo:crates/os-runtime/stdlib/hosted/runtime.hll). That’s the *runtime*, a small piece of code that wraps your program so it can start and stop
 cleanly without you having to interact with any type of hardware or assembly.
 
 Let’s go over it.
@@ -1496,8 +1496,8 @@ external main: () -> i32
 sys := import("sys")
 
 export _start: () {
-    code: i32 = main()
-    sys.exit(code as i64)
+	code: i32 = main()
+	sys.exit(code as i64)
 }
 ```
 
@@ -1514,13 +1514,13 @@ Step into `sys.exit`. You’ll find a small assembly wrapper in the standard lib
 
 ```hll
 export sys_exit: (code: i64) {
-    _a0 = code as u64
-    asm {
-        la t0, _a0
-        ld a0, 0(t0)
-        li a7, 93
-        ecall
-    }
+	_a0 = code as u64
+	asm {
+		la t0, _a0
+		ld a0, 0(t0)
+		li a7, 93
+		ecall
+	}
 }
 ```
 
@@ -1539,44 +1539,44 @@ the SYSCON address: the standard library and the ROM handler hide that from us.
 
 ### The handler is just code
 
-Here's what I didn't realize at first: the handler isn't a CPU feature, or some piece of silicon that "knows"
-what syscall 93 means. `ecall` only does one thing, it's a trap. It stops your program, saves enough state to
+The handler isn't a CPU feature, or some piece of silicon that "knows" what syscall 93 means. `ecall` only does one 
+thing, it's a trap. It stops your program, saves enough state to
 resume later, and jumps to one fixed address that was set up ahead of time. What happens at that address is just
 normal assembly code, written by whoever built the machine. Here's the relevant part of our
 [real ROM handler](repo:crates/os-runtime/boot/trap.s):
 
 ```asm
 _m_trap:
-    csrr t0, mcause             # why did we trap? there's more than one reason, we'll see this next chapter
-    li t1, 8
-    beq t0, t1, _dispatch_ecall
-    li t1, 9
-    beq t0, t1, _dispatch_ecall
-    li t1, 11
-    beq t0, t1, _dispatch_ecall
-    mret                        # not something we care about, so continue
+	csrr t0, mcause             # why did we trap? there's more than one reason, we'll see this next chapter
+	li t1, 8
+	beq t0, t1, _dispatch_ecall
+	li t1, 9
+	beq t0, t1, _dispatch_ecall
+	li t1, 11
+	beq t0, t1, _dispatch_ecall
+	mret                        # not something we care about, so continue
 
 _dispatch_ecall:
-    li t0, 64
-    beq a7, t0, sys_write
-    li t0, 93
-    beq a7, t0, sys_exit
-    li t0, 94
-    beq a7, t0, sys_exit
-    li t0, 214
-    beq a7, t0, sys_brk
-    j sys_unknown
+	li t0, 64
+	beq a7, t0, sys_write
+	li t0, 93
+	beq a7, t0, sys_exit
+	li t0, 94
+	beq a7, t0, sys_exit
+	li t0, 214
+	beq a7, t0, sys_brk
+	j sys_unknown
 
 sys_exit:
-    li t0, 268500992            # = 0x1001_0000 = SYSCON
-    sd a0, 0(t0)
-    j _advance_mepc_and_mret
+	li t0, 268500992            # = 0x1001_0000 = SYSCON
+	sd a0, 0(t0)
+	j _advance_mepc_and_mret
 
 _advance_mepc_and_mret:
-    csrr t0, mepc
-    addi t0, t0, 4
-    csrw mepc, t0
-    mret                        # resume program
+	csrr t0, mepc
+	addi t0, t0, 4
+	csrw mepc, t0
+	mret                        # resume program
 ```
 
 The first three comparisons check `mcause` (more on what that means next chapter). Once the handler knows it's actually 
@@ -1640,8 +1640,8 @@ before returning:
 console := import("console")
 
 main: () -> i32 {
-    console.println("Hello from the runtime!")
-    return 0
+	console.println("Hello from the runtime!")
+	return 0
 }
 ```
 
@@ -1666,7 +1666,7 @@ You have now followed the entire program: HLL code, the runtime that calls it, t
 library wrapper, the `ecall`, and the ROM handler that talks to the hardware.
 
 Assembly gives you total control, but it also makes you manage every address and convention by hand. The runtime and standard 
-library collect the work shared by every program, starting, stopping, and talking to hardware, behind a handful of HLL 
+library collect the work shared by every program, starting, stopping, and talking to hardware, behind a couple of HLL 
 functions. The lower layers remain available in the debugger, but from here on we can stay in HLL unless we
 choose to look beneath them.
 
@@ -1674,7 +1674,13 @@ choose to look beneath them.
 
 Every language ends up needing the same handful of things: printing, reading input, growing arrays, managing
 memory. Rewriting all of that for every single program would be pointless, so most languages ship it prebuilt as
-a standard library. HLL does so too, this chapter goes over some of the most useful pieces of ours.
+a standard library. HLL does so too, this chapter goes over some of the most useful pieces of mine.
+
+The library lives under [crates/os-runtime/stdlib](repo:crates/os-runtime/stdlib/hosted/runtime.hll), split into
+modules per target: `hosted` for the examples in this chapter, `free` for bare-metal programs, and `kernel` for
+the OS we'll write later. You've already met two of its modules: [runtime.hll](repo:crates/os-runtime/stdlib/hosted/runtime.hll)
+wraps `main`, and [console.hll](repo:crates/os-runtime/stdlib/hosted/console.hll) is where `print_int` and friends
+live. Now we'll look at memory.
 
 We'll start with the heap.
 
@@ -1689,53 +1695,32 @@ has a fixed size, and is freed when the function returns, so someone outside the
 use the stack-allocated memory. A heap allocation remains valid until the program explicitly frees it,
 which makes it possible for another function to use it too.
 
-Let's look at a HLL example:
+The complete example is [lesson 10](repo:programs/lessons/10_stdlib/build_sequence.hll), run configuration
+`10: heap and the standard library`. It allocates an array on the heap in one function, reads it back from
+`main`, and gives it back with `defer` when `main` exits. The example:
 
-<! MAKE A LINK TO THE CODE BELOW IN LESSON 10, MAYBE PUT A SMALL SNIPPER OF BUILD SEQUENCE, BUT NOT THIS BIG>
-```hll,runnable
+```hll,runnable registers=false
 console := import("console")
 
-; Creates a dynamic array on the heap and return it.
+; Creates a dynamic array on the heap and returns it.
 build_sequence: (size: i64) -> i32* {
-    seq: i32* = new(i32, size)
-    
-    i: i64 = 0
-    while i < size {
-        seq[i] = ((i + 1) * 10) as i32
-        i = i + 1
-    }
-    
-    ; Returning a stack-allocated array here would be an error.
-    return seq
-}
-
-process_and_sum: (data: i32*, size: i64) -> i32 {
-    sum: i32 = 0
-    i: i64 = 0
-    
-    ; We can read this memory because it lives on the heap.
-    while i < size {
-        sum = sum + data[i]
-        i = i + 1
-    }
-    return sum
+	seq: i32* = new(i32, size)
+	i: i64 = 0
+	while i < size {
+		seq[i] = ((i + 1) * 10) as i32
+		i = i + 1
+	}
+	return seq
 }
 
 main: () -> i32 {
-    count: i64 = 5
-    
-    ; Allocate and populate memory in one function
-    my_data: i32* = build_sequence(count)
-    
-    ; Guarantee deallocation when main exits
-    defer free(my_data)
-    
-    ; Share that exact same memory with a different function
-    total: i32 = process_and_sum(my_data, count)
-    
-    console.print_int(total)  ; 150
-    
-    return 0
+	my_data: i32* = build_sequence(5)
+	defer free(my_data)
+
+	; The array still lives after build_sequence returned.
+	total: i32 = my_data[0] + my_data[1] + my_data[2] + my_data[3] + my_data[4]
+	console.print_int(total)  ; 150
+	return 0
 }
 ```
 
@@ -1746,12 +1731,12 @@ get to in a moment.
 `new` allocates only `n * sizeof(type)` bytes, so if you accidentally access memory outside that range, you get
 undefined behavior. It's called undefined because you don't know what'll actually be there: you could be
 overwriting another allocation sitting right next to yours, writing into a device, overwriting another program, or
-you could get lucky and have it run perfectly fine anyway. The point is that with raw pointers you have to be careful 
+you could get lucky and have it run perfectly fine anyway. The point is that with raw pointers you have to be careful
 and stay in bounds.
 
-This is also why returning a pointer to a stack-allocated array would've been a bug in build_sequence. 
-You allocate it on the function stack frame, free the frame and then return the pointer to the freed memory. 
-Then, once you go into a new function, its stack frame will overwrite the old one, overwriting the array data, 
+This is also why returning a pointer to a stack-allocated array would've been a bug in build_sequence.
+You allocate it on the function stack frame, free the frame and then return the pointer to the freed memory.
+Then, once you go into a new function, its stack frame will overwrite the old one, overwriting the array data,
 and you'll get a garbage pointer.
 
 With the pointer from new, we build the array `[10, 20, 30, 40, 50]` and hand it back to main. From there,
@@ -1760,11 +1745,8 @@ be reused. You could just call `free(my_data)` directly at the end of main inste
 especially when a function has more than one return point.
 
 You don't strictly have to free memory before your program exits either, the operating system reclaims
-everything a process was using the moment it exits. But it's still good practice to always free what you allocate: it 
-makes your intent explicit, and it's the only option once your program runs for longer than a single `main` call and needs 
-that memory back while it's still alive. 
+everything a process was using the moment it exits. But it's still good practice to always free what you allocate: it
+makes your intent explicit, and it's the only option once your program runs for longer than a single `main` call and needs
+that memory back while it's still alive.
 
-Next we'll look at allocator itself to see how it decides where a new allocation actually lands.
-
-
-
+Next we'll look at the allocator itself to see how it decides where a new allocation actually lands.

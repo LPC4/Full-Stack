@@ -1,0 +1,22 @@
+console := import("console")
+
+; Creates a dynamic array on the heap and returns it.
+build_sequence: (size: i64) -> i32* {
+	seq: i32* = new(i32, size)
+	i: i64 = 0
+	while i < size {
+		seq[i] = ((i + 1) * 10) as i32
+		i = i + 1
+	}
+	return seq
+}
+
+main: () -> i32 {
+	my_data: i32* = build_sequence(5)
+	defer free(my_data)
+
+	; The array still lives after build_sequence returned.
+	total: i32 = my_data[0] + my_data[1] + my_data[2] + my_data[3] + my_data[4]
+	console.print_int(total)  ; 150
+	return 0
+}

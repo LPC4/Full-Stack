@@ -4,76 +4,76 @@
 console := import("console")
 
 struct Box<T> {
-    value: T
+	value: T
 }
 
 ; A recursive generic record: each node points at the next of the same type.
 struct Node<T> {
-    value: T
-    next: Node<T>*
+	value: T
+	next: Node<T>*
 }
 
 max: <T>(a: T, b: T) -> T {
-    if a > b {
-        return a
-    }
-    return b
+	if a > b {
+		return a
+	}
+	return b
 }
 
 ; Generic function that returns a generic record, and one that consumes it by value.
 wrap: <T>(v: T) -> Box<T> {
-    return { .value = v }
+	return { .value = v }
 }
 
 unwrap: <T>(b: Box<T>) -> T {
-    return b.value
+	return b.value
 }
 
 main: () -> i32 {
-    console.println("-- generics --")
+	console.println("-- generics --")
 
-    m := max<i32>(19, 23)   ; explicit specialization -> 23
-    n := max(40, 2)         ; inferred from the i32 arguments -> 40
-    console.print_int(m)
-    console.print_int(n)
-    if m != 23 or n != 40 { return 1 }
+	m := max<i32>(19, 23)   ; explicit specialization -> 23
+	n := max(40, 2)         ; inferred from the i32 arguments -> 40
+	console.print_int(m)
+	console.print_int(n)
+	if m != 23 or n != 40 { return 1 }
 
-    ; Generic struct round-tripped through generic functions.
-    boxed: Box<i32> = wrap<i32>(42)
-    if unwrap<i32>(boxed) != 42 { return 2 }
+	; Generic struct round-tripped through generic functions.
+	boxed: Box<i32> = wrap<i32>(42)
+	if unwrap<i32>(boxed) != 42 { return 2 }
 
-    ; Nested generic record: Box<Box<i32>>.
-    inner: Box<i32>* = new(Box<i32>)
-    defer free(inner)
-    inner.value = 7
-    outer: Box<Box<i32>>* = new(Box<Box<i32>>)
-    defer free(outer)
-    outer.value = @inner
-    if outer.value.value != 7 { return 3 }
+	; Nested generic record: Box<Box<i32>>.
+	inner: Box<i32>* = new(Box<i32>)
+	defer free(inner)
+	inner.value = 7
+	outer: Box<Box<i32>>* = new(Box<Box<i32>>)
+	defer free(outer)
+	outer.value = @inner
+	if outer.value.value != 7 { return 3 }
 
-    ; Recursive generic record: a 3-node Node<i32> list summed by walking `next`.
-    third: Node<i32>* = new(Node<i32>)
-    defer free(third)
-    third.value = 3
-    third.next = null
-    second: Node<i32>* = new(Node<i32>)
-    defer free(second)
-    second.value = 2
-    second.next = third
-    head: Node<i32>* = new(Node<i32>)
-    defer free(head)
-    head.value = 1
-    head.next = second
+	; Recursive generic record: a 3-node Node<i32> list summed by walking `next`.
+	third: Node<i32>* = new(Node<i32>)
+	defer free(third)
+	third.value = 3
+	third.next = null
+	second: Node<i32>* = new(Node<i32>)
+	defer free(second)
+	second.value = 2
+	second.next = third
+	head: Node<i32>* = new(Node<i32>)
+	defer free(head)
+	head.value = 1
+	head.next = second
 
-    total: i32 = 0
-    cur: Node<i32>* = head
-    while cur != null {
-        total = total + cur.value
-        cur = cur.next
-    }
-    console.print_int(total)
-    if total != 6 { return 4 }
+	total: i32 = 0
+	cur: Node<i32>* = head
+	while cur != null {
+		total = total + cur.value
+		cur = cur.next
+	}
+	console.print_int(total)
+	if total != 6 { return 4 }
 
-    console.println("ok")
-    return 0
+	console.println("ok")
+	return 0
 }

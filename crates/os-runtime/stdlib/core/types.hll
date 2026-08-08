@@ -1,13 +1,13 @@
 ; Shared stdlib types: string header and heap free-list block.
 
 struct Str {
-    data: u8*,
-    length: u64,
+	data: u8*,
+	length: u64,
 }
 
 struct HeapBlock {
-    next: HeapBlock*,
-    ptr: u8*,
-    size: u64,
-    is_free: u64,
+	next: HeapBlock*,
+	ptr: u8*,
+	size: u64,
+	is_free: u64,
 }

@@ -5,7 +5,7 @@
 .text
 .globl _start         # specifies to the virtual machine where to begin execution
 _start:
-                      # your code goes here
+	                    # your code goes here
 
 done:                 # spin here forever so the memory stays inspectable
-  j    done
+	j    done

@@ -3,7 +3,7 @@ use super::find::FindHighlight;
 use super::{FullStackApp, SourceKind, chrome, metrics};
 use crate::ui::{Layer, theme};
 use eframe::egui;
-use egui::text::{CCursor, LayoutJob, LayoutSection};
+use egui::text::{CCursor, CCursorRange, LayoutJob, LayoutSection};
 use egui::{FontId, Sense, TextStyle, pos2, vec2};
 use full_stack::compilation_pipeline::assembled_to_elf_file;
 use full_stack::session::MachineState;
@@ -836,6 +836,7 @@ pub(super) fn ctrl_scancode(key: egui::Key) -> Option<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui_kittest::{Harness, kittest::Queryable as _};
 
     #[test]
     fn enclosing_function_finds_the_header_above_the_caret() {
@@ -899,9 +900,129 @@ mod tests {
     // what a TextEdit without lock_focus filters away before it can indent.
     #[test]
     fn tab_indents_the_code_editor_rather_than_moving_focus() {
-        use egui_kittest::{Harness, kittest::Queryable as _};
+        let mut harness = code_tab_harness("ret\n");
+        harness
+            .get_by_role(egui::accesskit::Role::MultilineTextInput)
+            .focus();
+        harness.run();
+        for _ in 0..4 {
+            harness.key_press(egui::Key::ArrowLeft); // cursor starts at the end
+        }
+        harness.run();
+        harness.key_press(egui::Key::Tab);
+        harness.run();
 
-        let mut harness = Harness::new_ui_state(
+        assert_eq!(
+            harness.state(),
+            "    ret\n",
+            "Tab should indent with spaces, not move focus: {:?}",
+            harness.state()
+        );
+        assert!(
+            !harness.state().contains('\t'),
+            "Tab must insert spaces, not tab characters: {:?}",
+            harness.state()
+        );
+    }
+
+    #[test]
+    fn tab_aligns_the_cursor_to_the_next_multiple_of_four() {
+        let mut harness = code_tab_harness(" ret\n");
+        harness
+            .get_by_role(egui::accesskit::Role::MultilineTextInput)
+            .focus();
+        harness.run();
+        for _ in 0..4 {
+            harness.key_press(egui::Key::ArrowLeft); // cursor after the space
+        }
+        harness.run();
+        harness.key_press(egui::Key::Tab);
+        harness.run();
+
+        assert_eq!(
+            harness.state(),
+            "    ret\n",
+            "Tab should pad only up to the next multiple of four: {:?}",
+            harness.state()
+        );
+    }
+
+    #[test]
+    fn shift_tab_dedents_to_the_previous_multiple_of_four() {
+        let mut harness = code_tab_harness("     ret\n"); // five leading spaces
+        harness
+            .get_by_role(egui::accesskit::Role::MultilineTextInput)
+            .focus();
+        harness.run();
+        for _ in 0..9 {
+            harness.key_press(egui::Key::ArrowLeft); // cursor at the line start
+        }
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::Tab);
+        harness.run();
+
+        assert_eq!(
+            harness.state(),
+            "    ret\n",
+            "Shift+Tab should drop five spaces back to four: {:?}",
+            harness.state()
+        );
+    }
+
+    #[test]
+    fn tab_and_shift_tab_apply_to_every_line_in_a_selection() {
+        let mut harness = code_tab_harness("a\nb\nc\n");
+        harness
+            .get_by_role(egui::accesskit::Role::MultilineTextInput)
+            .focus();
+        harness.run();
+        // Select the last two lines, then indent and dedent them as a block.
+        for _ in 0..4 {
+            harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::ArrowLeft);
+        }
+        harness.run();
+        harness.key_press(egui::Key::Tab);
+        harness.run();
+        assert_eq!(
+            harness.state(),
+            "a\n    b\n    c\n",
+            "Tab should indent every selected line: {:?}",
+            harness.state()
+        );
+        harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::Tab);
+        harness.run();
+        assert_eq!(
+            harness.state(),
+            "a\nb\nc\n",
+            "Shift+Tab should dedent every selected line: {:?}",
+            harness.state()
+        );
+    }
+
+    #[test]
+    fn backspace_removes_one_space_not_a_tab_stop() {
+        let mut harness = code_tab_harness("    ret\n");
+        harness
+            .get_by_role(egui::accesskit::Role::MultilineTextInput)
+            .focus();
+        harness.run();
+        for _ in 0..4 {
+            harness.key_press(egui::Key::ArrowLeft); // cursor after the spaces
+        }
+        harness.run();
+        harness.key_press(egui::Key::Backspace);
+        harness.run();
+
+        assert_eq!(
+            harness.state(),
+            "   ret\n",
+            "Backspace should delete a single space: {:?}",
+            harness.state()
+        );
+    }
+
+    fn code_tab_harness(text: &str) -> Harness<'static, String> {
+        Harness::new_ui_state(
             |ui, state: &mut String| {
                 let text = state.clone();
                 let out = code_view(
@@ -922,21 +1043,8 @@ mod tests {
                     *state = edited;
                 }
             },
-            "ret\n".to_owned(),
-        );
-
-        harness
-            .get_by_role(egui::accesskit::Role::MultilineTextInput)
-            .focus();
-        harness.run();
-        harness.key_press(egui::Key::Tab);
-        harness.run();
-
-        assert!(
-            harness.state().contains('\t'),
-            "Tab should indent, not move focus: {:?}",
-            harness.state()
-        );
+            text.to_owned(),
+        )
     }
 }
 
@@ -1111,6 +1219,9 @@ where
                     .filter_map(|mark| mark.range.map(|(start, end)| (start, end, mark.color())))
                     .collect();
                 let mut layouter = highlighted_layouter(highlighter, &font, find_marks, diag_spans);
+                if interactive {
+                    handle_code_tab(ui, ("code_edit", id_salt.clone()), &mut buf, &mut out);
+                }
                 let output = egui::TextEdit::multiline(&mut buf)
                     .id_salt(("code_edit", id_salt.clone()))
                     .font(font.clone())
@@ -1189,6 +1300,43 @@ where
     out
 }
 
+// Tab indents with real spaces aligned to a multiple of four (and Shift+Tab
+// dedents to the previous multiple) before the TextEdit can insert a literal
+// tab or remove a whole tab stop. Shift+Tab must be consumed first: egui's
+// logical modifier matching lets a plain Tab pattern also match a held shift.
+fn handle_code_tab<Id>(ui: &egui::Ui, id_salt: Id, buf: &mut String, out: &mut CodeViewOutput)
+where
+    Id: std::hash::Hash + Clone,
+{
+    // The TextEdit derives its id from `.id_salt(x)` as `Id::new(x)` hashed
+    // into the parent Ui, so mirror that exactly or focus/state lookups miss.
+    let edit_id = ui.make_persistent_id(egui::Id::new(id_salt));
+    if ui.ctx().memory(|m| m.focused() != Some(edit_id)) {
+        return;
+    }
+    let outdent = ui.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::Tab));
+    let indent = !outdent && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Tab));
+    if !indent && !outdent {
+        return;
+    }
+    let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), edit_id) else {
+        return;
+    };
+    let (primary, secondary) = match state.cursor.char_range() {
+        Some(range) => (range.primary.index, range.secondary.index),
+        None => (0, 0),
+    };
+    let (primary, secondary) = apply_tab_edit(buf, primary, secondary, outdent);
+    state.cursor.set_char_range(Some(CCursorRange {
+        primary: CCursor::new(primary),
+        secondary: CCursor::new(secondary),
+        h_pos: None,
+    }));
+    egui::TextEdit::store_state(ui.ctx(), edit_id, state);
+    out.edited = Some(buf.clone());
+    out.cursor = Some(line_col(buf, primary));
+}
+
 fn hover_diagnostic_spans(
     ui: &egui::Ui,
     output: &egui::text_edit::TextEditOutput,
@@ -1242,6 +1390,155 @@ fn line_band(output: &egui::text_edit::TextEditOutput, buf: &str, line: usize) -
         clip.left(),
         clip.right(),
     ]
+}
+
+const TAB_WIDTH: usize = 4;
+
+// Tab inserts real spaces aligned to the next multiple of TAB_WIDTH, and
+// Shift+Tab removes leading whitespace back to the previous multiple of four.
+// Takes cursor positions in chars and returns the new (primary, secondary)
+// cursor after the edit.
+fn apply_tab_edit(
+    buf: &mut String,
+    primary: usize,
+    secondary: usize,
+    outdent: bool,
+) -> (usize, usize) {
+    if primary == secondary {
+        let at = primary;
+        if !outdent {
+            let column = at - line_start_char(buf, at);
+            let spaces = TAB_WIDTH - (column % TAB_WIDTH);
+            buf.insert_str(char_to_byte(buf, at), &" ".repeat(spaces));
+            (at + spaces, at + spaces)
+        } else {
+            let line_start = line_start_char(buf, at);
+            let removed = leading_outdent_len(buf, line_start);
+            if removed == 0 {
+                (at, at)
+            } else {
+                let from = char_to_byte(buf, line_start);
+                let to = char_to_byte(buf, line_start + removed);
+                buf.replace_range(from..to, "");
+                let new_at = if at >= line_start + removed {
+                    at - removed
+                } else {
+                    line_start
+                };
+                (new_at, new_at)
+            }
+        }
+    } else {
+        let (min, max) = if primary < secondary {
+            (primary, secondary)
+        } else {
+            (secondary, primary)
+        };
+        let starts = line_starts_in(buf, min, max);
+        if !outdent {
+            let n = starts.len();
+            for &line_start in starts.iter().rev() {
+                buf.insert_str(char_to_byte(buf, line_start), "    ");
+            }
+            let new_min = min + TAB_WIDTH;
+            let new_max = max + TAB_WIDTH * n;
+            if primary < secondary {
+                (new_min, new_max)
+            } else {
+                (new_max, new_min)
+            }
+        } else {
+            let removals: Vec<(usize, usize)> = starts
+                .iter()
+                .map(|&line_start| (line_start, leading_outdent_len(buf, line_start)))
+                .filter(|&(_, removed)| removed > 0)
+                .collect();
+            for &(line_start, removed) in removals.iter().rev() {
+                let from = char_to_byte(buf, line_start);
+                let to = char_to_byte(buf, line_start + removed);
+                buf.replace_range(from..to, "");
+            }
+            let (mut new_min, mut new_max) = (min, max);
+            for &(line_start, removed) in removals.iter().rev() {
+                new_min = remap_after_removal(new_min, line_start, removed);
+                new_max = remap_after_removal(new_max, line_start, removed);
+            }
+            if primary < secondary {
+                (new_min, new_max)
+            } else {
+                (new_max, new_min)
+            }
+        }
+    }
+}
+
+fn remap_after_removal(edge: usize, at: usize, removed: usize) -> usize {
+    if edge >= at + removed {
+        edge - removed
+    } else if edge > at {
+        at
+    } else {
+        edge
+    }
+}
+
+fn char_to_byte(text: &str, char_idx: usize) -> usize {
+    text.char_indices()
+        .nth(char_idx)
+        .map(|(byte, _)| byte)
+        .unwrap_or(text.len())
+}
+
+fn line_start_char(text: &str, char_idx: usize) -> usize {
+    let byte = char_to_byte(text, char_idx);
+    text[..byte]
+        .rfind('\n')
+        .map(|newline| text[..newline].chars().count() + 1)
+        .unwrap_or(0)
+}
+
+// Char index of the first newline at or after `from`.
+fn next_newline_char(text: &str, from: usize) -> Option<usize> {
+    text.char_indices()
+        .skip(from)
+        .find(|(_, c)| *c == '\n')
+        .map(|(byte, _)| text[..byte].chars().count())
+}
+
+// Starts (in chars) of the lines a selection [min, max) touches: the line
+// holding `min`, plus every later line whose start lies inside the selection.
+fn line_starts_in(text: &str, min: usize, max: usize) -> Vec<usize> {
+    let limit = if max > min && text.chars().nth(max - 1) == Some('\n') {
+        max - 1
+    } else {
+        max
+    };
+    let mut starts = vec![line_start_char(text, min)];
+    let mut newline = next_newline_char(text, starts[0]);
+    while let Some(nl) = newline {
+        if nl >= limit {
+            break;
+        }
+        starts.push(nl + 1);
+        newline = next_newline_char(text, nl + 1);
+    }
+    starts
+}
+
+// Leading whitespace a Shift+Tab removes from a line: one tab char, or the
+// leading spaces trimmed to the previous multiple of four (a full stop when
+// the line is already aligned).
+fn leading_outdent_len(text: &str, line_start: usize) -> usize {
+    let mut rest = text[char_to_byte(text, line_start)..].chars();
+    match rest.next() {
+        Some('\t') => 1,
+        Some(' ') => {
+            let spaces = 1 + rest.take_while(|c| *c == ' ').count();
+            let rem = spaces % TAB_WIDTH;
+            if rem == 0 { TAB_WIDTH.min(spaces) } else { rem }
+        }
+        _ => 0,
+    }
 }
 
 fn line_col(text: &str, char_idx: usize) -> (usize, usize) {

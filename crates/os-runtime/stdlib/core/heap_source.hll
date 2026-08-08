@@ -12,27 +12,27 @@ heap_region_end: u64 = 0
 ; Hand the raw source a contiguous [start, end) byte range (e.g. the kernel
 ; heap carved out of RAM). Replaces any previously registered region.
 export heap_set_region: (start: u64, end: u64) {
-    heap_region_cur = start
-    heap_region_end = end
+	heap_region_cur = start
+	heap_region_end = end
 }
 
 ; Bump-allocates n bytes, rounded up to 8-byte alignment. Returns null on OOM.
 export heap_raw_alloc: (n: u64) -> u8* {
-    if n + 7 < n { return null }
-    aligned: u64 = ((n + 7) / 8) * 8
-    if heap_region_cur != 0 {
-        new_cur: u64 = heap_region_cur + aligned
-        if new_cur >= heap_region_cur and new_cur <= heap_region_end {
-            ptr: u8* = heap_region_cur as u8*
-            heap_region_cur = new_cur
-            return ptr
-        }
-    }
-    new_bump: u64 = heap_bump + aligned
-    if new_bump < heap_bump or new_bump > 65536 {
-        return null
-    }
-    ptr: u8* = &heap_buffer[heap_bump]
-    heap_bump = new_bump
-    return ptr
+	if n + 7 < n { return null }
+	aligned: u64 = ((n + 7) / 8) * 8
+	if heap_region_cur != 0 {
+		new_cur: u64 = heap_region_cur + aligned
+		if new_cur >= heap_region_cur and new_cur <= heap_region_end {
+			ptr: u8* = heap_region_cur as u8*
+			heap_region_cur = new_cur
+			return ptr
+		}
+	}
+	new_bump: u64 = heap_bump + aligned
+	if new_bump < heap_bump or new_bump > 65536 {
+		return null
+	}
+	ptr: u8* = &heap_buffer[heap_bump]
+	heap_bump = new_bump
+	return ptr
 }

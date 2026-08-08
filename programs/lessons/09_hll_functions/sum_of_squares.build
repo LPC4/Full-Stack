@@ -6,4 +6,3 @@ entry = "_start"
 stdlib = "hosted"
 import_closure = true
 mangle_symbols = false
-out = "out"

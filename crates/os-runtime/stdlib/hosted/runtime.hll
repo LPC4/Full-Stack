@@ -3,6 +3,6 @@ external main: () -> i32
 sys := import("sys")
 
 export _start: () {
-    code: i32 = main()
-    sys.exit(code as i64)
+	code: i32 = main()
+	sys.exit(code as i64)
 }
