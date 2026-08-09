@@ -20,7 +20,7 @@ source-level decisions such as `if` and loop conditions.
 The stage where the CPU interprets an instruction's encoded bits to determine its operation,
 registers, and immediate value.
 
-#### [Environment call (ecall)](../../runtimes-and-standard-libraries/the-executable-entry-point/)
+#### [Environment call (ecall)](../../runtimes/exit-function/)
 
 A RISC-V instruction that raises a trap so a program can request a service from a configured
 handler, often running in a more privileged mode. The request number and arguments are placed in
@@ -56,7 +56,7 @@ behavior. Programs compiled for one ISA do not automatically run on another.
 The register containing the address of the current instruction. Normal execution advances it;
 branches, jumps, and calls replace it with another address.
 
-#### [Privilege mode](../../runtimes-and-standard-libraries/the-executable-entry-point/)
+#### [Privilege mode](../../runtimes/why-abstract-it/)
 
 A hardware-enforced execution level that controls which instructions, memory, and devices code
 may access. Ordinary programs run with fewer permissions than the kernel or firmware.
@@ -78,20 +78,20 @@ to 64 bits, so those registers can hold 64-bit address values. A particular mach
 only part of that physical range, and a virtual-memory mode can accept a narrower set of virtual
 addresses. For example, this project's Sv39 mode uses 39-bit virtual addresses.
 
-#### [System call (syscall)](../../runtimes-and-standard-libraries/the-executable-entry-point/)
+#### [System call (syscall)](../../runtimes/exit-function/)
 
 A controlled request from a program to privileged software for a service such as writing output,
 reading input, opening a file, or exiting. On RISC-V, a program starts one with `ecall`; the value
 in `a7` identifies the requested service.
 
-#### [Supervisor Binary Interface (SBI)](../../runtimes-and-standard-libraries/the-executable-entry-point/)
+#### [Supervisor Binary Interface (SBI)](../../runtimes/why-abstract-it/)
 
 The standard interface through which an S-mode kernel requests platform-specific services from
 its supervisor execution environment, often M-mode firmware. SBI calls use `ecall` for operations
 such as timers, hart management, interprocessor interrupts, and system reset; they do not replace
 ordinary device drivers.
 
-#### [Trap](../../runtimes-and-standard-libraries/the-executable-entry-point/)
+#### [Trap](../../runtimes/the-handler-is-just-code/)
 
 A CPU-controlled transfer away from the current code to a configured handler, caused by an event
 such as an exception, interrupt, or `ecall`. The handler can run with privileges the interrupted
@@ -200,7 +200,7 @@ the Guide, storing a byte in its transmit register writes a character to the con
 
 ### Assembly and executable files
 
-#### [`_start`](../../runtimes-and-standard-libraries/the-executable-entry-point/)
+#### [`_start`](../../runtimes/entry-stub/)
 
 The startup function used as the executable's real entry point. In this Guide's hosted runtime it
 calls `main`, receives its return value, and passes that value to the exit system call.
@@ -220,7 +220,7 @@ assembler must still encode it before a CPU can execute it.
 Machine instructions decoded from memory and displayed as readable assembly. It shows what the CPU
 actually received, after labels and pseudo-instructions have been resolved.
 
-#### [Entry point](../../runtimes-and-standard-libraries/the-executable-entry-point/)
+#### [Entry point](../../runtimes/entry-stub/)
 
 The address of the first instruction that should run. An executable records this address, often
 for a startup function such as `_start` rather than `main`.
@@ -320,13 +320,13 @@ The compiler's explicit language between HLL and assembly. It keeps useful infor
 types and unlimited temporary values while expressing control flow as basic blocks, branches, and
 jumps.
 
-#### [Runtime](../../runtimes-and-standard-libraries/the-executable-entry-point/)
+#### [Runtime](../../runtimes/entry-stub/)
 
 Supporting code that manages a program's lifecycle around `main`. It performs any required setup,
 calls `main`, and handles the result after `main` returns. In this Guide's hosted runtime, `_start`
 passes that result to `sys.exit`.
 
-#### [Standard library](../../runtimes-and-standard-libraries/the-executable-entry-point/)
+#### [Standard library](../../high-level-languages/from-hll-to-an-executable/)
 
 Reusable functions and types provided to programs, such as console, memory, and system-call
 helpers. Unlike the runtime's automatic startup and shutdown path, programs call these facilities

@@ -1,5 +1,5 @@
 name = "build_sequence"
-title = "10: heap and the standard library"
+title = "10: dynamic memory allocation"
 root = "build_sequence.hll"
 target = "hosted"
 entry = "_start"

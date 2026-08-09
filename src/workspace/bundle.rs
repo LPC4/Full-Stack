@@ -65,7 +65,7 @@ pub fn populate_lessons_workspace(fs: &mut dyn WorkspaceFs) -> io::Result<()> {
 }
 
 // Titles are not listed here; they come from each manifest's `title` field.
-const LESSONS: [(&str, &str, bool); 17] = [
+const LESSONS: [(&str, &str, bool); 18] = [
     ("01_sum/sum.build", "loop", false),
     ("02_array_sum/array_sum.build", "", false),
     ("03_reverse_array/reverse_array_template.build", "", false),
@@ -87,14 +87,16 @@ const LESSONS: [(&str, &str, bool); 17] = [
     ),
     ("09_hll_functions/fibonacci.build", "fibonacci", true),
     ("10_stdlib/build_sequence.build", "", false),
+    ("10_stdlib/simple_malloc.build", "simple_malloc", true),
 ];
 
-const HOSTED_LESSONS: [&str; 5] = [
+const HOSTED_LESSONS: [&str; 6] = [
     "08_hll/compiler_pipeline.build",
     "09_hll_functions/sum_of_squares.build",
     "09_hll_functions/fibonacci_template.build",
     "09_hll_functions/fibonacci.build",
     "10_stdlib/build_sequence.build",
+    "10_stdlib/simple_malloc.build",
 ];
 
 fn lesson_run_configs() -> String {
@@ -343,6 +345,8 @@ mod tests {
             "09_hll_functions/sum_of_squares.s",
             "10_stdlib/build_sequence.hll",
             "10_stdlib/build_sequence.build",
+            "10_stdlib/simple_malloc.hll",
+            "10_stdlib/simple_malloc.build",
         ] {
             assert!(
                 fs.read_file(&VPath::parse(path).expect("path")).is_ok(),

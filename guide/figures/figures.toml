@@ -45,113 +45,137 @@ caption = "The CPU repeats fetch, decode, execute, then advances the program cou
 [[figure]]
 source = "endianness"
 name = "endianness"
-source_line = 589
+source_line = 590
 caption = ""
 
 [[figure]]
 source = "arrays_and_sections"
 name = "arrays_and_sections"
-source_line = 752
+source_line = 753
 caption = ""
 
 [[figure]]
 source = "breakpoints_and_the_memory_view"
 name = "reverse_array_two_pointer_swap"
-source_line = 826
+source_line = 827
 caption = "Two pointers move inward as the array is reversed in place."
 
 [[figure]]
 source = "functions"
 name = "function_call_and_return"
-source_line = 902
+source_line = 903
 caption = "jal transfers control to the function; ret returns to the saved address."
 
 [[figure]]
 source = "functions_2"
 name = "functions_2"
-source_line = 972
+source_line = 973
 caption = ""
 
 [[figure]]
 source = "the_frame_pointer"
 name = "the_frame_pointer"
-source_line = 1036
+source_line = 1037
 caption = ""
 
 [[figure]]
 source = "the_frame_pointer_2"
 name = "the_frame_pointer_2"
-source_line = 1126
+source_line = 1127
 caption = ""
 
 [[figure]]
 source = "the_frame_pointer_3"
 name = "the_frame_pointer_3"
-source_line = 1192
+source_line = 1193
 caption = ""
 
 [[figure]]
 source = "the_frame_pointer_4"
 name = "the_frame_pointer_4"
-source_line = 1248
+source_line = 1249
 caption = ""
 
 [[figure]]
 source = "bit_representations"
 name = "bit_representations"
-source_line = 1312
+source_line = 1313
 caption = ""
 
 [[figure]]
 source = "an_address_is_also_just_a_number"
 name = "an_address_is_also_just_a_number"
-source_line = 1364
+source_line = 1365
 caption = ""
 
 [[figure]]
 source = "uart"
 name = "uart_mmio_output"
-source_line = 1435
+source_line = 1436
 caption = "sb writes a byte to the UART transmit address, which appears in the console."
 
 [[figure]]
 source = "the_power_off_device"
 name = "i_type_immediate_range"
-source_line = 1695
+source_line = 1696
 caption = "An I-type immediate has 12 signed bits, so 0x3333 must be built in a register."
 
 [[figure]]
 source = "the_linker_script"
 name = "the_linker_script"
-source_line = 1740
+source_line = 1741
 caption = ""
 
 [[figure]]
 source = "the_linker_script_2"
 name = "linker_section_merge"
-source_line = 1773
+source_line = 1774
 caption = "The linker combines matching sections from multiple input files."
 
 [[figure]]
 source = "how_real_is_real_enough"
 name = "riscv_machine_comparison"
-source_line = 1931
+source_line = 1932
 caption = "The project VM, QEMU virt, and QEMU's sifive_u model share RV64 but expose different devices."
 
 [[figure]]
 source = "compilers_and_ir"
 name = "compiler_pipeline"
-source_line = 1967
+source_line = 1968
 caption = "HLL moves through IR and RISC-V assembly before becoming machine code."
 
 [[figure]]
 source = "from_hll_to_an_executable"
 name = "linking_hll_executable"
-source_line = 2002
+source_line = 2007
 caption = "The linker combines the program and its supporting code into one executable ELF."
 
 [[figure]]
 source = "watching_it_run"
 name = "stdlib_execution_path"
-source_line = 2037
+source_line = 2042
 caption = "Instruction stepping follows execution from the standard library into main and back again."
+
+[[figure]]
+source = "exit_function"
+name = "runtime_exit_path"
+source_line = 2075
+caption = "Returning from main flows through the runtime, ecall handler, and SYSCON."
+
+[[figure]]
+source = "why_abstract_it"
+name = "privilege_service_path"
+source_line = 2109
+caption = "U-mode requests kernel service; higher modes control which hardware it can reach."
+
+[[figure]]
+source = "dynamic_memory_allocation"
+name = "heap_allocation_lifetime"
+source_line = 2150
+caption = "After free, a pointer keeps its old address even though that storage may be reused."
+
+[[figure]]
+source = "dynamic_memory_allocation_2"
+name = "heap_fragmentation"
+source_line = 2190
+caption = "Allocations split one free region into gaps that cannot yet be recombined."

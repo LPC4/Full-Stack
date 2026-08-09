@@ -19,6 +19,17 @@ This is written for anyone interested in systems programming. I assume you alrea
 concepts like pointers, but not what lives below that level. After this you'll be able to understand the full stack
 and make your own compiler, virtual machine, and even a small kernel.
 
+This is what we'll be seeing:
+
+| Chapter | What it adds |
+| --- | --- |
+| [CPUs and Assembly](cpus-and-assembly/) | Start at the CPU: registers, memory, instruction encoding, branches, functions, and stack frames. |
+| [Memory Mapped Input / Output](memory-mapped-input-output/) | Reach devices through ordinary memory addresses, print through a UART, and stop the machine with SYSCON. |
+| [The same code on QEMU](the-same-code-on-qemu/) | Move the assembly to another machine by supplying its stack, device protocol, linker layout, and build steps. |
+| [High-Level Languages](high-level-languages/) | Follow HLL through IR and RISC-V assembly into object files, a linked ELF, and the debugger. |
+| [Runtimes](runtimes/) | Trace `_start`, system calls, traps, and privilege levels down to the hardware. |
+| [Standard Library](standard-library/) | Manage dynamic memory and see how reusable library code hides low-level allocation details. |
+
 Let's begin with the basics.
 
 ## CPUs and Assembly
@@ -36,10 +47,6 @@ RISC design.
 
 I chose RISC-V because its instruction formats are much more regular, which makes it simpler to emulate, and because
 I agree with the mindset of keeping the assembly simple.
-
-You can find the RISC-V specifications as used in this project
-[here](repo:crates/asm-to-binary/_RISCV_SPECIFICATIONS.md). It's not necessary to start memorizing them: most of it
-is pretty logical, and it'll come with time. I'm only putting it here in case you don't understand an instruction.
 
 For now, we'll treat the CPU as the simplest machine possible. Real CPUs do all kinds of clever optimisations to run faster,
 but none of that is needed yet. Let's just understand the assembly first.
@@ -83,6 +90,10 @@ instructions can be formed by just using `x0`, so the CPU doesn't need a separat
 is no dedicated `mov` instruction in the hardware, moving a value from one register to another is just adding it to x0.
 We'll see another example of this later.
 
+You can find the RISC-V specifications as used in this project
+[here](repo:crates/asm-to-binary/_RISCV_SPECIFICATIONS.md). It's not necessary to start memorizing them: most of it
+is pretty logical, and it'll come with time. I'm only putting it here in case you don't understand an instruction.
+
 RISC-V gives you 32 of these registers. And you can probably already see the problem: only 32? What if you need
 more? What if you want to store a large string, a very large number, or an array of 50 numbers?
 
@@ -122,7 +133,7 @@ the new and the old `sp` is now yours to use.
 The heap is a contiguous region of memory that you can use however you want, and usually it grows the other way: upwards.
 Every allocation pushes the end of the heap towards higher addresses.
 
-![](figures/the_stack_and_the_heap.svg)
+![The stack at high addresses and the heap growing toward it](figures/the_stack_and_the_heap.svg)
 
 You can probably see the danger: if the stack uses more memory than was reserved for it, that is a *stack overflow*.
 In this simple layout, the stack and heap might meet and start overwriting each other.
@@ -153,21 +164,21 @@ instructions, and where it reads them from. Everything is stored in memory: inst
 continuously fetches new instructions out of RAM. The code is usually placed at the bottom of memory, at the
 low addresses, below the heap. So the full picture of the diagram from earlier looks like this:
 
-![](figures/how_the_cpu_reads_instructions.svg)
+![How the CPU reads instructions](figures/how_the_cpu_reads_instructions.svg)
 
 In RISC-V these instructions are stored as 4-byte codes, with each instruction having its own encoding. For
 the register-to-register instructions we've seen (add, sub, mul, ...), the 32 bits are split up like this:
 
-![](figures/how_the_cpu_reads_instructions_2.svg)
+![The 32 bits of an instruction split into fields](figures/how_the_cpu_reads_instructions_2.svg)
 
 `opcode` selects the instruction family, `rd` is the destination register's number, `rs1` and `rs2` are the
 source registers, and `funct3`/`funct7` pick the exact operation. So `add x1, x2, x3` encodes to:
 
-![](figures/how_the_cpu_reads_instructions_3.svg)
+![The encoding of `add x1, x2, x3`](figures/how_the_cpu_reads_instructions_3.svg)
 
 The fields don't line up with byte boundaries, so regroup those same 32 bits into 4 bytes:
 
-![](figures/how_the_cpu_reads_instructions_4.svg)
+![The same 32 bits regrouped into four bytes](figures/how_the_cpu_reads_instructions_4.svg)
 
 Compare that to x86, where instructions vary from 1 to 15 bytes and there are many different encodings:
 
@@ -198,7 +209,7 @@ Because RISC-V is a *little-endian* architecture, the bytes are ordered in memor
 byte 0 goes at the lowest address, byte 3 at the highest. In a big-endian architecture the bytes would be the
 other way around. So if our `add` is stored at address 00, memory looks like this:
 
-![](figures/endianness.svg)
+![The bytes of an add instruction in memory](figures/endianness.svg)
 
 This is the same reason the number 0x1234 would be stored as 34 12 in memory.
 
@@ -316,7 +327,7 @@ You can write the sections in any order in the source file; here `.data` comes f
 code always ends up first: `.text` is placed at the start, at lower addresses, and `.data` right after it, at
 higher addresses:
 
-![](figures/arrays_and_sections.svg)
+![Program sections laid out in the address space](figures/arrays_and_sections.svg)
 
 This layout isn't fixed though: it's the linker (which we'll see later) that decides where each section ends up, and on other
 systems the sections can be placed differently or moved around. In this project it's always `.text` first and
@@ -462,7 +473,7 @@ That's [`04_functions/max3.s`](repo:programs/lessons/04_functions/max3.s), run c
 `04.2: nested calls`. Its frame looks
 like this on the stack:
 
-![](figures/functions_2.svg)
+![The stack with frames from nested calls](figures/functions_2.svg)
 
 Understanding function frames was one of the hardest things for me personally: I couldn't really visualize
 it properly. So I hope these diagrams made it a bit cleaner. You can also watch it happen live: run
@@ -504,7 +515,7 @@ example:
 	ret
 ```
 
-![](figures/the_frame_pointer.svg)
+![A stack frame addressed from the frame pointer](figures/the_frame_pointer.svg)
 
 Most compilers drop `fp` and track the offsets themselves to be more efficient: no need to burn a register and two
 extra instructions per function keeping it up to date. Our examples from before do the compiler thing, pure `sp` offsets,
@@ -564,7 +575,7 @@ The fourth, at `-32(fp)`, goes unused: `ra`, `fp`, and `n` only need three 8-byt
 so we round up to 32 anyway. It's the same shape as the frame in the example just above, unused slot and all. So the
 whole frame `fact` builds looks like this, with both names for every slot, `fp` offsets on the left and `sp` offsets on the right:
 
-![](figures/the_frame_pointer_2.svg)
+![The `fact` frame with `fp` offsets on the left and `sp` offsets on the right](figures/the_frame_pointer_2.svg)
 
 Next comes the base case, which is the only reason the recursion ever stops:
 
@@ -601,7 +612,7 @@ At its deepest, `fact(5)` walks all the way down, `fact(5)` -> `fact(4)` -> `fac
 `fact(1)`, where `fact(1)` finally hits the base case. Five frames are live at once, each an identical 32-byte
 block, and the stack looks like this:
 
-![](figures/the_frame_pointer_3.svg)
+![Five live `fact` frames on the stack](figures/the_frame_pointer_3.svg)
 
 The innermost `fact(1)` took the base-case branch before storing anything, so its local slot is still
 `(unused)`; every frame above it has its `n` saved and is parked on its `jal`, waiting for the call below to
@@ -633,7 +644,7 @@ run configuration
 you `_start`, `square`, and a `sos` split into four commented steps to fill in, with the frame plan written
 out in the comments above it:
 
-![](figures/the_frame_pointer_4.svg)
+![The planned stack frame for `sos`](figures/the_frame_pointer_4.svg)
 
 Same 32-byte shape as `fact`, except this time there is no unused slot. Write the prologue, the two calls
 with their saves and reloads in between, and the epilogue. If it works, `a0` holds 25 when the program
@@ -666,7 +677,7 @@ What those 64 bits mean is not stored anywhere. Read them as an unsigned integer
 
 Take this bit pattern:
 
-![](figures/bit_representations.svg)
+![The same eight bytes read as string, signed, and unsigned](figures/bit_representations.svg)
 
 All three are correct. Those eight bytes are of a string we're going to print in a moment, but if you load the same
 bits into a floating-point register, a floating-point instruction will happily tell you they're a number with
@@ -693,7 +704,7 @@ straight out of the
 [`bus.rs`](repo:crates/virtual-machine/src/bus.rs#L45) memory map, where every one of these bases is a constant the bus
 uses to decide which device an address belongs to:
 
-![](figures/an_address_is_also_just_a_number.svg)
+![The memory map: RAM, ROM, and devices](figures/an_address_is_also_just_a_number.svg)
 
 Only two of those rows are memory. `ROM` and `RAM` hold bytes. Every other row is a *device*, and it lives in the same
 address space, reachable with the same `ld` and `sd` instructions we've been using all along.
@@ -733,7 +744,7 @@ _start:
 	sb   t1, 0(t0)
 	li   t1, 105         # 'i'
 	sb   t1, 0(t0)
-	li   t1, 10          # '\n'
+	li   t1, 10          # newline character
 	sb   t1, 0(t0)
 done:
 	j    done
@@ -868,8 +879,9 @@ this chapter, I'll just show you how the code we've been running on my emulated 
 
 To demonstrate this we'll be using QEMU. QEMU is an emulator you've probably heard of. Most people use it as something
 that runs Linux on their laptop, but that's only part of what it does. In that mode it emulates a whole PC, but it can
-also emulate a specific board: a CPU wired with a set of devices at specific addresses. And that's exactly the mode we
-want, and it's the same job my VM has been doing the entire time, just written by people who have doing it way longer.
+also emulate a specific board: a CPU wired with a set of devices at specific addresses. And that's
+exactly the mode we want. It is the same job my VM has been doing the entire time, just written by
+people who have been doing it way longer.
 
 The board we'll use is called `virt`. It doesn't correspond to any chip you can buy: it's a board the QEMU authors
 invented, with a RISC-V CPU and a small set of standard devices at fixed addresses. That sounds like cheating,
@@ -961,12 +973,12 @@ and everything interesting happens inside it.
 
 `.` is the *location counter*: the address we're currently placing things at. Setting it to `0x80000000` says "start
 putting things here", and it advances on its own as sections get placed, so we only have to set it once at the top.
-That address isn't a free choice either, it's just where the RAM happens to be. If you put the program anywhere else and it
-might land on a device, or on nothing at all.
+That address isn't a free choice either, it's just where the RAM happens to be. If you put the
+program anywhere else, it might land on a device, or on nothing at all.
 
 Then each line places one section, and the two halves mean different things:
 
-![](figures/the_linker_script.svg)
+![A linker script placing sections](figures/the_linker_script.svg)
 
 So the left of the `:` is the section we're producing, and the braces say what goes into it. Inside, the `*` before
 the bracket is a filename wildcard meaning "every input file we were given". We only have one file here, but a real
@@ -1059,10 +1071,12 @@ at once. Could be a concern on a machine with memory protection, which we don't 
 qemu-system-riscv64 -machine virt -nographic -bios none -kernel hello.elf
 ```
 
-These are QEMU's own options and its [documentation](https://www.qemu.org/docs/master/system/target-riscv.html)
-covers them properly, but `-bios none` is worth knowing here. Normally QEMU boots a small firmware called OpenSBI
-first, which initializes the machine before handing over. `-bios none` throws that away, so our first instruction
-really is the machine's first instruction, exactly as in my VM.
+These are QEMU's own options, and its
+[documentation](https://www.qemu.org/docs/master/system/target-riscv.html) covers them properly.
+But `-bios none` is worth knowing here. Normally QEMU boots a small firmware called OpenSBI before
+handing control to our program. `-bios none` skips that firmware, but QEMU's reset stub still runs
+first and transfers control to our ELF entry point. Our code is the first program that runs, not
+literally the machine's first instruction.
 
 And now we see that the machine prints, powers off and puts us back into the shell with exit code 0. Everything works!
 
@@ -1477,19 +1491,21 @@ If you get stuck, the finished version is
 
 For a quick reminder of the terminology used so far, see the [glossary](../../glossary/).
 
-## Runtimes and Standard Libraries
+## Runtimes
 
-Open the [`08: HLL compiler pipeline`](repo:programs/lessons/08_hll/compiler_pipeline.hll) example again and click debug,
-but instead of pressing run, advance one instruction at a time. The first instruction is not in `main`. You land in
-a file called [`runtime.hll`](repo:crates/os-runtime/stdlib/hosted/runtime.hll). That’s the *runtime*, a small piece of code that wraps your program so it can start and stop
-cleanly without you having to interact with any type of hardware or assembly.
+Open the [`08: HLL compiler pipeline`](repo:programs/lessons/08_hll/compiler_pipeline.hll) example
+again and click debug, but instead of pressing run, advance one instruction at a time. The first
+instruction is not in `main`. You land in a file called
+[`runtime.hll`](repo:crates/os-runtime/stdlib/hosted/runtime.hll). That's the *runtime*, a small piece
+of code that wraps your program so it can start and stop cleanly without you having to interact with
+any type of hardware or assembly.
 
-Let’s go over it.
+Let's go over it.
 
 ### Entry stub
 
 The label at the very top of the runtime is `_start`. This is the true entry point recorded in the ELF. The loader
-jumps here at execution, not to `main`. Here’s what `_start` looks like:
+jumps here at execution, not to `main`. Here's what `_start` looks like:
 
 ```hll
 external main: () -> i32
@@ -1501,16 +1517,17 @@ export _start: () {
 }
 ```
 
-`external main` tells the compiler that somebody else will provide `main`. That somebody else is you! The runtime calls 
+`external main` tells the compiler that somebody else will provide `main`. That somebody else is you! The runtime calls
 `main`, captures whatever it returns into `code`, and then calls `sys.exit(code)`.
 
-Step forward once. You’ll see the machine jump into the small `main` function that does 1 + 1 and returns 2. Step through that
-and you’re back in `_start`, about to call `sys.exit`. That's all the runtime is: it gives `main` a clean stage
-to run on and makes sure the machine stops when it’s done.
+Continue stepping until `jal ra, main` is next. Step once more and the machine jumps into the small
+`main` function that does 1 + 1 and returns 2. Step through it and you're back in `_start`, about to
+call `sys.exit`. That's all the runtime is: it gives `main` a clean stage to run on and makes sure
+the machine stops when it's done.
 
 ### Exit function
 
-Step into `sys.exit`. You’ll find a small assembly wrapper in the standard library:
+Step into `sys.exit`. You'll find a small assembly wrapper in the standard library:
 
 ```hll
 export sys_exit: (code: i64) {
@@ -1524,22 +1541,24 @@ export sys_exit: (code: i64) {
 }
 ```
 
-The exit code is stored in a global variable `_a0`. Inline assembly loads it into register `a0`, puts the number 93 
-into `a7`, and then executes an instruction we haven’t seen before: `ecall`.
+The exit code is stored in a global variable `_a0`. Inline assembly loads it into register `a0`, puts the number 93
+into `a7`, and then executes an instruction we haven't seen before: `ecall`.
 
-`ecall` is short for *environment call*. Think of it like a `jal` where you don’t know the destination. Instead of jumping 
-to a label in your own code, the CPU pauses your program and hands control to a special handler that the machine 
-prepared ahead of time. The number in `a7` tells that handler which service you want, in this case it's exiting with a 
+`ecall` is short for *environment call*. Think of it like a `jal` where you don't know the destination. Instead of jumping
+to a label in your own code, the CPU pauses your program and hands control to a special handler that the machine
+prepared ahead of time. The number in `a7` tells that handler which service you want, in this case it's exiting with a
 specific code.
 
-In our hosted setup, that handler lives in ROM and only knows a few basic services. Syscall 93 means "exit". 
-When the `ecall` fires, the handler reads the exit code and writes it to the SYSCON device, shutting the machine off 
-exactly like the `exit` function we wrote by hand in the assembly chapter. The difference is that we never had to know 
+In our hosted setup, that handler lives in ROM and only knows a few basic services. Syscall 93 means "exit".
+When the `ecall` fires, the handler reads the exit code and writes it to the SYSCON device, shutting the machine off
+exactly like the `exit` function we wrote by hand in the assembly chapter. The difference is that we never had to know
 the SYSCON address: the standard library and the ROM handler hide that from us.
+
+![Returning from main flows through the runtime, ecall handler, and SYSCON.](figures/runtime_exit_path.svg)
 
 ### The handler is just code
 
-The handler isn't a CPU feature, or some piece of silicon that "knows" what syscall 93 means. `ecall` only does one 
+The handler isn't a CPU feature, or some piece of silicon that "knows" what syscall 93 means. `ecall` only does one
 thing, it's a trap. It stops your program, saves enough state to
 resume later, and jumps to one fixed address that was set up ahead of time. What happens at that address is just
 normal assembly code, written by whoever built the machine. Here's the relevant part of our
@@ -1547,7 +1566,7 @@ normal assembly code, written by whoever built the machine. Here's the relevant 
 
 ```asm
 _m_trap:
-	csrr t0, mcause             # why did we trap? there's more than one reason, we'll see this next chapter
+	csrr t0, mcause             # trap cause; we'll revisit the others in the kernel chapter
 	li t1, 8
 	beq t0, t1, _dispatch_ecall
 	li t1, 9
@@ -1579,9 +1598,10 @@ _advance_mepc_and_mret:
 	mret                        # resume program
 ```
 
-The first three comparisons check `mcause` (more on what that means next chapter). Once the handler knows it's actually 
-looking at an environment call, it compares `a7` against each syscall number and branches to whichever one matches, 
-exactly the same `if`/`match` chain you'd write in HLL. `sys_exit` rebuilds `0x1001_0000` in a register, writes the exit code
+The first three comparisons check `mcause` (we'll return to it in the kernel chapter). Once the
+handler knows it's actually looking at an environment call, it compares `a7` against each syscall
+number and branches to whichever one matches, exactly the same `if`/`match` chain you'd write in
+HLL. `sys_exit` rebuilds `0x1001_0000` in a register, writes the exit code
 from `a0` to that SYSCON address, and then bumps `mepc` past the `ecall` so that `mret` would resume at the next
 instruction, if the machine were still running by that point.
 
@@ -1596,12 +1616,12 @@ after is decided by whoever creates the system.
 
 ### Why abstract it?
 
-You might wonder: if we can just write to `0x10010000` and stop the machine, why not do that directly in HLL? 
+You might wonder: if we can just write to `0x10010000` and stop the machine, why not do that directly in HLL?
 The answer is *protection*.
 
-Right now, every program we write runs in the most privileged mode the CPU offers (M-mode). Any instruction can 
-touch any memory address, including the devices. That’s fine when you’re the only program on the machine. But a 
-real computer runs many programs at once. If one of them could write to the power-off device, it could kill every 
+Right now, every program we write runs in the most privileged mode the CPU offers (M-mode). Any instruction can
+touch any memory address, including the devices. That's fine when you're the only program on the machine. But a
+real computer runs many programs at once. If one of them could write to the power-off device, it could kill every
 other program instantly. If it could read the keyboard buffer directly, it could steal your passwords.
 
 To stop that, CPUs have *privilege modes*: a small set of rings that decide what code is allowed to do:
@@ -1609,27 +1629,26 @@ To stop that, CPUs have *privilege modes*: a small set of rings that decide what
 | Mode | What runs there | What it can touch                             |
 |------|-----------------|-----------------------------------------------|
 | M-mode (machine) | Firmware, early boot code | Everything, all memory, all devices           |
-| S-mode (supervisor) | The operating‑system kernel | Memory and devices the firmware allows        |
+| S-mode (supervisor) | The operating-system kernel | Memory and devices the firmware allows        |
 | U-mode (user) | Ordinary programs | Only what the kernel explicitly maps for them |
 
-Our earlier assembly programs ran in M‑mode because there was nothing beneath them. The hosted examples in this chapter 
-also run in M‑mode, but they use `ecall` to ask the ROM handler to do privileged things like shutting down. This isn’t 
-true protection, though, the program could still reach SYSCON if it really wanted to, but it’s the same pattern a 
-protected system uses. When we boot our kernel later, programs will run in U‑mode. An `ecall` from there will trap into 
-the S‑mode kernel handler, which checks whether the request is allowed before touching any hardware (or maybe doing another 
-`ecall` into the M-mode handler if needed). That’s how a machine stays stable and doesn't just hard-crash when a program 
+![U-mode requests kernel service; higher modes control which hardware it can reach.](figures/privilege_service_path.svg)
+
+Our earlier assembly programs ran in M-mode because there was nothing beneath them. The hosted examples in this chapter
+also run in M-mode, but they use `ecall` to ask the ROM handler to do privileged things like shutting down. This isn't
+true protection, though, the program could still reach SYSCON if it really wanted to, but it's the same pattern a
+protected system uses. When we boot our kernel later, programs will run in U-mode. An `ecall` from there will trap into
+the S-mode kernel handler, which checks whether the request is allowed before touching any hardware (or maybe doing another
+`ecall` into the M-mode handler if needed). That's how a machine stays stable and doesn't just hard-crash when a program
 tries to do something it's not supposed to.
 
-And the hardware does enforce this. If a U-mode program tries to use a `j` to jump to M-mode code, or tries to write 
-to a protected memory address, the CPU hardware blocks it and throws an error. `ecall` is the only way to jump upward 
+And the hardware does enforce this. If a U-mode program tries to use a `j` to jump to M-mode code, or tries to write
+to a protected memory address, the CPU hardware blocks it and throws an error. `ecall` is the only way to jump upward
 in privilege.
 
-The important take‑away is: `ecall` is a protected jump to code that runs at a higher privilege level. 
-It might lead to the ROM (hosted mode) or to the kernel (OS mode), but from the program’s point of view it’s the same 
+The important take-away is: `ecall` is a protected jump to code that runs at a higher privilege level.
+It might lead to the ROM (hosted mode) or to the kernel (OS mode), but from the program's point of view it's the same
 instruction.
-
-(There’s a standard called SBI that defines the calls between a kernel and M‑mode firmware, but we don’t need it yet. 
-When we write the kernel, we’ll use SBI to shut down the machine, start other CPU cores, and set timers.)
 
 ### Watch it happen
 
@@ -1648,7 +1667,7 @@ main: () -> i32 {
 Now, let's follow the whole path in the debugger. Click Debug, and choose `instr` as the step unit:
 
 1. Step through `_start`, into `main`, and back to `_start`. (Here you can view how the stdlib dispatches println)
-2. Step into `sys.exit`.  In the disassembly view, watch its inline assembly load the return value into `a0` and the
+2. Step into `sys.exit`. In the disassembly view, watch its inline assembly load the return value into `a0` and the
    syscall number `93` into `a7`.
 3. Step into the `ecall`. Instead of halting immediately, the CPU jumps to the ROM handler.
 4. Continue stepping through the ROM until you reach the final two instructions:
@@ -1658,15 +1677,15 @@ Now, let's follow the whole path in the debugger. Click Debug, and choose `instr
 00000188  sd   a0, 0(t0)
 ```
 
-The instructions before these are part of the privilege machinery. We will come back to permission checking later. 
-For now, the important instruction is the `lui`: it builds the SYSCON address `0x1001_0000` in `t0`. The `sd` then 
+The instructions before these are part of the privilege machinery. We will come back to permission checking later.
+For now, the important instruction is the `lui`: it builds the SYSCON address `0x1001_0000` in `t0`. The `sd` then
 writes the exit code from `a0` to that address, and the machine halts.
 
 You have now followed the entire program: HLL code, the runtime that calls it, the standard
 library wrapper, the `ecall`, and the ROM handler that talks to the hardware.
 
-Assembly gives you total control, but it also makes you manage every address and convention by hand. The runtime and standard 
-library collect the work shared by every program, starting, stopping, and talking to hardware, behind a couple of HLL 
+Assembly gives you total control, but it also makes you manage every address and convention by hand. The runtime and standard
+library collect the work shared by every program, starting, stopping, and talking to hardware, behind a couple of HLL
 functions. The lower layers remain available in the debugger, but from here on we can stay in HLL unless we
 choose to look beneath them.
 
@@ -1676,13 +1695,9 @@ Every language ends up needing the same handful of things: printing, reading inp
 memory. Rewriting all of that for every single program would be pointless, so most languages ship it prebuilt as
 a standard library. HLL does so too, this chapter goes over some of the most useful pieces of mine.
 
-The library lives under [crates/os-runtime/stdlib](repo:crates/os-runtime/stdlib/hosted/runtime.hll), split into
-modules per target: `hosted` for the examples in this chapter, `free` for bare-metal programs, and `kernel` for
-the OS we'll write later. You've already met two of its modules: [runtime.hll](repo:crates/os-runtime/stdlib/hosted/runtime.hll)
-wraps `main`, and [console.hll](repo:crates/os-runtime/stdlib/hosted/console.hll) is where `print_int` and friends
-live. Now we'll look at memory.
-
-We'll start with the heap.
+The library lives under [crates/os-runtime/stdlib](repo:crates/os-runtime/stdlib/hosted/runtime.hll). You've already
+seen two of its modules: [runtime.hll](repo:crates/os-runtime/stdlib/hosted/runtime.hll) wraps `main`, and [console.hll](repo:crates/os-runtime/stdlib/hosted/console.hll)
+is where the print functions live. First we'll look at memory.
 
 ### Dynamic memory allocation
 
@@ -1692,30 +1707,34 @@ size at runtime instead of at compile time.
 
 For example, a dynamic array needs to grow whenever it becomes full. A function's stack frame
 has a fixed size, and is freed when the function returns, so someone outside the function can't
-use the stack-allocated memory. A heap allocation remains valid until the program explicitly frees it,
-which makes it possible for another function to use it too.
+use the stack-allocated memory. A heap allocation remains valid until the program explicitly
+frees it, which makes it possible for another function to use it too.
 
-The complete example is [lesson 10](repo:programs/lessons/10_stdlib/build_sequence.hll), run configuration
-`10: heap and the standard library`. It allocates an array on the heap in one function, reads it back from
-`main`, and gives it back with `defer` when `main` exits. The example:
+The complete example is [lesson 10](repo:programs/lessons/10_stdlib/build_sequence.hll), run
+configuration `10: dynamic memory allocation`. It allocates an array in one function, returns it
+to `main`, and frees it when `main` exits:
 
 ```hll,runnable registers=false
 console := import("console")
+memory := import("memory_allocator")
 
-; Creates a dynamic array on the heap and returns it.
-build_sequence: (size: i64) -> i32* {
-	seq: i32* = new(i32, size)
-	i: i64 = 0
+build_sequence: (size: u64) -> i32* {
+	bytes: u64 = size * size_of<i32>()
+	seq: i32* = memory.malloc(bytes) as i32*
+	if seq == null { return null }
+
+	i: u64 = 0
 	while i < size {
 		seq[i] = ((i + 1) * 10) as i32
-		i = i + 1
+		i += 1
 	}
 	return seq
 }
 
 main: () -> i32 {
 	my_data: i32* = build_sequence(5)
-	defer free(my_data)
+	if my_data == null { return 1 }
+	defer memory.free(my_data as u8*)
 
 	; The array still lives after build_sequence returned.
 	total: i32 = my_data[0] + my_data[1] + my_data[2] + my_data[3] + my_data[4]
@@ -1724,29 +1743,167 @@ main: () -> i32 {
 }
 ```
 
-In `build_sequence` we're setting up an array on the heap. `new` allocates memory: the standard library finds an
-open spot on the heap for you and returns a pointer to it. Under the hood it's a wrapper for `malloc`, which we'll
-get to in a moment.
+`malloc` takes a size in bytes, so `build_sequence` multiplies the number of elements by
+`size_of<i32>()` (= 4). It returns a raw byte pointer, which we cast to `i32*` before treating the memory
+as an array. It can also return `null`, so we check that before using the pointer.
 
-`new` allocates only `n * sizeof(type)` bytes, so if you accidentally access memory outside that range, you get
-undefined behavior. It's called undefined because you don't know what'll actually be there: you could be
-overwriting another allocation sitting right next to yours, writing into a device, overwriting another program, or
-you could get lucky and have it run perfectly fine anyway. The point is that with raw pointers you have to be careful
-and stay in bounds.
+`new(i32, size)` is the shorter version of the same thing. It calculates the byte count,
+calls `malloc`, clears the allocated bytes to zero, and returns an `i32*`. Here we call `malloc`
+directly so you can see those steps yourself.
 
-This is also why returning a pointer to a stack-allocated array would've been a bug in build_sequence.
-You allocate it on the function stack frame, free the frame and then return the pointer to the freed memory.
-Then, once you go into a new function, its stack frame will overwrite the old one, overwriting the array data,
-and you'll get a garbage pointer.
+Both only allocate the bytes you ask for, so if you accidentally access memory outside that range,
+you get undefined behavior. It's called undefined because you don't know what'll actually be there:
+you could be overwriting another allocation sitting right next to yours, writing into a device,
+overwriting another program, or you could get lucky and have it run perfectly fine anyway. The
+point is that with raw pointers you have to be careful and stay in bounds.
 
-With the pointer from new, we build the array `[10, 20, 30, 40, 50]` and hand it back to main. From there,
-`defer free(my_data)` says: right before main returns, run free(my_data) and give that memory back so it can
-be reused. You could just call `free(my_data)` directly at the end of main instead, but defer is cleaner,
-especially when a function has more than one return point.
+This is also why returning a pointer to a stack-allocated array would've been a bug in
+`build_sequence`. You allocate it on the function's stack frame, free the frame, and then return
+the pointer to the freed memory. Then, once you go into a new function, its stack frame will
+overwrite the old one, overwriting the array data, and you'll get a dangling pointer.
 
-You don't strictly have to free memory before your program exits either, the operating system reclaims
-everything a process was using the moment it exits. But it's still good practice to always free what you allocate: it
-makes your intent explicit, and it's the only option once your program runs for longer than a single `main` call and needs
-that memory back while it's still alive.
+![A pointer keeps its address after its block is freed.](figures/heap_allocation_lifetime.svg)
 
-Next we'll look at the allocator itself to see how it decides where a new allocation actually lands.
+With the pointer from `malloc`, we build the array `[10, 20, 30, 40, 50]` and hand it back to
+`main`. From there, `defer memory.free(my_data as u8*)` says: right before `main` returns, run
+`memory.free(my_data as u8*)` and give that memory back so it can be reused. You could just call
+`memory.free` directly at the end of `main` instead, but `defer` is cleaner, especially when a
+function has more than one return point.
+
+In a normal operating-system process, you don't strictly have to free memory immediately before
+exiting because the OS reclaims the process's entire address space. In this hosted lesson, the whole
+VM stops, so its memory disappears too. But it's still good practice to free what you allocate: it
+makes your intent explicit, and it's the only option when a long-running program needs that memory
+back while it is still alive.
+
+Next we'll look inside the allocator to see how it decides where a new allocation actually lands.
+
+### Malloc
+
+Alright, so how does `malloc` manage the heap behind its simple interface?
+
+We split the heap into blocks. Each block describes one allocation: where it starts, how large it
+is, and whether it's currently free. The allocator keeps track of those blocks, searches them for
+enough free space, and grows the heap when it can't reuse an existing one.
+
+The actual allocator has a lot of tiny details that would distract from the basic idea, so we'll use a
+smaller version to see how the internals work. You can open the example malloc at
+[`10_stdlib/simple_malloc.hll`](repo:programs/lessons/10_stdlib/simple_malloc.hll) with run
+configuration `10: debug a small allocator`.
+
+We'll start with the constants and the information stored for each block:
+
+```hll
+const HEAP_SIZE = 256
+const MAX_BLOCKS = 8
+const ALIGNMENT = 8
+
+struct LessonBlock {
+	ptr: u8*,
+	size: u64,
+	is_free: bool,
+}
+```
+
+`HEAP_SIZE` gives us 256 bytes of pretend heap space, and `MAX_BLOCKS` means we can keep track of
+up to eight allocations. `ALIGNMENT` makes every block start on an 8-byte boundary. The
+`LessonBlock` struct is the allocator's record of an allocation: its address, size, and whether it
+can be reused.
+
+Next come the heap itself and the tracking variables:
+
+```hll
+heap: u8[HEAP_SIZE] = []
+blocks: LessonBlock[MAX_BLOCKS] = []
+block_count: u64 = 0
+heap_used: u64 = 0
+```
+
+Here, `heap` is just a byte array. A real allocator gets its heap memory from the runtime or the
+operating system, but a fixed array keeps this example small. `blocks` stores the records we just
+defined, `block_count` tells us how many records are in use, and `heap_used` points to the first
+unused byte at the end of the heap.
+
+Now we can start `simple_malloc`. Before growing the heap, it searches the block list for memory
+that was freed earlier:
+
+```hll
+simple_malloc: (size: u64) -> u8* {
+	if size == 0 { return null }
+
+	i: u64 = 0
+	while i < block_count {
+		if blocks[i].is_free and blocks[i].size >= size {
+			blocks[i].is_free = false
+			return blocks[i].ptr
+		}
+		i += 1
+	}
+```
+
+We search through the entire list until we find a free block that's big enough. Then we mark it as
+taken and return its address. That's basically it. This is called a *first-fit* search because we
+reuse the first suitable block we find.
+
+If none of the old blocks can be reused, we take more space from the unused end of the heap:
+
+```hll
+	if block_count == MAX_BLOCKS { return null }
+	if size + ALIGNMENT - 1 < size { return null }
+	aligned_size: u64 = ((size + ALIGNMENT - 1) / ALIGNMENT) * ALIGNMENT
+	if aligned_size > HEAP_SIZE - heap_used { return null }
+
+	ptr: u8* = &heap[heap_used]
+	blocks[block_count] = {
+		.ptr = ptr,
+		.size = aligned_size,
+		.is_free = false,
+	}
+	block_count += 1
+	heap_used += aligned_size
+	return ptr
+}
+```
+
+First, we make sure there's room for another block record. The second check catches an integer
+overflow before the size is rounded up to the next multiple of eight. We then check whether that
+aligned block still fits in the heap.
+
+If it fits, `&heap[heap_used]` is the address of the new block. We save its details, then move
+`heap_used` forward so the next new block starts after it. Notice that the allocator returns a
+pointer into `heap`; it doesn't copy or move any of the values stored there.
+
+Freeing memory is the reverse:
+
+```hll
+simple_free: (ptr: u8*) {
+	i: u64 = 0
+	while i < block_count {
+		if blocks[i].ptr == ptr {
+			blocks[i].is_free = true
+			return
+		}
+		i += 1
+	}
+}
+```
+
+Real allocators are more complex than this simple implementation. Different allocations split one
+large region of memory into smaller blocks. When some of them are freed, the allocator can't always
+combine that space into one large block again because one or more blocks between them are still in
+use. So even if there's enough free memory in total, it might be spread across gaps that are all too
+small for the next allocation. This is called *fragmentation*. Real allocators use all kinds of
+clever tricks to work around it and avoid wasting those gaps. You can see how this can get really
+complex.
+
+![Allocations split one free region into gaps that cannot yet be recombined.](figures/heap_fragmentation.svg)
+
+I won't be diving into the different allocation methods in this guide. I just want you to
+understand the concept: keep track of which parts of the heap are in use, reuse freed blocks when
+possible, and grow the heap when necessary. There are loads of ways to actually implement it.
+
+You can find this project's actual allocator in
+[`memory_allocator.hll`](repo:crates/os-runtime/stdlib/core/memory_allocator.hll). It uses a linked
+list instead of the fixed `blocks` array, but the basic search and reuse are the same, and it also
+reuses each block whole. You can open either lesson in the debugger and step from the program into
+the standard library if you want to see the real path for yourself.

@@ -1,0 +1,8 @@
+name = "simple_malloc"
+title = "10: debug a small allocator"
+root = "simple_malloc.hll"
+target = "hosted"
+entry = "_start"
+stdlib = "hosted"
+import_closure = true
+mangle_symbols = false

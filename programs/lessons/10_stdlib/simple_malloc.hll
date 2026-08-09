@@ -1,0 +1,75 @@
+console := import("console")
+
+const HEAP_SIZE = 256
+const MAX_BLOCKS = 8
+const ALIGNMENT = 8
+
+struct LessonBlock {
+	ptr: u8*,
+	size: u64,
+	is_free: bool,
+}
+
+heap: u8[HEAP_SIZE] = []
+blocks: LessonBlock[MAX_BLOCKS] = []
+block_count: u64 = 0
+heap_used: u64 = 0
+
+simple_malloc: (size: u64) -> u8* {
+	if size == 0 { return null }
+
+	i: u64 = 0
+	while i < block_count {
+		if blocks[i].is_free and blocks[i].size >= size {
+			blocks[i].is_free = false
+			return blocks[i].ptr
+		}
+		i += 1
+	}
+
+	if block_count == MAX_BLOCKS { return null }
+	if size + ALIGNMENT - 1 < size { return null }
+	aligned_size: u64 = ((size + ALIGNMENT - 1) / ALIGNMENT) * ALIGNMENT
+	if aligned_size > HEAP_SIZE - heap_used { return null }
+
+	ptr: u8* = &heap[heap_used]
+	blocks[block_count] = {
+		.ptr = ptr,
+		.size = aligned_size,
+		.is_free = false,
+	}
+	block_count += 1
+	heap_used += aligned_size
+	return ptr
+}
+
+simple_free: (ptr: u8*) {
+	i: u64 = 0
+	while i < block_count {
+		if blocks[i].ptr == ptr {
+			blocks[i].is_free = true
+			return
+		}
+		i += 1
+	}
+}
+
+main: () -> i32 {
+	first: i32* = simple_malloc(2 * size_of<i32>()) as i32*
+	second: i32* = simple_malloc(size_of<i32>()) as i32*
+	if first == null or second == null { return 1 }
+
+	first[0] = 12
+	first[1] = 30
+	second[0] = 8
+	console.print_int(first[0] + first[1] + second[0])  ; 50
+	console.println("")
+
+	simple_free(first as u8*)
+	reused: i32* = simple_malloc(size_of<i32>()) as i32*
+	if reused as u64 != first as u64 { return 2 }
+	reused[0] = 99
+	console.print_int(reused[0])  ; 99
+	console.println("")
+	return 0
+}

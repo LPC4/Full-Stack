@@ -172,32 +172,32 @@ title = "Exercise"
 
 [[page]]
 kind = "chapter"
-slug = "runtimes-and-standard-libraries"
-title = "Runtimes and Standard Libraries"
+slug = "runtimes"
+title = "Runtimes"
 
 [[page]]
 kind = "section"
-slug = "runtimes-and-standard-libraries/entry-stub"
+slug = "runtimes/entry-stub"
 title = "Entry stub"
 
 [[page]]
 kind = "section"
-slug = "runtimes-and-standard-libraries/exit-function"
+slug = "runtimes/exit-function"
 title = "Exit function"
 
 [[page]]
 kind = "section"
-slug = "runtimes-and-standard-libraries/the-handler-is-just-code"
+slug = "runtimes/the-handler-is-just-code"
 title = "The handler is just code"
 
 [[page]]
 kind = "section"
-slug = "runtimes-and-standard-libraries/why-abstract-it"
+slug = "runtimes/why-abstract-it"
 title = "Why abstract it?"
 
 [[page]]
 kind = "section"
-slug = "runtimes-and-standard-libraries/watch-it-happen"
+slug = "runtimes/watch-it-happen"
 title = "Watch it happen"
 
 [[page]]
@@ -209,6 +209,11 @@ title = "Standard Library"
 kind = "section"
 slug = "standard-library/dynamic-memory-allocation"
 title = "Dynamic memory allocation"
+
+[[page]]
+kind = "section"
+slug = "standard-library/malloc"
+title = "Malloc"
 
 [[page]]
 kind = "chapter"

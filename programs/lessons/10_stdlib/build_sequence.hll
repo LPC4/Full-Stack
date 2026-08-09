@@ -1,19 +1,23 @@
 console := import("console")
+memory := import("memory_allocator")
 
-; Creates a dynamic array on the heap and returns it.
-build_sequence: (size: i64) -> i32* {
-	seq: i32* = new(i32, size)
-	i: i64 = 0
+build_sequence: (size: u64) -> i32* {
+	bytes: u64 = size * size_of<i32>()
+	seq: i32* = memory.malloc(bytes) as i32*
+	if seq == null { return null }
+
+	i: u64 = 0
 	while i < size {
 		seq[i] = ((i + 1) * 10) as i32
-		i = i + 1
+		i += 1
 	}
 	return seq
 }
 
 main: () -> i32 {
 	my_data: i32* = build_sequence(5)
-	defer free(my_data)
+	if my_data == null { return 1 }
+	defer memory.free(my_data as u8*)
 
 	; The array still lives after build_sequence returned.
 	total: i32 = my_data[0] + my_data[1] + my_data[2] + my_data[3] + my_data[4]
