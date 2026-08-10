@@ -8,7 +8,17 @@ _a1: u64 = 0
 _a2: u64 = 0
 _a3: u64 = 0
 _a4: u64 = 0
+_a5: u64 = 0
 _ret: i64 = 0
+
+struct ExecRequest {
+	path_ptr: u8*,
+	path_len: u64,
+	arg_ptr: u8*,
+	arg_len: u64,
+	out_fd: i64,
+	in_fd: i64,
+}
 
 export sys_readchar: () -> i64 {
 	asm {
@@ -37,14 +47,17 @@ export sys_exit: (code: i64) {
 	}
 }
 
-export sys_open: (path: u8*, flags: u64) -> i64 {
-	_a0 = path as u64
-	_a1 = flags
+export sys_open: (path: u8[], flags: u64) -> i64 {
+	_a0 = path.ptr as u64
+	_a1 = path.len
+	_a2 = flags
 	asm {
 		la t0, _a0
 		ld a0, 0(t0)
 		la t0, _a1
 		ld a1, 0(t0)
+		la t0, _a2
+		ld a2, 0(t0)
 		li a7, 56
 		ecall
 		la t0, _ret
@@ -139,11 +152,14 @@ export sys_lseek: (fd: i64, offset: i64, whence: u64) -> i64 {
 	return _ret
 }
 
-export sys_stat: (path: u8*) -> i64 {
-	_a0 = path as u64
+export sys_stat: (path: u8[]) -> i64 {
+	_a0 = path.ptr as u64
+	_a1 = path.len
 	asm {
 		la t0, _a0
 		ld a0, 0(t0)
+		la t0, _a1
+		ld a1, 0(t0)
 		li a7, 102
 		ecall
 		la t0, _ret
@@ -152,51 +168,12 @@ export sys_stat: (path: u8*) -> i64 {
 	return _ret
 }
 
-export sys_readdir: (path: u8*, index: u64, name_buf: u8*) -> i64 {
-	_a0 = path as u64
-	_a1 = index
-	_a2 = name_buf as u64
-	asm {
-		la t0, _a0
-		ld a0, 0(t0)
-		la t0, _a1
-		ld a1, 0(t0)
-		la t0, _a2
-		ld a2, 0(t0)
-		li a7, 101
-		ecall
-		la t0, _ret
-		sd a0, 0(t0)
-	}
-	return _ret
-}
-
-export sys_exec_arg: (path: u8*, arg: u8*) -> i64 {
-	_a0 = path as u64
-	_a1 = arg as u64
-	asm {
-		la t0, _a0
-		ld a0, 0(t0)
-		la t0, _a1
-		ld a1, 0(t0)
-		li a7, 103
-		ecall
-		la t0, _ret
-		sd a0, 0(t0)
-	}
-	return _ret
-}
-
-export sys_exec: (path: u8*) -> i64 {
-	return sys_exec_arg(path, 0 as u8*)
-}
-
-export sys_exec_redir: (path: u8*, arg: u8*, out_path: u8*, in_path: u8*, out_append: u64) -> i64 {
-	_a0 = path as u64
-	_a1 = arg as u64
-	_a2 = out_path as u64
-	_a3 = in_path as u64
-	_a4 = out_append
+export sys_readdir: (path: u8[], index: u64, name_buf: u8[]) -> i64 {
+	_a0 = path.ptr as u64
+	_a1 = path.len
+	_a2 = index
+	_a3 = name_buf.ptr as u64
+	_a4 = name_buf.len
 	asm {
 		la t0, _a0
 		ld a0, 0(t0)
@@ -208,6 +185,54 @@ export sys_exec_redir: (path: u8*, arg: u8*, out_path: u8*, in_path: u8*, out_ap
 		ld a3, 0(t0)
 		la t0, _a4
 		ld a4, 0(t0)
+		li a7, 101
+		ecall
+		la t0, _ret
+		sd a0, 0(t0)
+	}
+	return _ret
+}
+
+export sys_exec_arg: (path: u8[], arg: u8[]) -> i64 {
+	_a0 = path.ptr as u64
+	_a1 = path.len
+	_a2 = arg.ptr as u64
+	_a3 = arg.len
+	asm {
+		la t0, _a0
+		ld a0, 0(t0)
+		la t0, _a1
+		ld a1, 0(t0)
+		la t0, _a2
+		ld a2, 0(t0)
+		la t0, _a3
+		ld a3, 0(t0)
+		li a7, 103
+		ecall
+		la t0, _ret
+		sd a0, 0(t0)
+	}
+	return _ret
+}
+
+export sys_exec: (path: u8[]) -> i64 {
+	empty: u8[1] = []
+	return sys_exec_arg(path, empty[0..0])
+}
+
+export sys_exec_redir: (path: u8[], arg: u8[], out_fd: i64, in_fd: i64) -> i64 {
+	request: ExecRequest = ExecRequest {
+		.path_ptr = path.ptr,
+		.path_len = path.len,
+		.arg_ptr = arg.ptr,
+		.arg_len = arg.len,
+		.out_fd = out_fd,
+		.in_fd = in_fd,
+	}
+	_a0 = (&request) as u64
+	asm {
+		la t0, _a0
+		ld a0, 0(t0)
 		li a7, 110
 		ecall
 		la t0, _ret
@@ -216,11 +241,14 @@ export sys_exec_redir: (path: u8*, arg: u8*, out_path: u8*, in_path: u8*, out_ap
 	return _ret
 }
 
-export sys_mkdir: (path: u8*) -> i64 {
-	_a0 = path as u64
+export sys_mkdir: (path: u8[]) -> i64 {
+	_a0 = path.ptr as u64
+	_a1 = path.len
 	asm {
 		la t0, _a0
 		ld a0, 0(t0)
+		la t0, _a1
+		ld a1, 0(t0)
 		li a7, 83
 		ecall
 		la t0, _ret
@@ -229,14 +257,20 @@ export sys_mkdir: (path: u8*) -> i64 {
 	return _ret
 }
 
-export sys_rename: (old_path: u8*, new_path: u8*) -> i64 {
-	_a0 = old_path as u64
-	_a1 = new_path as u64
+export sys_rename: (old_path: u8[], new_path: u8[]) -> i64 {
+	_a0 = old_path.ptr as u64
+	_a1 = old_path.len
+	_a2 = new_path.ptr as u64
+	_a3 = new_path.len
 	asm {
 		la t0, _a0
 		ld a0, 0(t0)
 		la t0, _a1
 		ld a1, 0(t0)
+		la t0, _a2
+		ld a2, 0(t0)
+		la t0, _a3
+		ld a3, 0(t0)
 		li a7, 82
 		ecall
 		la t0, _ret
@@ -245,11 +279,14 @@ export sys_rename: (old_path: u8*, new_path: u8*) -> i64 {
 	return _ret
 }
 
-export sys_unlink: (path: u8*) -> i64 {
-	_a0 = path as u64
+export sys_unlink: (path: u8[]) -> i64 {
+	_a0 = path.ptr as u64
+	_a1 = path.len
 	asm {
 		la t0, _a0
 		ld a0, 0(t0)
+		la t0, _a1
+		ld a1, 0(t0)
 		li a7, 105
 		ecall
 		la t0, _ret
@@ -258,11 +295,14 @@ export sys_unlink: (path: u8*) -> i64 {
 	return _ret
 }
 
-export sys_rmdir: (path: u8*) -> i64 {
-	_a0 = path as u64
+export sys_rmdir: (path: u8[]) -> i64 {
+	_a0 = path.ptr as u64
+	_a1 = path.len
 	asm {
 		la t0, _a0
 		ld a0, 0(t0)
+		la t0, _a1
+		ld a1, 0(t0)
 		li a7, 106
 		ecall
 		la t0, _ret
@@ -358,7 +398,7 @@ export sys_kill: (pid: i64, sig: i64) -> i64 {
 export sc_readchar: () -> i64 { return sys_readchar() }
 export sc_yield: () { sys_yield() }
 export sc_exit: (code: i64) { sys_exit(code) }
-export sc_open: (path: u8*, flags: u64) -> i64 { return sys_open(path, flags) }
+export sc_open: (path: u8[], flags: u64) -> i64 { return sys_open(path, flags) }
 export sc_read: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
 	return sys_read(fd, buf, offset, len)
 }
@@ -368,21 +408,21 @@ export sc_ftruncate: (fd: i64, len: u64) -> i64 { return sys_ftruncate(fd, len) 
 export sc_lseek: (fd: i64, offset: i64, whence: u64) -> i64 {
 	return sys_lseek(fd, offset, whence)
 }
-export sc_stat: (path: u8*) -> i64 { return sys_stat(path) }
-export sc_readdir: (path: u8*, index: u64, name_buf: u8*) -> i64 {
+export sc_stat: (path: u8[]) -> i64 { return sys_stat(path) }
+export sc_readdir: (path: u8[], index: u64, name_buf: u8[]) -> i64 {
 	return sys_readdir(path, index, name_buf)
 }
-export sc_exec_arg: (path: u8*, arg: u8*) -> i64 { return sys_exec_arg(path, arg) }
-export sc_exec: (path: u8*) -> i64 { return sys_exec(path) }
-export sc_exec_redir: (path: u8*, arg: u8*, out_path: u8*, in_path: u8*, out_append: u64) -> i64 {
-	return sys_exec_redir(path, arg, out_path, in_path, out_append)
+export sc_exec_arg: (path: u8[], arg: u8[]) -> i64 { return sys_exec_arg(path, arg) }
+export sc_exec: (path: u8[]) -> i64 { return sys_exec(path) }
+export sc_exec_redir: (path: u8[], arg: u8[], out_fd: i64, in_fd: i64) -> i64 {
+	return sys_exec_redir(path, arg, out_fd, in_fd)
 }
-export sc_mkdir: (path: u8*) -> i64 { return sys_mkdir(path) }
-export sc_rename: (old_path: u8*, new_path: u8*) -> i64 {
+export sc_mkdir: (path: u8[]) -> i64 { return sys_mkdir(path) }
+export sc_rename: (old_path: u8[], new_path: u8[]) -> i64 {
 	return sys_rename(old_path, new_path)
 }
-export sc_unlink: (path: u8*) -> i64 { return sys_unlink(path) }
-export sc_rmdir: (path: u8*) -> i64 { return sys_rmdir(path) }
+export sc_unlink: (path: u8[]) -> i64 { return sys_unlink(path) }
+export sc_rmdir: (path: u8[]) -> i64 { return sys_rmdir(path) }
 export sc_pidalive: (pid: u64) -> i64 { return sys_pidalive(pid) }
 export sc_map_fb: () -> u64 { return sys_map_fb() }
 export sc_poll_key: () -> i64 { return sys_poll_key() }

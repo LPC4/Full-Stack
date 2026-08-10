@@ -143,6 +143,43 @@ export vmm_fork_copy: (parent_root: u64, child_root: u64) {
     }
 }
 
+; Validate every page in a user range without allocating page-table levels.
+export vmm_user_range: (root: u64, addr: u64, len: u64, write: i64) -> i64 {
+    if len == 0 {
+        return 1
+    }
+    end: u64 = addr + len
+    if root == 0 || addr == 0 || end <= addr || (addr >> 39) != 0 || ((end - 1) >> 39) != 0 {
+        return 0
+    }
+    page: u64 = (addr / 4096) * 4096
+    while page < end {
+        vpn2: u64 = (page >> 30) & 0x1FF
+        vpn1: u64 = (page >> 21) & 0x1FF
+        vpn0: u64 = (page >> 12) & 0x1FF
+        l2: u64* = root as u64*
+        e2: u64 = l2[vpn2]
+        if (e2 & VMM_V) == 0 || (e2 & (VMM_R + VMM_W + VMM_X)) != 0 {
+            return 0
+        }
+        l1: u64* = ((e2 >> 10) << 12) as u64*
+        e1: u64 = l1[vpn1]
+        if (e1 & VMM_V) == 0 || (e1 & (VMM_R + VMM_W + VMM_X)) != 0 {
+            return 0
+        }
+        l0: u64* = ((e1 >> 10) << 12) as u64*
+        leaf: u64 = l0[vpn0]
+        if (leaf & (VMM_V + VMM_U + VMM_R)) != (VMM_V + VMM_U + VMM_R) {
+            return 0
+        }
+        if write != 0 && (leaf & VMM_W) == 0 {
+            return 0
+        }
+        page = page + 4096
+    }
+    return 1
+}
+
 ; Switch the active address space: point satp at `root_pa` and flush the TLB.
 ; Also tracks it as the active root for subsequent vmm_map calls.
 export vmm_switch: (root_pa: u64) {

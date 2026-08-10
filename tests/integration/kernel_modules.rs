@@ -164,7 +164,6 @@ fn pcb_and_trap_frame_struct_layout_matches_offsets() {
 fn filesystem_struct_layout_matches_disk_format() {
     use std::mem::{offset_of, size_of};
 
-    #[allow(dead_code)]
     #[repr(C)]
     struct DiskInode {
         node_type: u16,
@@ -174,7 +173,6 @@ fn filesystem_struct_layout_matches_disk_format() {
         blocks: [u16; 44],
     }
 
-    #[allow(dead_code)]
     #[repr(C)]
     struct DiskDirEntry {
         name: [u8; 32],
@@ -182,7 +180,6 @@ fn filesystem_struct_layout_matches_disk_format() {
         reserved: u16,
     }
 
-    #[allow(dead_code)]
     #[repr(C)]
     struct OpenFile {
         valid: u64,
@@ -214,7 +211,6 @@ fn filesystem_struct_layout_matches_disk_format() {
 fn syscall_trace_entry_layout_matches_inspector_format() {
     use std::mem::{offset_of, size_of};
 
-    #[allow(dead_code)]
     #[repr(C)]
     struct TraceEntry {
         seq: u64,
@@ -224,10 +220,12 @@ fn syscall_trace_entry_layout_matches_inspector_format() {
         a1: u64,
         a2: u64,
         a3: u64,
+        a4: u64,
+        a5: u64,
         result: u64,
     }
 
-    assert_eq!(size_of::<TraceEntry>(), 64);
+    assert_eq!(size_of::<TraceEntry>(), 80);
     assert_eq!(offset_of!(TraceEntry, seq), 0);
     assert_eq!(offset_of!(TraceEntry, pid), 8);
     assert_eq!(offset_of!(TraceEntry, num), 16);
@@ -235,7 +233,9 @@ fn syscall_trace_entry_layout_matches_inspector_format() {
     assert_eq!(offset_of!(TraceEntry, a1), 32);
     assert_eq!(offset_of!(TraceEntry, a2), 40);
     assert_eq!(offset_of!(TraceEntry, a3), 48);
-    assert_eq!(offset_of!(TraceEntry, result), 56);
+    assert_eq!(offset_of!(TraceEntry, a4), 56);
+    assert_eq!(offset_of!(TraceEntry, a5), 64);
+    assert_eq!(offset_of!(TraceEntry, result), 72);
 }
 
 // --- Frame-size guard ---

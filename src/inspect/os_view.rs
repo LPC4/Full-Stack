@@ -38,12 +38,12 @@ const MAX_STACK_WORDS: usize = 256;
 
 // Syscall trace ring layout (kernel/core/syscall.hll). Must match the HLL constants.
 const TRACE_ENTRIES: usize = 256;
-const TRACE_FIELDS: usize = 8;
+const TRACE_FIELDS: usize = 10;
 const TRACE_F_SEQ: u64 = 0;
 const TRACE_F_PID: u64 = 1;
 const TRACE_F_NUM: u64 = 2;
 const TRACE_F_A0: u64 = 3;
-const TRACE_F_RET: u64 = 7;
+const TRACE_F_RET: u64 = 9;
 
 // How many of the most recent ecalls the panel shows (newest first).
 const MAX_TRACE_ROWS: usize = 64;
@@ -242,6 +242,11 @@ pub struct TraceEntry {
     pub pid: u64,
     pub num: u64,
     pub a0: u64,
+    pub a1: u64,
+    pub a2: u64,
+    pub a3: u64,
+    pub a4: u64,
+    pub a5: u64,
     pub ret: u64,
 }
 
@@ -273,6 +278,11 @@ pub fn capture_trace(vm: &VirtualMachine, sym: &OsSymbols) -> Vec<TraceEntry> {
             pid: field(slot, TRACE_F_PID),
             num: field(slot, TRACE_F_NUM),
             a0: field(slot, TRACE_F_A0),
+            a1: field(slot, TRACE_F_A0 + 1),
+            a2: field(slot, TRACE_F_A0 + 2),
+            a3: field(slot, TRACE_F_A0 + 3),
+            a4: field(slot, TRACE_F_A0 + 4),
+            a5: field(slot, TRACE_F_A0 + 5),
             ret: field(slot, TRACE_F_RET),
         });
         seq -= 1;

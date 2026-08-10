@@ -351,12 +351,19 @@ fn trace_row(ui: &mut egui::Ui, entry: &os_view::TraceEntry) {
         theme::TEXT_FAINT,
     );
     resp.on_hover_text(format!(
-        "seq {}  pid {}  {} ({})\na0  {:#x}\nret {:#x}",
+        "seq {}  pid {}  {} ({})\n\
+         a0  {:#x}\na1  {:#x}\na2  {:#x}\na3  {:#x}\na4  {:#x}\na5  {:#x}\n\
+         ret {:#x}",
         entry.seq,
         entry.pid,
         syscall_name(entry.num),
         entry.num,
         entry.a0,
+        entry.a1,
+        entry.a2,
+        entry.a3,
+        entry.a4,
+        entry.a5,
         entry.ret
     ));
 }

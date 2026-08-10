@@ -211,13 +211,13 @@ main: () -> i32 {
     p[1] = 75
     p[2] = 0
     mem.copy(q, p, 3)
-    if cstr.eq(q, "OK".ptr) != 1 {
+    if cstr.eq_slice(cstr.view(q, 4), "OK") != 1 {
         return 1
     }
     if string.equals("hi", "hi") == false {
         return 2
     }
-    fd: i64 = sys.open("/missing".ptr, 0)
+    fd: i64 = sys.open("/missing", 0)
     if fd >= 0 {
         sys.close(fd)
         return 3

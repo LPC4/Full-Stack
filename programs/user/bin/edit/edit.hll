@@ -133,7 +133,7 @@ fix_cur: () {
 ed_load: (path: u8*) {
     nlines = 0
     cur = 0
-    fd: i64 = sys.open(path, 2)
+    fd: i64 = sys.open(cstr.view(path, 256), 2)
     if fd < 0 {
         return
     }
@@ -201,7 +201,7 @@ ed_write: (path: u8*) {
         }
     }
 
-    fd: i64 = sys.open(path, 2)
+    fd: i64 = sys.open(cstr.view(path, 256), 2)
     if fd < 0 {
         console.writeln("edit: write failed (open)".ptr)
         return
@@ -398,7 +398,7 @@ ed_subst: (arg: u8*) {
         out = out + 1
         rk = rk + 1
     }
-    p = (at as u64) + cstr.len(oldp)
+    p = (at as u64) + cstr.view(oldp, 128).len
     while @(cl + p) != 0 {
         d: u8* = tp + out
         @d = @(cl + p)

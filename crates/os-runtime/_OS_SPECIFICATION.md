@@ -249,10 +249,11 @@ even for compute-bound processes that never yield.
 (`vmm_fork_copy`) and trap frame, sets the child's `a0` to 0, and enqueues it.
 `exec` (syscall 103) loads a static ELF (7.4) into a fresh per-process root at
 `0x4000_0000`, parents the child to its launcher (captured before the root
-switches), and enqueues it. Its executable, argument, and redirection inputs are
-grouped in an internal options record; temporary argument and ELF buffers are
-released on every ordinary return. `process_peek_pid` reports the next pid to be
-assigned.
+switches), and enqueues it. The native call carries pointer-length pairs for the
+executable path and argument. `exec_redir` uses the fixed `ExecRequest` layout in
+7.2 and transfers descriptors opened by the parent. Temporary argument and ELF
+buffers are released on every ordinary return. `process_peek_pid` reports the next
+pid to be assigned.
 
 ### 5.6 Zombies and reaping
 
@@ -314,8 +315,11 @@ the wait peek).
 
 ### 7.1 Calling convention
 
-U-mode programs trap with `ecall`. The number is in `a7`; up to four arguments in
-`a0`-`a3`; the result is written back to `a0` in the trap frame. The S-mode handler
+U-mode programs trap with `ecall`. The number is in `a7`; up to six payload words
+are in `a0`-`a5`; the result is written back to `a0` in the trap frame. Native
+slice arguments occupy two consecutive words, pointer followed by length. The
+hosted wrapper always marshals those words explicitly and does not expose the
+compiler's aggregate calling convention as an ecall ABI. The S-mode handler
 catches cause 8, dispatches via `syscall_dispatch`, and advances `sepc` by 4.
 Standard numbers follow the Linux RISC-V ABI; the 100-range is project-specific.
 `stdlib/hosted/sys.hll` provides the userspace `sys.*` wrappers and
@@ -328,24 +332,24 @@ hand-written `external` declarations are reserved for ABI/runtime edges.
 |--------|------|-----------|--------|-------------|
 | `2` | `yield` | -- | -- | Yield the CPU (SCHEDULE action) |
 | `46` | `ftruncate` | `a0=fd`, `a1=len` | 0 or -1 | Shrink a file to an exact length |
-| `56` | `open` | `a0=path*`, `a1=flags` | fd (>=2) or -1 | Open by absolute path. flags: 0=RO, 1=RW, 2=create |
+| `56` | `open` | `a0/a1=path`, `a2=flags` | fd (>=2) or -1 | Open by absolute path. flags: 0=RO, 1=RW, 2=create |
 | `62` | `lseek` | `a0=fd`, `a1=off`, `a2=whence` | new pos | Reposition a file fd. whence 0=SET, 1=CUR, 2=END (used for `>>` append) |
 | `57` | `close` | `a0=fd` | 0 | Release a descriptor |
 | `63` | `read` | `a0=fd`, `a1=buf*`, `a2=off`, `a3=len` | bytes or -1 | Read a file fd at an explicit offset |
 | `64` | `write` | `a0=fd`, `a1=buf*`, `a2=len` | bytes or -1 | fd 0/1 -> redirected stdout file or UART (7.7); fd >=2 -> file at stored position |
-| `82` | `rename` | `a0=old*`, `a1=new*` | 0 or -1 | Move a file or directory |
-| `83` | `mkdir` | `a0=path*` | inode or -1 | Create a directory |
+| `82` | `rename` | `a0/a1=old`, `a2/a3=new` | 0 or -1 | Move a file or directory |
+| `83` | `mkdir` | `a0/a1=path` | inode or -1 | Create a directory |
 | `93` | `exit` | `a0=code` | -- | Terminate caller (EXIT_SCHEDULE); PCB lingers as a zombie; halts the VM if last runnable |
 | `100` | `readchar` | -- | byte (0-255) | Read one UART byte; **blocks** (sleeps the caller, arming the RX interrupt) until one arrives (6.4) |
-| `101` | `readdir` | `a0=path*`, `a1=index`, `a2=name*` | type or -1 | Look up the index-th dir entry; writes its name |
-| `102` | `stat` | `a0=path*` | type or -1 | Inode type at a path (1=file, 2=dir) |
-| `103` | `exec` | `a0=path*` | pid or -1 | Load a static ELF and enqueue it (5.5, 7.4) |
+| `101` | `readdir` | `a0/a1=path`, `a2=index`, `a3/a4=out` | `(name_len << 8) | type`, or -1 | Look up the index-th entry and copy its unterminated name into the caller buffer |
+| `102` | `stat` | `a0/a1=path` | type or -1 | Inode type at a path (1=file, 2=dir) |
+| `103` | `exec` | `a0/a1=path`, `a2/a3=arg` | pid or -1 | Load a static ELF and enqueue it (5.5, 7.4) |
 | `104` | `pidalive` | `a0=pid` | 1 or 0 | 1 while the pid is RUNNING/READY/BLOCKED; 0 for zombie/unknown |
-| `105` | `unlink` | `a0=path*` | 0 or -1 | Remove a regular file; refuses directories |
-| `106` | `rmdir` | `a0=path*` | 0 or -1 | Remove an empty directory; refuses root/non-empty |
+| `105` | `unlink` | `a0/a1=path` | 0 or -1 | Remove a regular file; refuses directories |
+| `106` | `rmdir` | `a0/a1=path` | 0 or -1 | Remove an empty directory; refuses root/non-empty |
 | `107` | `map_fb` | -- | base VA | Map the framebuffer into the caller (7.5) |
 | `108` | `poll_key` | -- | event or -1 | Pop a key event from the keyboard device; -1 if none (7.5) |
-| `110` | `exec_redir` | `a0=path*`, `a1=arg*`, `a2=out*`, `a3=in*`, `a4=append` | pid or -1 | Exec with stdout/stdin bound to FS files (7.7); `out`/`in` may be null |
+| `110` | `exec_redir` | `a0=request*` | pid or -1 | Exec from a checked `ExecRequest` with path/arg slices and output/input fds (7.7) |
 | `129` | `kill` | `a0=pid`, `a1=sig` | 0 or -1 | Signal a pid; only `SIGKILL` (9) is honoured (7.6); -1 if not a live killable pid; pid 1 is protected |
 | `214` | `brk` | `a0=addr` | new break | Set/query the program break (Linux semantics); grows the heap (7.8). `a0=0` queries; break unchanged on OOM |
 | `220` | `fork` | -- | child / 0 / -1 | Clone the caller (5.5) |
@@ -359,6 +363,15 @@ wait, record the pid in an 8-slot job table, and are reaped at the prompt; `jobs
 and `fg <id>` manage them (10.1). Pid-targeted waits ensure a foreground wait never
 reaps a background job that finished first.
 
+Path inputs are capped at 255 bytes. A non-empty path must have a non-null pointer,
+the complete range must be readable in the caller's page table, and the bytes are
+copied to kernel-owned storage before filesystem code sees them. Embedded NUL bytes
+are rejected. `readdir` similarly validates the complete writable output range and
+returns the exact copied name length, so no user-memory terminator is required.
+
+`ExecRequest` is a checked 48-byte user record with fields `path_ptr`, `path_len`,
+`arg_ptr`, `arg_len`, `out_fd`, and `in_fd`, all eight bytes wide in that order.
+
 ### 7.3 Scheduler actions
 
 `syscall_dispatch` returns a `SysAction` that `trap_handler` either handles as
@@ -371,20 +384,17 @@ reaps a background job that finished first.
 | `ExitSchedule` | Exit: mark EXITED, switch to next |
 | `Block` | Sleep the caller (input wait); not re-enqueued (6.4) |
 
-`syscall_dispatch` is a thin wrapper that records every ecall into a bounded trace
-ring before returning the action; the inner dispatch uses a scalar `match` on the
-syscall number.
+`syscall_dispatch` records every ecall into a bounded trace ring before returning
+the action; the inner dispatch uses a scalar `match` on the syscall number.
 
-**Syscall trace ring.** `trace_ring` is a fixed `TraceEntry[256]` global written by
-`trace_record`. Each exact 64-byte entry contains eight `u64` fields: a monotonic
-`seq` (0 marks an empty slot), the caller `pid`, the syscall number, the first four
-args captured before dispatch, and the result (`a0` after dispatch). The slot for
-`seq` is `(seq - 1) % 256`, so the ring keeps the most recent 256 calls.
-`trace_record` publishes lock-free: it fills the record, writes its `seq`, then
-advances the `trace_seq` counter last, so a reader that samples mid-write sees either
-the old counter or a fully written newest entry (never a torn one). A host-side
-layout assertion protects the inspector ABI. It is a read-only inspector feed: the
-GUI strace panel
+**Syscall trace ring.** `trace_ring` is a fixed byte backing store for 256 entries.
+Each exact 80-byte entry contains ten `u64` fields: a monotonic `seq` (0 marks an empty slot),
+the caller `pid`, the syscall number, all six payload words, and the result (`a0`
+after dispatch). The slot for `seq` is `(seq - 1) % 256`, so the ring keeps the most
+recent 256 calls. Dispatch publishes lock-free: it fills the record, writes its
+`seq`, then advances `trace_seq` last, so a reader that samples mid-write sees either
+the old counter or a fully written newest entry. A host-side layout assertion
+protects the inspector ABI. It is a read-only inspector feed: the GUI strace panel
 (`os_view::capture_trace`) drains it from guest memory each frame and renders the
 newest calls, filterable by pid, with negative returns highlighted. The kernel never
 reads the ring back.
@@ -466,11 +476,11 @@ when `jobs_reap` next runs at the prompt (10.1).
 ### 7.7 I/O redirection
 
 Each PCB carries two redirect slots, `stdout_fd` and `stdin_fd` (5.1), each a
-kernel FS fd or 0 for the console. They are bound at exec time: `exec_redir`
-(syscall `110`) opens the requested files **in the parent address space** (before
-the root switch, while the path strings are still mapped), then stores the fds on
-the freshly created child PCB. `>` truncates the target and seeks to 0; `>>` seeks
-to end (`fs_fd_size`); `<` opens read-only.
+kernel FS fd or 0 for the console. The shell opens these descriptors before exec,
+applies truncation or append positioning, and passes them in `ExecRequest`.
+`exec_redir` transfers the descriptors to the freshly created child PCB without
+accepting more path arguments. `>` truncates and seeks to 0; `>>` seeks to end
+(`fs_fd_size`); `<` opens read-only.
 
 With a slot bound, the standard syscalls reroute transparently: a fd 0/1 `write`
 goes through `sys_stdout_write`, which appends to `stdout_fd` and advances its
@@ -562,7 +572,11 @@ name, and up to 44 direct block pointers (176 KiB max file -- enough for executa
 images). Directories store 36-byte entries (32-byte name + inode index). Paths are
 absolute and resolved from the root directory at inode 0. `fs.hll` maps these records
 through the exact-layout `DiskInode` and `DiskDirEntry` types after computing their
-image addresses. Superblock access remains byte-oriented.
+image addresses. Filesystem algorithms accept slices, split paths into subslices,
+and compare components by length and bytes. On-disk names remain NUL-padded: reads
+scan at most 32 bytes, while writes reject names longer than 31 bytes and clear the
+whole field before copying. Overlong components are errors rather than truncations.
+Superblock access remains byte-oriented.
 
 ### 8.3 Descriptors and operations
 
@@ -602,10 +616,10 @@ static heap, 4.2), and `string` (`len`/`is_empty`/`equals`/`copy`/`concat`).
 
 ### 9.3 `hosted/`
 
-`runtime` (`_start` -> `main` -> `sys.exit`), `sys` (the userspace wrappers for the
-syscalls in 7.2), `cstr` (null-terminated string helpers), and hosted `console` (stdout
-through `sys.write`, so redirection works). Linked by U-mode programs that run under the
-kernel.
+`runtime` (`_start` -> `main` -> `sys.exit`), `sys` (the slice-first userspace
+wrappers for the syscalls in 7.2), `cstr` (bounded conversions at sentinel-format
+boundaries), and hosted `console` (stdout through `sys.write`, so redirection works).
+Linked by U-mode programs that run under the kernel.
 
 ### 9.4 `kernel/`
 

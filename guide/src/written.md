@@ -886,8 +886,8 @@ people who have been doing it way longer.
 The board we'll use is called `virt`. It doesn't correspond to any chip you can buy: it's a board the QEMU authors
 invented, with a RISC-V CPU and a small set of standard devices at fixed addresses. That sounds like cheating,
 but the CPU is a real RV64 implementation and the devices are real device designs, so code written for `virt` is written
-against the same rules as code for silicon. It's basically a real machine that just hasn't been manufactured, but if you
-really wanted to you could.
+against the same rules as code for silicon. The board is fictional, but it's CPU and devices follow the same 
+specifications as real hardware.
 
 The port is [`07_qemu/hello_world.s`](repo:programs/lessons/07_qemu/hello_world.s). Two things change
 from our previous hello world program.
@@ -1522,8 +1522,8 @@ export _start: () {
 
 Continue stepping until `jal ra, main` is next. Step once more and the machine jumps into the small
 `main` function that does 1 + 1 and returns 2. Step through it and you're back in `_start`, about to
-call `sys.exit`. That's all the runtime is: it gives `main` a clean stage to run on and makes sure
-the machine stops when it's done.
+call `sys.exit`. That is all the runtime does here: call main, collect its return value, and stop the machine.
+
 
 ### Exit function
 
@@ -1545,9 +1545,8 @@ The exit code is stored in a global variable `_a0`. Inline assembly loads it int
 into `a7`, and then executes an instruction we haven't seen before: `ecall`.
 
 `ecall` is short for *environment call*. Think of it like a `jal` where you don't know the destination. Instead of jumping
-to a label in your own code, the CPU pauses your program and hands control to a special handler that the machine
-prepared ahead of time. The number in `a7` tells that handler which service you want, in this case it's exiting with a
-specific code.
+to a label in your own code, the CPU pauses your program and jumps to a handler address that was configured during startup. 
+The number in `a7` tells that handler which service you want, in this case it's exiting with a specific code.
 
 In our hosted setup, that handler lives in ROM and only knows a few basic services. Syscall 93 means "exit".
 When the `ecall` fires, the handler reads the exit code and writes it to the SYSCON device, shutting the machine off
@@ -1681,8 +1680,7 @@ The instructions before these are part of the privilege machinery. We will come 
 For now, the important instruction is the `lui`: it builds the SYSCON address `0x1001_0000` in `t0`. The `sd` then
 writes the exit code from `a0` to that address, and the machine halts.
 
-You have now followed the entire program: HLL code, the runtime that calls it, the standard
-library wrapper, the `ecall`, and the ROM handler that talks to the hardware.
+And that is the whole path: HLL, runtime, standard library, ecall, ROM, and finally the hardware.
 
 Assembly gives you total control, but it also makes you manage every address and convention by hand. The runtime and standard
 library collect the work shared by every program, starting, stopping, and talking to hardware, behind a couple of HLL
@@ -1780,7 +1778,7 @@ Next we'll look inside the allocator to see how it decides where a new allocatio
 
 ### Malloc
 
-Alright, so how does `malloc` manage the heap behind its simple interface?
+Alright, so what does `malloc` actually do?
 
 We split the heap into blocks. Each block describes one allocation: where it starts, how large it
 is, and whether it's currently free. The allocator keeps track of those blocks, searches them for
@@ -1905,5 +1903,5 @@ possible, and grow the heap when necessary. There are loads of ways to actually 
 You can find this project's actual allocator in
 [`memory_allocator.hll`](repo:crates/os-runtime/stdlib/core/memory_allocator.hll). It uses a linked
 list instead of the fixed `blocks` array, but the basic search and reuse are the same, and it also
-reuses each block whole. You can open either lesson in the debugger and step from the program into
-the standard library if you want to see the real path for yourself.
+reuses each block whole. You can step into the standard library from either lesson and watch a similar
+allocator run.

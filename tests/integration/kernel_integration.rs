@@ -2988,7 +2988,7 @@ fn per_process_address_spaces_are_isolated() {
     let parent_src = format!(
         r#"
 external console_writeln: (str: u8*)
-external sc_exec: (path: u8*) -> i64
+external sc_exec: (path: u8[]) -> i64
 external sc_pidalive: (pid: u64) -> i64
 external sc_yield: ()
 external sc_exit: (code: i64)
@@ -2998,7 +2998,7 @@ main: () -> i32 {{
     @p = 0xAA as u8
     console_writeln("PARENT_WROTE".ptr)
 
-    pid: i64 = sc_exec("/child.elf".ptr)
+    pid: i64 = sc_exec("/child.elf")
     if pid < 0 {{
         console_writeln("PARENT_EXEC_FAIL".ptr)
         sc_exit(1)
@@ -3074,12 +3074,12 @@ main: () -> i32 {{
 
 // User program that exercises the full FS API and prints FS_ALL_PASS on success.
 const FS_EXERCISER: &str = r#"
-external sc_open:   (path: u8*, flags: u64) -> i64
+external sc_open:   (path: u8[], flags: u64) -> i64
 external sc_close:  (fd: i64)
 external sc_read:   (fd: i64, buf: u8*, offset: u64, len: u64) -> i64
 external sc_write:  (fd: i64, buf: u8*, len: u64) -> i64
-external sc_mkdir:  (path: u8*) -> i64
-external sc_rename: (old_path: u8*, new_path: u8*) -> i64
+external sc_mkdir:  (path: u8[]) -> i64
+external sc_rename: (old_path: u8[], new_path: u8[]) -> i64
 
 fail: (label: u8*) -> i32 {
     console_write("FS_FAIL: ".ptr)
@@ -3102,7 +3102,7 @@ main: () -> i32 {
     buf: u8[64] = []
 
     ; 1. Read a pre-populated file.
-    fd: i64 = sc_open("/hello.txt".ptr, 0)
+    fd: i64 = sc_open("/hello.txt", 0)
     if fd < 2 { return fail("open hello".ptr) }
     n: i64 = sc_read(fd, &buf[0], 0, 13)
     if n != 13 { return fail("read hello count".ptr) }
@@ -3110,17 +3110,17 @@ main: () -> i32 {
     sc_close(fd)
 
     ; 2. Create a directory.
-    if sc_mkdir("/out".ptr) < 0 { return fail("mkdir out".ptr) }
+    if sc_mkdir("/out") < 0 { return fail("mkdir out".ptr) }
 
     ; 3. Create a file in it and write to it.
-    wfd: i64 = sc_open("/out/result.txt".ptr, 2)
+    wfd: i64 = sc_open("/out/result.txt", 2)
     if wfd < 2 { return fail("create result".ptr) }
     w: i64 = sc_write(wfd, "data123".ptr, 7)
     if w != 7 { return fail("write count".ptr) }
     sc_close(wfd)
 
     ; 4. Re-open and read back the written contents.
-    rfd: i64 = sc_open("/out/result.txt".ptr, 0)
+    rfd: i64 = sc_open("/out/result.txt", 0)
     if rfd < 2 { return fail("reopen result".ptr) }
     rn: i64 = sc_read(rfd, &buf[0], 0, 7)
     if rn != 7 { return fail("readback count".ptr) }
@@ -3128,13 +3128,13 @@ main: () -> i32 {
     sc_close(rfd)
 
     ; 5. Rename within the directory; old name must disappear.
-    if sc_rename("/out/result.txt".ptr, "/out/final.txt".ptr) != 0 {
+    if sc_rename("/out/result.txt", "/out/final.txt") != 0 {
         return fail("rename".ptr)
     }
-    ffd: i64 = sc_open("/out/final.txt".ptr, 0)
+    ffd: i64 = sc_open("/out/final.txt", 0)
     if ffd < 2 { return fail("open final".ptr) }
     sc_close(ffd)
-    gone: i64 = sc_open("/out/result.txt".ptr, 0)
+    gone: i64 = sc_open("/out/result.txt", 0)
     if gone >= 0 { return fail("old name still present".ptr) }
 
     console_writeln("FS_ALL_PASS".ptr)
@@ -3169,6 +3169,55 @@ fn kernel_fs_full_lifecycle() {
         uart.contains("FS_ALL_PASS"),
         "FS exerciser did not report success; uart={uart:?}"
     );
+}
+
+#[test]
+fn kernel_slice_paths_are_bounded_at_the_syscall_boundary() {
+    let user = compile_hosted(
+        r#"
+sys := import("sys")
+
+main: () -> i32 {
+    backing: u8[] = "/hello.txt.extra"
+    fd: i64 = sys.open(backing[0..10], 0)
+    if fd < 2 { return 1 }
+    sys.close(fd)
+
+    embedded: u8[4] = []
+    embedded[0] = '/' as u8
+    embedded[1] = 'x' as u8
+    embedded[2] = 0 as u8
+    embedded[3] = 'y' as u8
+    if sys.stat(embedded[..]) >= 0 { return 2 }
+
+    long_path: u8[256] = []
+    long_path[0] = '/' as u8
+    for i in 1..256 {
+        long_path[i] = 'a' as u8
+    }
+    if sys.stat(long_path[..]) >= 0 { return 3 }
+
+    bad: u8[] = ""
+    bad.ptr = 0x90000000 as u8*
+    bad.len = 4
+    if sys.stat(bad) >= 0 { return 4 }
+
+    name: u8[10] = []
+    name[9] = 0xAA as u8
+    entry: i64 = sys.readdir("/", 0, name[0..9])
+    if entry < 0 || ((entry as u64) >> 8) != 9 { return 5 }
+    if name[9] != 0xAA as u8 { return 6 }
+    return 0
+}
+"#,
+    );
+    let image = build_fs_image(&[FsEntry::File {
+        path: "/hello.txt",
+        data: b"bounded\n",
+    }]);
+    let (_, outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&user), Some(&image), "", 50_000_000);
+    assert_user_exit_ok(&uart, &outcome, "slice_path_boundary");
 }
 
 // Type is 1=file, 2=dir. On-disk state is checked directly because the shell
@@ -3430,6 +3479,33 @@ fn os_inspector_traces_shell_syscalls() {
         trace.iter().any(|e| e.num == 100),
         "expected a readchar (100) syscall in the trace"
     );
+}
+
+#[test]
+fn syscall_trace_wrap_preserves_kernel_state() {
+    use full_stack::inspect::os_view::{self, OsSymbols};
+
+    let kernel = cached_kernel();
+    let user = compile_hosted(
+        r#"
+sys := import("sys")
+
+main: () -> i32 {
+    for i in 0..300 {
+        sys.yield()
+    }
+    return 0
+}
+"#,
+    );
+    let (vm, outcome, uart) = boot_kernel(kernel, Some(&user), None, "", 50_000_000);
+    assert_user_exit_ok(&uart, &outcome, "trace_wrap");
+
+    let sym = OsSymbols::from_kernel(kernel).expect("kernel trace symbols resolve");
+    let trace = os_view::capture_trace(&vm, &sym);
+    assert_eq!(trace.len(), 64);
+    assert!(trace.iter().all(|entry| entry.num == 2));
+    assert!(trace.windows(2).all(|pair| pair[0].seq == pair[1].seq + 1));
 }
 
 // The FS inspector walks the in-memory image from guest memory; this guards the

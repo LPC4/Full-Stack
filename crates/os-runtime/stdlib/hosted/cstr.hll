@@ -1,6 +1,41 @@
 ; Null-terminated C-string helpers. Link symbols keep the cstr_ prefix so members
 ; are reached as cstr.len/cstr.eq without colliding with other stdlib modules.
 
+export cstr_view: (s: u8*, capacity: u64) -> u8[] {
+	n: u64 = 0
+	while n < capacity && @(s + n) != 0 {
+		n = n + 1
+	}
+	empty: u8[1] = []
+	view: u8[] = empty[0..0]
+	view.ptr = s
+	view.len = n
+	return view
+}
+
+export cstr_eq_slice: (left: u8[], right: u8[]) -> i64 {
+	if left.len != right.len {
+		return 0
+	}
+	for i in 0..left.len {
+		if left[i] != right[i] {
+			return 0
+		}
+	}
+	return 1
+}
+
+export cstr_write: (dst: u8*, capacity: u64, src: u8[]) -> i64 {
+	if src.len >= capacity {
+		return -1 as i64
+	}
+	for i in 0..src.len {
+		@(dst + i) = src[i]
+	}
+	@(dst + src.len) = 0 as u8
+	return src.len as i64
+}
+
 export cstr_len: (s: u8*) -> u64 {
 	n: u64 = 0
 	while @(s + n) != 0 {

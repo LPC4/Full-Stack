@@ -39,7 +39,7 @@ push_sym: (name: u8*, value: i64, shndx: i64) {
     }
     sym: Symbol* = &symbols[nsym]
     dst: u8* = sym as u8*
-    text.copy_name16(dst, name)
+    text.copy_name16(dst, cstr.view(name, 24))
     sym.value = value
     sym.shndx = shndx
     nsym = nsym + 1

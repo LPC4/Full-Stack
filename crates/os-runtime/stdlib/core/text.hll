@@ -28,18 +28,15 @@ export is_alnum: (c: u8) -> bool {
 
 ; --- Name slots ---
 
-; Copy a NUL-terminated string into a fixed 16-byte name slot, 15 chars + NUL.
-export copy_name16: (dst: u8*, src: u8*) {
-	for i in 0..15 {
-		c: u8 = @(src + i)
-		d: u8* = dst + i
-		@d = c
-		if c == 0 {
-			return
-		}
+export copy_name16: (dst: u8*, src: u8[]) {
+	count: u64 = src.len
+	if count > 15 {
+		count = 15
 	}
-	last: u8* = dst + 15
-	@last = 0 as u8
+	for i in 0..count {
+		@(dst + i) = src[i]
+	}
+	@(dst + count) = 0 as u8
 }
 
 ; --- Search ---

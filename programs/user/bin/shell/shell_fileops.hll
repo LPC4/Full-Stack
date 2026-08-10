@@ -2,6 +2,7 @@
 shell_state := import("./shell.hll")
 console := import("console")
 sys := import("sys")
+cstr := import("cstr")
 
 export cmd_touch: (cwd: u8*, arg: u8*) {
     if @arg == 0 {
@@ -11,7 +12,7 @@ export cmd_touch: (cwd: u8*, arg: u8*) {
     target: u8[256] = []
     target_p: u8* = &target[0]
     shell_state.sh_join_path(cwd, arg, target_p)
-    fd: i64 = sys.open(target_p, 2)
+    fd: i64 = sys.open(cstr.view(target_p, 256), 2)
     if fd < 0 {
         console.write("touch: cannot create: ".ptr)
         console.writeln(arg)
@@ -28,7 +29,7 @@ export cmd_mkdir: (cwd: u8*, arg: u8*) {
     target: u8[256] = []
     target_p: u8* = &target[0]
     shell_state.sh_join_path(cwd, arg, target_p)
-    if sys.mkdir(target_p) < 0 {
+    if sys.mkdir(cstr.view(target_p, 256)) < 0 {
         console.write("mkdir: cannot create: ".ptr)
         console.writeln(arg)
     }
@@ -42,7 +43,7 @@ export cmd_rm: (cwd: u8*, arg: u8*) {
     target: u8[256] = []
     target_p: u8* = &target[0]
     shell_state.sh_join_path(cwd, arg, target_p)
-    if sys.unlink(target_p) < 0 {
+    if sys.unlink(cstr.view(target_p, 256)) < 0 {
         console.write("rm: cannot remove: ".ptr)
         console.writeln(arg)
     }
@@ -56,7 +57,7 @@ export cmd_rmdir: (cwd: u8*, arg: u8*) {
     target: u8[256] = []
     target_p: u8* = &target[0]
     shell_state.sh_join_path(cwd, arg, target_p)
-    if sys.rmdir(target_p) < 0 {
+    if sys.rmdir(cstr.view(target_p, 256)) < 0 {
         console.write("rmdir: cannot remove: ".ptr)
         console.writeln(arg)
     }
@@ -100,7 +101,7 @@ export cmd_mv: (cwd: u8*, arg: u8*) {
     new_abs: u8[256] = []
     new_p: u8* = &new_abs[0]
     shell_state.sh_join_path(cwd, dst_arg, new_p)
-    if sys.rename(old_p, new_p) < 0 {
+    if sys.rename(cstr.view(old_p, 256), cstr.view(new_p, 256)) < 0 {
         console.write("mv: cannot move: ".ptr)
         console.writeln(src_p)
     }

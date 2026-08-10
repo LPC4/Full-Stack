@@ -32,6 +32,10 @@ err_flag: i64 = 0
 export cur_fn: i64 = 0
 export nlabel: i64 = 0
 
+export name_eq: (name: u8*, expected: u8[]) -> i64 {
+    return cstr.eq_slice(cstr.view(name, 16), expected)
+}
+
 export perr: (msg: u8*) {
     if err_flag == 0 {
         console.write("cc: ".ptr)
@@ -328,13 +332,13 @@ mk: (kind: NodeKind) -> i64 {
 }
 
 set_name: (node: i64, s: u8*) {
-    text.copy_name16((&nodes[node]) as u8*, s)
+    text.copy_name16((&nodes[node]) as u8*, cstr.view(s, 16))
 }
 
 ; --- Locals ---
 add_local: (name: u8*) -> i64 {
     slot: i64 = loc_count
-    text.copy_name16(loc_name + (slot as u64) * 16, name)
+    text.copy_name16(loc_name + (slot as u64) * 16, cstr.view(name, 16))
     loc_count = loc_count + 1
     return slot
 }
@@ -342,7 +346,7 @@ add_local: (name: u8*) -> i64 {
 find_local: (name: u8*) -> i64 {
     for i in 0..loc_count {
         c: u8* = loc_name + (i as u64) * 16
-        if cstr.eq(c, name) == 1 {
+        if cstr.eq_slice(cstr.view(c, 16), cstr.view(name, 16)) == 1 {
             return i
         }
     }
@@ -404,7 +408,7 @@ parse_primary: () -> i64 {
     }
     TokIdent -> {
         nm: u8[24] = []
-        text.copy_name16(&nm[0], cur_txt())
+        text.copy_name16(&nm[0], cstr.view(cur_txt(), 16))
         adv()
         if kind_is(cur_kind(), TokenKind.TokLParen) {
             adv()
@@ -516,7 +520,7 @@ parse_stmt: () -> i64 {
     k: TokenKind = cur_kind()
     if kind_is(k, TokenKind.TokIdent) {
         t: u8* = cur_txt()
-        if cstr.eq(t, "return".ptr) == 1 {
+        if name_eq(t, "return") == 1 {
             adv()
             e: i64 = parse_expr()
             n: i64 = mk(NodeKind.NodeReturn)
@@ -524,7 +528,7 @@ parse_stmt: () -> i64 {
             nd.a = e
             return n
         }
-        if cstr.eq(t, "if".ptr) == 1 {
+        if name_eq(t, "if") == 1 {
             adv()
             c: i64 = parse_expr()
             expect(TokenKind.TokLBrace, "expected { after if".ptr)
@@ -536,7 +540,7 @@ parse_stmt: () -> i64 {
             nd.b = body
             return n
         }
-        if cstr.eq(t, "while".ptr) == 1 {
+        if name_eq(t, "while") == 1 {
             adv()
             c: i64 = parse_expr()
             expect(TokenKind.TokLBrace, "expected { after while".ptr)
@@ -551,7 +555,7 @@ parse_stmt: () -> i64 {
         k1: TokenKind = nxt_kind()
         if kind_is(k1, TokenKind.TokColon) {
             nm: u8[24] = []
-            text.copy_name16(&nm[0], cur_txt())
+            text.copy_name16(&nm[0], cstr.view(cur_txt(), 16))
             adv()
             adv()
             expect(TokenKind.TokIdent, "expected type in decl".ptr)
@@ -566,7 +570,7 @@ parse_stmt: () -> i64 {
         }
         if kind_is(k1, TokenKind.TokAssign) {
             nm: u8[24] = []
-            text.copy_name16(&nm[0], cur_txt())
+            text.copy_name16(&nm[0], cstr.view(cur_txt(), 16))
             adv()
             adv()
             e: i64 = parse_expr()
@@ -621,7 +625,7 @@ parse_function: () {
         return
     }
     fidx: i64 = nfn
-    text.copy_name16((&fns[fidx]) as u8*, cur_txt())
+    text.copy_name16((&fns[fidx]) as u8*, cstr.view(cur_txt(), 16))
     adv()
     expect(TokenKind.TokColon, "expected : after function name".ptr)
     expect(TokenKind.TokLParen, "expected ( before params".ptr)
@@ -634,7 +638,7 @@ parse_function: () {
                 break
             }
             pn: u8[24] = []
-            text.copy_name16(&pn[0], cur_txt())
+            text.copy_name16(&pn[0], cstr.view(cur_txt(), 16))
             adv()
             expect(TokenKind.TokColon, "expected : in parameter".ptr)
             expect(TokenKind.TokIdent, "expected parameter type".ptr)
@@ -695,7 +699,7 @@ main: () -> i32 {
         return 1
     }
 
-    fd: i64 = sys.open(src_pp, 0)
+    fd: i64 = sys.open(cstr.view(src_pp, 128), 0)
     if fd < 0 {
         console.write("cc: cannot open ".ptr)
         console.writeln(src_pp)
@@ -725,7 +729,7 @@ main: () -> i32 {
         return 1
     }
 
-    ofd: i64 = sys.open(out_pp, 2)
+    ofd: i64 = sys.open(cstr.view(out_pp, 128), 2)
     if ofd < 0 {
         console.write("cc: cannot create ".ptr)
         console.writeln(out_pp)

@@ -35,6 +35,11 @@ struct OpenFile {
     pos: u64,
 }
 
+struct PathSplit {
+    parent: i64,
+    name: u8[],
+}
+
 ; Open flags.
 const FS_OPEN_RO     = 0
 const FS_OPEN_RW     = 1
@@ -145,39 +150,40 @@ export fs_inode_set_block: (idx: u64, slot: u64, blk: u64) {
     inode.blocks[slot] = blk as u16
 }
 
-; --- String helpers ---
+; --- Name-field helpers ---
 
-; Null-terminated compare. Returns 1 if equal, 0 otherwise.
-export fs_streq: (a: u8*, b: u8*) -> i64 {
-    i: u64 = 0
-    while 1 == 1 {
-        ca: u8 = @(a + i)
-        cb: u8 = @(b + i)
-        if ca != cb {
-            return 0
-        }
-        if ca == 0 {
-            return 1
-        }
-        i = i + 1
+fs_name_len: (name: u8*) -> u64 {
+    len: u64 = 0
+    while len < FS_NAME_LEN && @(name + len) != 0 {
+        len = len + 1
     }
-    return 0
+    return len
 }
 
-; Null-terminated copy of at most n bytes (padded with terminator).
-export fs_strncpy: (dst: u8*, src: u8*, n: u64) {
-    i: u64 = 0
-    while i < n {
-        c: u8 = @(src + i)
-        dp: u8* = dst + i
-        @dp = c
-        if c == 0 {
-            return
-        }
-        i = i + 1
+fs_name_eq: (stored: u8*, name: u8[]) -> i64 {
+    if name.len >= FS_NAME_LEN {
+        return 0
     }
-    term: u8* = dst + (n - 1)
-    @term = 0 as u8
+    if fs_name_len(stored) != name.len {
+        return 0
+    }
+    for i in 0..name.len {
+        if @(stored + i) != name[i] {
+            return 0
+        }
+    }
+    return 1
+}
+
+fs_name_write: (dst: u8*, name: u8[]) -> i64 {
+    if name.len == 0 || name.len >= FS_NAME_LEN {
+        return -1 as i64
+    }
+    mem.memset(dst, 0, FS_NAME_LEN)
+    for i in 0..name.len {
+        @(dst + i) = name[i]
+    }
+    return 0
 }
 
 ; --- Block allocation ---
@@ -264,7 +270,7 @@ export fs_free_inode: (idx: u64) {
 ; --- Directory operations ---
 
 ; Find entry `name` in directory dir_inode. Returns child inode, or -1.
-export fs_find_in_dir: (dir_inode: u64, name: u8*) -> i64 {
+export fs_find_in_dir: (dir_inode: u64, name: u8[]) -> i64 {
     if fs_inode_type(dir_inode) != FS_TYPE_DIR {
         return -1 as i64
     }
@@ -277,7 +283,7 @@ export fs_find_in_dir: (dir_inode: u64, name: u8*) -> i64 {
             de: DiskDirEntry* = fs_dirent_ptr(blk, slot)
             np: u8* = &de.name[0]
             if @np != 0 {
-                if fs_streq(np, name) == 1 {
+                if fs_name_eq(np, name) == 1 {
                     return de.inode as i64
                 }
             }
@@ -288,7 +294,10 @@ export fs_find_in_dir: (dir_inode: u64, name: u8*) -> i64 {
 
 ; Add a (child_name, child_inode) entry to directory dir_inode.
 ; Returns 0 on success, -1 on failure.
-export fs_add_dirent: (dir_inode: u64, child_name: u8*, child_inode: u64) -> i64 {
+export fs_add_dirent: (dir_inode: u64, child_name: u8[], child_inode: u64) -> i64 {
+    if child_name.len == 0 || child_name.len >= FS_NAME_LEN {
+        return -1 as i64
+    }
     for blk_slot in 0..FS_INODE_BLOCKS {
         blk: u64 = fs_inode_block(dir_inode, blk_slot)
         if blk == 0 {
@@ -304,7 +313,9 @@ export fs_add_dirent: (dir_inode: u64, child_name: u8*, child_inode: u64) -> i64
             de: DiskDirEntry* = fs_dirent_ptr(blk, slot)
             np: u8* = &de.name[0]
             if @np == 0 {
-                fs_strncpy(np, child_name, FS_NAME_LEN)
+                if fs_name_write(np, child_name) < 0 {
+                    return -1 as i64
+                }
                 de.inode = child_inode as u16
                 de.reserved = 0 as u16
                 fs_inode_set_size(dir_inode, fs_inode_size(dir_inode) + 1)
@@ -317,7 +328,7 @@ export fs_add_dirent: (dir_inode: u64, child_name: u8*, child_inode: u64) -> i64
 
 ; Remove entry `name` from directory dir_inode.
 ; Returns 0 on success, -1 if not found.
-export fs_remove_dirent: (dir_inode: u64, name: u8*) -> i64 {
+export fs_remove_dirent: (dir_inode: u64, name: u8[]) -> i64 {
     for blk_slot in 0..FS_INODE_BLOCKS {
         blk: u64 = fs_inode_block(dir_inode, blk_slot)
         if blk == 0 {
@@ -327,7 +338,7 @@ export fs_remove_dirent: (dir_inode: u64, name: u8*) -> i64 {
             de: DiskDirEntry* = fs_dirent_ptr(blk, slot)
             np: u8* = &de.name[0]
             if @np != 0 {
-                if fs_streq(np, name) == 1 {
+                if fs_name_eq(np, name) == 1 {
                     @np = 0 as u8
                     sz: u64 = fs_inode_size(dir_inode)
                     if sz > 0 {
@@ -345,97 +356,78 @@ export fs_remove_dirent: (dir_inode: u64, name: u8*) -> i64 {
 
 ; Resolve an absolute path to an inode index. Returns -1 on error.
 ; Root "/" is inode 0.
-export fs_resolve: (path: u8*) -> i64 {
-    if @path != FS_SLASH {
+export fs_resolve: (path: u8[]) -> i64 {
+    if path.len == 0 {
+        return -1 as i64
+    }
+    if path[0] != FS_SLASH {
         return -1 as i64
     }
     cur: i64 = 0
     pos: u64 = 1
-    while 1 == 1 {
-        ; Skip consecutive separators.
-        while @(path + pos) == FS_SLASH {
+    while pos < path.len {
+        while pos < path.len {
+            if path[pos] != FS_SLASH {
+                break
+            }
             pos = pos + 1
         }
-        if @(path + pos) == 0 {
+        if pos >= path.len {
             return cur
         }
-        ; Copy the next path component.
-        comp: u8[32] = []
-        len: u64 = 0
-        while len < FS_NAME_LEN - 1 {
-            c: u8 = @(path + pos + len)
-            if c == 0 {
+        start: u64 = pos
+        while pos < path.len {
+            if path[pos] == FS_SLASH {
                 break
             }
-            if c == FS_SLASH {
-                break
+            if path[pos] == 0 {
+                return -1 as i64
             }
-            comp[len] = c
-            len = len + 1
+            pos = pos + 1
         }
-        comp[len] = 0 as u8
-        if len == 0 {
-            return cur
+        if pos - start >= FS_NAME_LEN {
+            return -1 as i64
         }
-        pos = pos + len
-        found: i64 = fs_find_in_dir(cur as u64, &comp[0])
+        component: u8[] = path[start..pos]
+        found: i64 = fs_find_in_dir(cur as u64, component)
         if found < 0 {
             return -1 as i64
         }
         cur = found
     }
-    return -1 as i64
+    return cur
 }
 
-; Split an absolute path into its parent inode (returned) and leaf name
-; (written to name_buf); -1 on error.
-export fs_split_path: (path: u8*, name_buf: u8*) -> i64 {
-    path_len: u64 = 0
-    while @(path + path_len) != 0 {
-        path_len = path_len + 1
+export fs_split_path: (path: u8[]) -> PathSplit {
+    if path.len < 2 {
+        return PathSplit { .parent = -1 as i64, .name = "" }
     }
-    if path_len == 0 {
-        return -1 as i64
+    if path[0] != FS_SLASH {
+        return PathSplit { .parent = -1 as i64, .name = "" }
     }
-    ; Find the last separator.
-    i: u64 = path_len
+    i: u64 = path.len
     while i > 0 {
         i = i - 1
-        if @(path + i) == FS_SLASH {
+        if path[i] == FS_SLASH {
             name_start: u64 = i + 1
-            name_len:   u64 = path_len - name_start
-            if name_len == 0 {
-                return -1 as i64
+            name_len: u64 = path.len - name_start
+            if name_len == 0 || name_len >= FS_NAME_LEN {
+                return PathSplit { .parent = -1 as i64, .name = "" }
             }
-            j: u64 = 0
-            while j < name_len && j < FS_NAME_LEN - 1 {
-                np: u8* = name_buf + j
-                @np = @(path + name_start + j)
-                j = j + 1
-            }
-            term: u8* = name_buf + j
-            @term = 0 as u8
-            ; Leaf directly under root.
+            name: u8[] = path[name_start..path.len]
             if i == 0 {
-                return 0
+                return PathSplit { .parent = 0, .name = name }
             }
-            ; Resolve the parent prefix "/a/b" up to (but excluding) the leaf.
-            parent_buf: u8[256] = []
-            k: u64 = 0
-            while k < i && k < 255 {
-                parent_buf[k] = @(path + k)
-                k = k + 1
-            }
-            parent_buf[k] = 0 as u8
-            return fs_resolve(&parent_buf[0])
+            parent_path: u8[] = path[0..i]
+            return PathSplit { .parent = fs_resolve(parent_path), .name = name }
         }
     }
-    return -1 as i64
+    return PathSplit { .parent = -1 as i64, .name = "" }
 }
 
 ; Allocate a new inode of node_type under parent_inode with the given name.
 ; Returns the new inode index, or -1 on error.
-export fs_create_at: (parent_inode: u64, name: u8*, node_type: u64) -> i64 {
+export fs_create_at: (parent_inode: u64, name: u8[], node_type: u64) -> i64 {
     if fs_inode_type(parent_inode) != FS_TYPE_DIR {
         return -1 as i64
     }
@@ -447,7 +439,10 @@ export fs_create_at: (parent_inode: u64, name: u8*, node_type: u64) -> i64 {
     inode.node_type = node_type as u16
     inode.parent = parent_inode as u16
     inode.size = 0 as u32
-    fs_strncpy(&inode.name[0], name, FS_NAME_LEN)
+    if fs_name_write(&inode.name[0], name) < 0 {
+        fs_free_inode(new_idx as u64)
+        return -1 as i64
+    }
     for slot in 0..FS_INODE_BLOCKS {
         inode.blocks[slot] = 0 as u16
     }
@@ -499,19 +494,18 @@ export fs_init: (base_pa: u64, image_size: u64) {
 
 ; Open a file by absolute path. flags: 0=RO, 1=RW, 2=create (implies RW).
 ; Returns fd >= 2 on success, or -1 on error.
-export fs_open: (path: u8*, flags: u64) -> i64 {
+export fs_open: (path: u8[], flags: u64) -> i64 {
     if fs_ready == 0 {
         return -1 as i64
     }
     inode: i64 = fs_resolve(path)
     if flags == FS_OPEN_CREATE {
         if inode < 0 {
-            name_buf: u8[32] = []
-            parent: i64 = fs_split_path(path, &name_buf[0])
-            if parent < 0 {
+            split: PathSplit = fs_split_path(path)
+            if split.parent < 0 {
                 return -1 as i64
             }
-            inode = fs_create_at(parent as u64, &name_buf[0], FS_TYPE_FILE)
+            inode = fs_create_at(split.parent as u64, split.name, FS_TYPE_FILE)
             if inode < 0 {
                 return -1 as i64
             }
@@ -719,7 +713,7 @@ export fs_close: (fd: i64) {
 }
 
 ; Create a file (type=1) or directory (type=2) under parent_path.
-export fs_create: (parent_path: u8*, name: u8*, node_type: u8) -> i64 {
+export fs_create: (parent_path: u8[], name: u8[], node_type: u8) -> i64 {
     if fs_ready == 0 {
         return -1 as i64
     }
@@ -731,7 +725,7 @@ export fs_create: (parent_path: u8*, name: u8*, node_type: u8) -> i64 {
 }
 
 ; Return the inode type at an absolute path (1=file, 2=dir), or -1 if missing.
-export fs_stat: (path: u8*) -> i64 {
+export fs_stat: (path: u8[]) -> i64 {
     if fs_ready == 0 {
         return -1 as i64
     }
@@ -742,8 +736,8 @@ export fs_stat: (path: u8*) -> i64 {
     return fs_inode_type(inode as u64) as i64
 }
 
-; Readdir: write the index-th entry name into name_buf, return its inode type (1/2) or -1.
-export fs_readdir: (path: u8*, index: u64, name_buf: u8*) -> i64 {
+; Result packs the name length above the low-byte inode type.
+export fs_readdir: (path: u8[], index: u64, name_buf: u8[]) -> i64 {
     if fs_ready == 0 {
         return -1 as i64
     }
@@ -765,9 +759,15 @@ export fs_readdir: (path: u8*, index: u64, name_buf: u8*) -> i64 {
             np: u8* = &de.name[0]
             if @np != 0 {
                 if count == index {
-                    fs_strncpy(name_buf, np, FS_NAME_LEN)
+                    name_len: u64 = fs_name_len(np)
+                    if name_len > name_buf.len {
+                        return -1 as i64
+                    }
+                    for i in 0..name_len {
+                        name_buf[i] = @(np + i)
+                    }
                     child: u64 = de.inode as u64
-                    return fs_inode_type(child) as i64
+                    return ((name_len << 8) | fs_inode_type(child)) as i64
                 }
                 count = count + 1
             }
@@ -778,16 +778,15 @@ export fs_readdir: (path: u8*, index: u64, name_buf: u8*) -> i64 {
 
 ; Create a directory at the given absolute path.
 ; Returns the new inode index, or -1 on error.
-export fs_mkdir: (path: u8*) -> i64 {
+export fs_mkdir: (path: u8[]) -> i64 {
     if fs_ready == 0 {
         return -1 as i64
     }
-    name_buf: u8[32] = []
-    parent: i64 = fs_split_path(path, &name_buf[0])
-    if parent < 0 {
+    split: PathSplit = fs_split_path(path)
+    if split.parent < 0 {
         return -1 as i64
     }
-    return fs_create_at(parent as u64, &name_buf[0], FS_TYPE_DIR)
+    return fs_create_at(split.parent as u64, split.name, FS_TYPE_DIR)
 }
 
 ; Free all data blocks and return inode to the free pool. Does not touch directory entries.
@@ -806,7 +805,7 @@ export fs_release_inode: (inode: u64) {
 
 ; Remove a regular file: detach from parent, free data blocks and inode.
 ; Refuses directories (use fs_rmdir). 0 on success, -1 on error.
-export fs_unlink: (path: u8*) -> i64 {
+export fs_unlink: (path: u8[]) -> i64 {
     if fs_ready == 0 {
         return -1 as i64
     }
@@ -817,12 +816,11 @@ export fs_unlink: (path: u8*) -> i64 {
     if fs_inode_type(inode as u64) != FS_TYPE_FILE {
         return -1 as i64
     }
-    name_buf: u8[32] = []
-    parent: i64 = fs_split_path(path, &name_buf[0])
-    if parent < 0 {
+    split: PathSplit = fs_split_path(path)
+    if split.parent < 0 {
         return -1 as i64
     }
-    if fs_remove_dirent(parent as u64, &name_buf[0]) < 0 {
+    if fs_remove_dirent(split.parent as u64, split.name) < 0 {
         return -1 as i64
     }
     fs_release_inode(inode as u64)
@@ -831,7 +829,7 @@ export fs_unlink: (path: u8*) -> i64 {
 
 ; Remove an empty directory at an absolute path. Refuses the root, non-empty
 ; directories, and non-directories. Returns 0 on success, -1 on error.
-export fs_rmdir: (path: u8*) -> i64 {
+export fs_rmdir: (path: u8[]) -> i64 {
     if fs_ready == 0 {
         return -1 as i64
     }
@@ -847,12 +845,11 @@ export fs_rmdir: (path: u8*) -> i64 {
     if fs_inode_size(inode as u64) != 0 {
         return -1 as i64
     }
-    name_buf: u8[32] = []
-    parent: i64 = fs_split_path(path, &name_buf[0])
-    if parent < 0 {
+    split: PathSplit = fs_split_path(path)
+    if split.parent < 0 {
         return -1 as i64
     }
-    if fs_remove_dirent(parent as u64, &name_buf[0]) < 0 {
+    if fs_remove_dirent(split.parent as u64, split.name) < 0 {
         return -1 as i64
     }
     fs_release_inode(inode as u64)
@@ -861,7 +858,7 @@ export fs_rmdir: (path: u8*) -> i64 {
 
 ; Move a file or directory from old_path to new_path (cross-directory allowed).
 ; Returns 0 on success, -1 on error.
-export fs_rename: (old_path: u8*, new_path: u8*) -> i64 {
+export fs_rename: (old_path: u8[], new_path: u8[]) -> i64 {
     if fs_ready == 0 {
         return -1 as i64
     }
@@ -869,26 +866,24 @@ export fs_rename: (old_path: u8*, new_path: u8*) -> i64 {
     if inode < 0 {
         return -1 as i64
     }
-    old_name: u8[32] = []
-    old_parent: i64 = fs_split_path(old_path, &old_name[0])
-    if old_parent < 0 {
+    old_split: PathSplit = fs_split_path(old_path)
+    if old_split.parent < 0 {
         return -1 as i64
     }
-    new_name: u8[32] = []
-    new_parent: i64 = fs_split_path(new_path, &new_name[0])
-    if new_parent < 0 {
+    new_split: PathSplit = fs_split_path(new_path)
+    if new_split.parent < 0 {
         return -1 as i64
     }
-    if fs_remove_dirent(old_parent as u64, &old_name[0]) < 0 {
+    if fs_remove_dirent(old_split.parent as u64, old_split.name) < 0 {
         return -1 as i64
     }
-    if fs_add_dirent(new_parent as u64, &new_name[0], inode as u64) < 0 {
+    if fs_add_dirent(new_split.parent as u64, new_split.name, inode as u64) < 0 {
         ; Roll back: re-add to the original parent.
-        fs_add_dirent(old_parent as u64, &old_name[0], inode as u64)
+        fs_add_dirent(old_split.parent as u64, old_split.name, inode as u64)
         return -1 as i64
     }
     moved: DiskInode* = fs_inode_ptr(inode as u64)
-    fs_strncpy(&moved.name[0], &new_name[0], FS_NAME_LEN)
-    moved.parent = new_parent as u16
+    fs_name_write(&moved.name[0], new_split.name)
+    moved.parent = new_split.parent as u16
     return 0
 }

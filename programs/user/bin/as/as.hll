@@ -1393,7 +1393,7 @@ main: () -> i32 {
         return 1
     }
 
-    fd: i64 = sys.open(src_pp, 0)
+    fd: i64 = sys.open(cstr.view(src_pp, 128), 0)
     if fd < 0 {
         console.write("as: cannot open ".ptr)
         console.writeln(src_pp)
@@ -1428,7 +1428,7 @@ main: () -> i32 {
 
     if obj_mode == 1 {
         ototal: u64 = object.write_object()
-        oofd: i64 = sys.open(out_pp, 2)
+        oofd: i64 = sys.open(cstr.view(out_pp, 128), 2)
         if oofd < 0 {
             console.write("as: cannot create ".ptr)
             console.writeln(out_pp)
@@ -1485,7 +1485,7 @@ main: () -> i32 {
     }
     total: u64 = (HDR as u64) + code_len
 
-    ofd: i64 = sys.open(out_pp, 2)
+    ofd: i64 = sys.open(cstr.view(out_pp, 128), 2)
     if ofd < 0 {
         console.write("as: cannot create ".ptr)
         console.writeln(out_pp)

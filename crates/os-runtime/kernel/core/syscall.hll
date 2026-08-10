@@ -66,13 +66,23 @@ const USER_HEAP_FLAGS = VMM_R + VMM_W + VMM_U
 const USER_ARG_BASE  = 0x7FF00000
 const USER_ARG_FLAGS = VMM_R + VMM_W + VMM_U
 const USER_ARG_MAX   = 4095
+const USER_PATH_MAX  = 255
 
 struct ExecOptions {
-    path: u8*,
+    path: u8[],
     arg: u8*,
-    out_path: u8*,
-    in_path: u8*,
-    out_append: u64,
+    arg_len: u64,
+    out_fd: i64,
+    in_fd: i64,
+}
+
+struct ExecRequest {
+    path_ptr: u8*,
+    path_len: u64,
+    arg_ptr: u8*,
+    arg_len: u64,
+    out_fd: i64,
+    in_fd: i64,
 }
 
 ; Framebuffer device: 75 pixel pages (320x240x4 bytes) then 1 control page whose
@@ -88,6 +98,28 @@ const FB_DBMODE_REG  = 8
 ; delivered ahead of the device by the next readchar. See OS spec ch.6.5.
 input_pushback_valid: u64 = 0
 input_pushback_byte:  u64 = 0
+
+user_range_ok: (ptr: u8*, len: u64, write: i64) -> i64 {
+    cur: layout.Pcb* = scheduler.current()
+    if cur == null {
+        return 0
+    }
+    return vmm.user_range(process.root(cur), ptr as u64, len, write)
+}
+
+copy_user_path: (src: u8*, len: u64, dst: u8*) -> i64 {
+    if len == 0 || len > USER_PATH_MAX || user_range_ok(src, len, 0) == 0 {
+        return -1 as i64
+    }
+    for i in 0..len {
+        c: u8 = @(src + i)
+        if c == 0 {
+            return -1 as i64
+        }
+        @(dst + i) = c
+    }
+    return 0
+}
 
 ; Pop the next raw UART byte (0-255), or -1 if none. Ignores the pushback.
 export kuart_take: () -> i64 {
@@ -218,56 +250,24 @@ export load_elf_segments: (fd: i64, hdr: u8*) -> i64 {
     return loaded
 }
 
-; Load a static ELF64 into a new process and enqueue it; arg staged at USER_ARG_BASE,
-; out_path/in_path redirect child stdio (out_append seeks to end). pid or -1. OS spec 5.5/7.7.
+; Load a static ELF64 and transfer optional redirect descriptors to the child.
 export sys_exec_impl: (options: ExecOptions) -> i64 {
     fd: i64 = fs.open(options.path, 0)
     if fd < 2 {
         return -1 as i64
     }
 
-    ; Open redirect targets now, while the parent address space is active and the
-    ; path strings readable; the FS-table fds stay valid past the root switch below.
-    out_fd: i64 = 0
-    in_fd:  i64 = 0
-    if options.out_path != null {
-        out_fd = fs.open(options.out_path, 2)  ; create (implies RW)
-        if out_fd < 2 {
-            fs.close(fd)
-            return -1 as i64
-        }
-        if options.out_append != 0 {
-            fs.set_pos(out_fd, fs.fd_size(out_fd))
-        } else {
-            fs.truncate(out_fd, 0)
-            fs.set_pos(out_fd, 0)
-        }
-    }
-    if options.in_path != null {
-        in_fd = fs.open(options.in_path, 0)  ; read-only
-        if in_fd < 2 {
-            if out_fd >= 2 {
-                fs.close(out_fd)
-            }
-            fs.close(fd)
-            return -1 as i64
-        }
-    }
-
-    ; Stage the argument into a kernel buffer before process_create switches roots.
     arg_buf: u8* = utilities.malloc(USER_ARG_MAX + 1)
     defer utilities.kfree(arg_buf)
     mem.memset(arg_buf, 0, USER_ARG_MAX + 1)
-    if options.arg != null {
-        ai: u64 = 0
-        while ai < USER_ARG_MAX {
-            c: u8 = @(options.arg + ai)
-            if c == 0 {
-                break
-            }
-            dp: u8* = arg_buf + ai
-            @dp = c
-            ai = ai + 1
+    if options.arg_len != 0 {
+        if options.arg_len > USER_ARG_MAX ||
+           user_range_ok(options.arg, options.arg_len, 0) == 0 {
+            fs.close(fd)
+            return -1 as i64
+        }
+        for ai in 0..options.arg_len {
+            @(arg_buf + ai) = @(options.arg + ai)
         }
     }
 
@@ -312,11 +312,11 @@ export sys_exec_impl: (options: ExecOptions) -> i64 {
 
     ; Bind the redirect fds onto the child so sys_write (fd 1) / readchar (fd 0)
     ; route to the file instead of the console. 0 means "inherit the console".
-    if out_fd >= 2 {
-        process.set_stdout_fd(pcb, out_fd as u64)
+    if options.out_fd >= 2 {
+        process.set_stdout_fd(pcb, options.out_fd as u64)
     }
-    if in_fd >= 2 {
-        process.set_stdin_fd(pcb, in_fd as u64)
+    if options.in_fd >= 2 {
+        process.set_stdin_fd(pcb, options.in_fd as u64)
     }
 
     ; Map the argument page into the child and copy the staged string in. Always
@@ -539,17 +539,139 @@ export sys_ftruncate_impl: (frame: layout.TrapFrame*) -> layout.SysAction {
     return Continue
 }
 
-; Remove the regular file at the absolute path in a0.
-export sys_unlink_impl: (frame: layout.TrapFrame*) -> layout.SysAction {
-    path: u8* = frame.x10 as u8*
-    frame.x10 = fs.unlink(path) as u64
+export sys_open_impl: (frame: layout.TrapFrame*) -> layout.SysAction {
+    path_buf: u8[256] = []
+    path_len: u64 = frame.x11
+    if copy_user_path(frame.x10 as u8*, path_len, &path_buf[0]) < 0 {
+        frame.x10 = 0xFFFFFFFFFFFFFFFF
+        return Continue
+    }
+    path: u8[] = path_buf[0..path_len]
+    frame.x10 = fs.open(path, frame.x12) as u64
     return Continue
 }
 
-; Remove the empty directory at the absolute path in a0.
+export sys_stat_impl: (frame: layout.TrapFrame*) -> layout.SysAction {
+    path_buf: u8[256] = []
+    path_len: u64 = frame.x11
+    if copy_user_path(frame.x10 as u8*, path_len, &path_buf[0]) < 0 {
+        frame.x10 = 0xFFFFFFFFFFFFFFFF
+        return Continue
+    }
+    frame.x10 = fs.stat(path_buf[0..path_len]) as u64
+    return Continue
+}
+
+export sys_mkdir_impl: (frame: layout.TrapFrame*) -> layout.SysAction {
+    path_buf: u8[256] = []
+    path_len: u64 = frame.x11
+    if copy_user_path(frame.x10 as u8*, path_len, &path_buf[0]) < 0 {
+        frame.x10 = 0xFFFFFFFFFFFFFFFF
+        return Continue
+    }
+    frame.x10 = fs.mkdir(path_buf[0..path_len]) as u64
+    return Continue
+}
+
+export sys_unlink_impl: (frame: layout.TrapFrame*) -> layout.SysAction {
+    path_buf: u8[256] = []
+    path_len: u64 = frame.x11
+    if copy_user_path(frame.x10 as u8*, path_len, &path_buf[0]) < 0 {
+        frame.x10 = 0xFFFFFFFFFFFFFFFF
+        return Continue
+    }
+    frame.x10 = fs.unlink(path_buf[0..path_len]) as u64
+    return Continue
+}
+
 export sys_rmdir_impl: (frame: layout.TrapFrame*) -> layout.SysAction {
-    path: u8* = frame.x10 as u8*
-    frame.x10 = fs.rmdir(path) as u64
+    path_buf: u8[256] = []
+    path_len: u64 = frame.x11
+    if copy_user_path(frame.x10 as u8*, path_len, &path_buf[0]) < 0 {
+        frame.x10 = 0xFFFFFFFFFFFFFFFF
+        return Continue
+    }
+    frame.x10 = fs.rmdir(path_buf[0..path_len]) as u64
+    return Continue
+}
+
+export sys_rename_impl: (frame: layout.TrapFrame*) -> layout.SysAction {
+    old_buf: u8[256] = []
+    new_buf: u8[256] = []
+    old_len: u64 = frame.x11
+    new_len: u64 = frame.x13
+    if copy_user_path(frame.x10 as u8*, old_len, &old_buf[0]) < 0 ||
+       copy_user_path(frame.x12 as u8*, new_len, &new_buf[0]) < 0 {
+        frame.x10 = 0xFFFFFFFFFFFFFFFF
+        return Continue
+    }
+    frame.x10 = fs.rename(old_buf[0..old_len], new_buf[0..new_len]) as u64
+    return Continue
+}
+
+export sys_readdir_impl: (frame: layout.TrapFrame*) -> layout.SysAction {
+    path_buf: u8[256] = []
+    name_buf: u8[32] = []
+    path_len: u64 = frame.x11
+    out_ptr: u8* = frame.x13 as u8*
+    out_len: u64 = frame.x14
+    if copy_user_path(frame.x10 as u8*, path_len, &path_buf[0]) < 0 {
+        frame.x10 = 0xFFFFFFFFFFFFFFFF
+        return Continue
+    }
+    result: i64 = fs.readdir(path_buf[0..path_len], frame.x12, name_buf[..])
+    if result >= 0 {
+        name_len: u64 = (result as u64) >> 8
+        if name_len > out_len || user_range_ok(out_ptr, name_len, 1) == 0 {
+            frame.x10 = 0xFFFFFFFFFFFFFFFF
+            return Continue
+        }
+        for i in 0..name_len {
+            @(out_ptr + i) = name_buf[i]
+        }
+    }
+    frame.x10 = result as u64
+    return Continue
+}
+
+export sys_exec_call_impl: (frame: layout.TrapFrame*) -> layout.SysAction {
+    path_buf: u8[256] = []
+    path_len: u64 = frame.x11
+    if copy_user_path(frame.x10 as u8*, path_len, &path_buf[0]) < 0 {
+        frame.x10 = 0xFFFFFFFFFFFFFFFF
+        return Continue
+    }
+    result: i64 = sys_exec_impl(ExecOptions {
+        .path = path_buf[0..path_len],
+        .arg = frame.x12 as u8*,
+        .arg_len = frame.x13,
+        .out_fd = 0,
+        .in_fd = 0,
+    })
+    frame.x10 = result as u64
+    return Continue
+}
+
+export sys_exec_redir_impl: (frame: layout.TrapFrame*) -> layout.SysAction {
+    request_ptr: ExecRequest* = frame.x10 as ExecRequest*
+    if user_range_ok(request_ptr as u8*, size_of<ExecRequest>(), 0) == 0 {
+        frame.x10 = 0xFFFFFFFFFFFFFFFF
+        return Continue
+    }
+    request: ExecRequest = @request_ptr
+    path_buf: u8[256] = []
+    if copy_user_path(request.path_ptr, request.path_len, &path_buf[0]) < 0 {
+        frame.x10 = 0xFFFFFFFFFFFFFFFF
+        return Continue
+    }
+    result: i64 = sys_exec_impl(ExecOptions {
+        .path = path_buf[0..request.path_len],
+        .arg = request.arg_ptr,
+        .arg_len = request.arg_len,
+        .out_fd = request.out_fd,
+        .in_fd = request.in_fd,
+    })
+    frame.x10 = result as u64
     return Continue
 }
 
@@ -655,6 +777,7 @@ export sys_brk_impl: (frame: layout.TrapFrame*) -> layout.SysAction {
 ; --- Syscall trace ring (strace panel feed; OS spec ch.7, roadmap 2.4) ---
 ; A bounded ring of recent ecalls, drained by the GUI from guest memory.
 const TRACE_ENTRIES = 256
+const TRACE_ENTRY_SIZE = 80
 
 struct TraceEntry {
     seq: u64,
@@ -664,30 +787,15 @@ struct TraceEntry {
     a1: u64,
     a2: u64,
     a3: u64,
+    a4: u64,
+    a5: u64,
     result: u64,
 }
 
-trace_ring: TraceEntry[TRACE_ENTRIES] = []
+trace_ring: u8[TRACE_ENTRIES * TRACE_ENTRY_SIZE] = []
 trace_seq:  u64 = 0
 
-; Append one ecall record into the wrapping ring (last TRACE_ENTRIES calls).
-; Publish-last: fill entry, write its seq, bump the counter last (see render note).
-export trace_record: (pid: u64, num: u64, a0: u64, a1: u64, a2: u64, a3: u64, ret: u64) {
-    next: u64 = trace_seq + 1
-    slot: u64 = (next - 1) % TRACE_ENTRIES
-    entry: TraceEntry* = &trace_ring[slot]
-    entry.pid = pid
-    entry.num = num
-    entry.a0 = a0
-    entry.a1 = a1
-    entry.a2 = a2
-    entry.a3 = a3
-    entry.result = ret
-    entry.seq = next
-    trace_seq = next
-}
-
-; Dispatch a U-mode ecall by a7; args in a0-a3, result to a0. Records the call
+; Dispatch a U-mode ecall by a7; args in a0-a5, result to a0. Records the call
 ; into the trace ring around the inner dispatch. See OS spec ch.7.
 export syscall_dispatch: (frame: layout.TrapFrame*) -> layout.SysAction {
     cur: layout.Pcb* = scheduler.current()
@@ -695,16 +803,23 @@ export syscall_dispatch: (frame: layout.TrapFrame*) -> layout.SysAction {
     if cur != null {
         pid = process.pid(cur)
     }
-    ; Capture args before the inner dispatch overwrites a0 with the result.
-    num: u64 = frame.x17
-    a0: u64 = frame.x10
-    a1: u64 = frame.x11
-    a2: u64 = frame.x12
-    a3: u64 = frame.x13
+    next: u64 = trace_seq + 1
+    slot: u64 = (next - 1) % TRACE_ENTRIES
+    entry: TraceEntry* = (&trace_ring[slot * TRACE_ENTRY_SIZE]) as TraceEntry*
+    entry.pid = pid
+    entry.num = frame.x17
+    entry.a0 = frame.x10
+    entry.a1 = frame.x11
+    entry.a2 = frame.x12
+    entry.a3 = frame.x13
+    entry.a4 = frame.x14
+    entry.a5 = frame.x15
 
     action: layout.SysAction = syscall_dispatch_inner(frame)
 
-    trace_record(pid, num, a0, a1, a2, a3, frame.x10)
+    entry.result = frame.x10
+    entry.seq = next
+    trace_seq = next
     return action
 }
 
@@ -737,11 +852,7 @@ export syscall_dispatch_inner: (frame: layout.TrapFrame*) -> layout.SysAction {
         }
 
         SYSCALL_OPEN -> {
-            path:  u8* = frame.x10 as u8*
-            flags: u64 = frame.x11
-            result: i64 = fs.open(path, flags)
-            frame.x10 = result as u64
-            return Continue
+            return sys_open_impl(frame)
         }
 
         SYSCALL_CLOSE -> {
@@ -762,18 +873,11 @@ export syscall_dispatch_inner: (frame: layout.TrapFrame*) -> layout.SysAction {
         }
 
         SYSCALL_RENAME -> {
-            old_path: u8* = frame.x10 as u8*
-            new_path: u8* = frame.x11 as u8*
-            result: i64 = fs.rename(old_path, new_path)
-            frame.x10 = result as u64
-            return Continue
+            return sys_rename_impl(frame)
         }
 
         SYSCALL_MKDIR -> {
-            path: u8* = frame.x10 as u8*
-            result: i64 = fs.mkdir(path)
-            frame.x10 = result as u64
-            return Continue
+            return sys_mkdir_impl(frame)
         }
 
         SYSCALL_READCHAR -> {
@@ -781,45 +885,19 @@ export syscall_dispatch_inner: (frame: layout.TrapFrame*) -> layout.SysAction {
         }
 
         SYSCALL_READDIR -> {
-            path:     u8* = frame.x10 as u8*
-            index:    u64 = frame.x11
-            name_buf: u8* = frame.x12 as u8*
-            result: i64 = fs.readdir(path, index, name_buf)
-            frame.x10 = result as u64
-            return Continue
+            return sys_readdir_impl(frame)
         }
 
         SYSCALL_STAT -> {
-            path: u8* = frame.x10 as u8*
-            result: i64 = fs.stat(path)
-            frame.x10 = result as u64
-            return Continue
+            return sys_stat_impl(frame)
         }
 
         SYSCALL_EXEC -> {
-            ; Args read inline to keep syscall_dispatch's (already large) frame small.
-            result: i64 = sys_exec_impl(ExecOptions {
-                .path = frame.x10 as u8*,
-                .arg = frame.x11 as u8*,
-                .out_path = null as u8*,
-                .in_path = null as u8*,
-                .out_append = 0,
-            })
-            frame.x10 = result as u64
-            return Continue
+            return sys_exec_call_impl(frame)
         }
 
         SYSCALL_EXEC_REDIR -> {
-            ; a0=path, a1=arg, a2=out_path, a3=in_path, a4=out_append.
-            r: i64 = sys_exec_impl(ExecOptions {
-                .path = frame.x10 as u8*,
-                .arg = frame.x11 as u8*,
-                .out_path = frame.x12 as u8*,
-                .in_path = frame.x13 as u8*,
-                .out_append = frame.x14,
-            })
-            frame.x10 = r as u64
-            return Continue
+            return sys_exec_redir_impl(frame)
         }
 
         SYSCALL_FTRUNCATE -> {

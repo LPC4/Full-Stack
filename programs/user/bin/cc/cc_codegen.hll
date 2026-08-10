@@ -1,7 +1,6 @@
 ; HLL-0 code generator for cc.hll.
 
 cc_state := import("./cc.hll")
-cstr := import("cstr")
 
 gen_binop: (op: TokenKind) {
     match op {
@@ -185,7 +184,7 @@ export gen_program: () {
     mi: i64 = -1
     for fi in 0..cc_state.nfn {
         p: u8* = (&cc_state.fns[fi]) as u8*
-        if cstr.eq(p, "main".ptr) == 1 {
+        if cc_state.name_eq(p, "main") == 1 {
             mi = fi
         }
     }

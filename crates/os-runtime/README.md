@@ -69,11 +69,14 @@ running process every tick, and `sret` resumes whichever process is next in the 
 Inodes are 128 bytes and index up to 44 direct 4 KiB blocks (176 KiB max file), enough to hold
 executable images. The public API covers `fs_init`, `fs_open`, `fs_read`, `fs_write`,
 `fs_close`, `fs_create`, `fs_mkdir`, `fs_rename`, `fs_stat`, and `fs_readdir`, with absolute
-path resolution rooted at inode 0.
+path resolution rooted at inode 0. Native paths are slices; the unchanged 32-byte on-disk name
+fields are decoded and compared with a 32-byte bound.
 
 ## Syscalls
 
-U-mode processes trap in via `ecall` (number in `a7`, args in `a0`-`a3`, result back in `a0`).
+U-mode processes trap in via `ecall` (number in `a7`, payload in `a0`-`a5`, result in `a0`).
+The native ABI marshals each slice as consecutive pointer and length words. Path ranges are
+validated and copied into the kernel before filesystem code receives them.
 Standard numbers follow the Linux RISC-V ABI; the 100-range numbers are project-specific to
 support the interactive shell.
 
@@ -95,9 +98,10 @@ support the interactive shell.
 | 220 | fork | clone the current process; returns the child pid to the parent, 0 to the child |
 | 260 | wait | reap an exited child; returns its exit code (-1 if none) |
 
-`sys_exec` loads a position-independent flat binary from the FS and maps it at a per-pid 16 MiB
-code slot starting at `0x4000_0000` (pid 1 lands at the base), then creates a PCB and enqueues
-it. The shell uses `exec` + `pidalive` to run a child and wait for it cooperatively.
+`sys_exec` loads a static ELF from the filesystem into a fresh address space at its linked
+virtual addresses, then creates a PCB and enqueues it. The shell uses `exec` + `waitpid` for
+foreground children. Redirection passes a checked request containing path and argument slices
+plus descriptors that the shell opened before exec.
 
 ## Userspace
 
