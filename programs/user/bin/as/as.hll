@@ -5,14 +5,15 @@ sys := import("sys")
 cstr := import("cstr")
 object := import("./as_object.hll")
 text := import("text")
+runtime := import("runtime")
 
-const ARG_BASE = 0x7FF00000
 const USER_CODE_BASE = 0x40000000
 const HDR = 4096
 const PAD = 32
 
 struct Token {
     bytes: u8[24],
+    len: u64,
 }
 
 struct MemOperand {
@@ -117,9 +118,13 @@ glbl_count: i64 = 0
 export relocs: Reloc* = null
 export nreloc: i64 = 0
 
-tok_at: (i: i64) -> u8* {
+tok_at: (i: i64) -> u8[] {
     token: Token* = tokbuf + i
-    return token as u8*
+    empty: u8[1] = []
+    view: u8[] = empty[0..0]
+    view.ptr = token as u8*
+    view.len = token.len
+    return view
 }
 
 export fail: (msg: u8*) {
@@ -137,44 +142,44 @@ is_sep: (c: u8) -> i64 {
     }
 }
 
-strip_comment: (line: u8*) {
-    i: u64 = 0
-    while @(line + i) != 0 {
-        c: u8 = @(line + i)
+strip_comment: (line: u8[]) -> u8[] {
+    for i in 0..line.len {
+        c: u8 = line[i]
         if c == ';' {
-            t: u8* = line + i
-            @t = 0 as u8
-            return
+            return line[0..i]
         }
         if c == '#' {
-            t: u8* = line + i
-            @t = 0 as u8
-            return
+            return line[0..i]
         }
-        i = i + 1
     }
+    return line
 }
 
-tokenize: (line: u8*) {
+tokenize: (line: u8[]) {
+    for slot in 0..6 {
+        token: Token* = tokbuf + slot
+        token.len = 0
+    }
     n: i64 = 0
     i: u64 = 0
-    while 1 == 1 {
-        while is_sep(@(line + i)) == 1 {
+    while i < line.len {
+        while i < line.len {
+            if is_sep(line[i]) == 0 {
+                break
+            }
             i = i + 1
         }
-        if @(line + i) == 0 {
+        if i == line.len {
             break
         }
         if n >= 6 {
             break
         }
-        dst: u8* = tok_at(n)
+        token: Token* = tokbuf + n
+        dst: u8* = token as u8*
         k: u64 = 0
-        while 1 == 1 {
-            c: u8 = @(line + i)
-            if c == 0 {
-                break
-            }
+        while i < line.len {
+            c: u8 = line[i]
             if is_sep(c) == 1 {
                 break
             }
@@ -185,39 +190,32 @@ tokenize: (line: u8*) {
             }
             i = i + 1
         }
-        term: u8* = dst + k
-        @term = 0 as u8
+        token.len = k
         n = n + 1
     }
     ntok = n
 }
 
-ends_colon: (p: u8*) -> i64 {
-    l: u64 = cstr.len(p)
-    if l == 0 {
+ends_colon: (token: u8[]) -> i64 {
+    if token.len == 0 {
         return 0
     }
-    if @(p + (l - 1)) == ':' {
+    if token[token.len - 1] == ':' {
         return 1
     }
     return 0
 }
 
-drop_colon: (p: u8*) {
-    l: u64 = cstr.len(p)
-    if l > 0 {
-        t: u8* = p + (l - 1)
-        @t = 0 as u8
-    }
+drop_colon: (token: u8[]) -> u8[] {
+    return token[0..token.len - 1]
 }
 
 ; --- Register and immediate parsing ---
 
-parse_uint: (p: u8*) -> i64 {
+parse_uint: (token: u8[]) -> i64 {
     v: i64 = 0
-    i: u64 = 0
-    while @(p + i) != 0 {
-        c: u8 = @(p + i)
+    for i in 0..token.len {
+        c: u8 = token[i]
         if c < '0' {
             return v
         }
@@ -225,136 +223,69 @@ parse_uint: (p: u8*) -> i64 {
             return v
         }
         v = v * 10 + (c as i64 - '0')
-        i = i + 1
     }
     return v
 }
 
-reg_num: (p: u8*) -> i64 {
-    if cstr.eq(p, "zero".ptr) == 1 {
-        return 0
+reg_num: (token: u8[]) -> i64 {
+    if token.len == 4 {
+        if token[0] == 'z' && token[1] == 'e' && token[2] == 'r' && token[3] == 'o' {
+            return 0
+        }
     }
-    if cstr.eq(p, "ra".ptr) == 1 {
-        return 1
-    }
-    if cstr.eq(p, "sp".ptr) == 1 {
-        return 2
-    }
-    if cstr.eq(p, "gp".ptr) == 1 {
-        return 3
-    }
-    if cstr.eq(p, "tp".ptr) == 1 {
-        return 4
-    }
-    if cstr.eq(p, "t0".ptr) == 1 {
-        return 5
-    }
-    if cstr.eq(p, "t1".ptr) == 1 {
-        return 6
-    }
-    if cstr.eq(p, "t2".ptr) == 1 {
-        return 7
-    }
-    if cstr.eq(p, "fp".ptr) == 1 {
-        return 8
-    }
-    if cstr.eq(p, "s0".ptr) == 1 {
-        return 8
-    }
-    if cstr.eq(p, "s1".ptr) == 1 {
-        return 9
-    }
-    if cstr.eq(p, "a0".ptr) == 1 {
-        return 10
-    }
-    if cstr.eq(p, "a1".ptr) == 1 {
-        return 11
-    }
-    if cstr.eq(p, "a2".ptr) == 1 {
-        return 12
-    }
-    if cstr.eq(p, "a3".ptr) == 1 {
-        return 13
-    }
-    if cstr.eq(p, "a4".ptr) == 1 {
-        return 14
-    }
-    if cstr.eq(p, "a5".ptr) == 1 {
-        return 15
-    }
-    if cstr.eq(p, "a6".ptr) == 1 {
-        return 16
-    }
-    if cstr.eq(p, "a7".ptr) == 1 {
-        return 17
-    }
-    if cstr.eq(p, "s2".ptr) == 1 {
-        return 18
-    }
-    if cstr.eq(p, "s3".ptr) == 1 {
-        return 19
-    }
-    if cstr.eq(p, "s4".ptr) == 1 {
-        return 20
-    }
-    if cstr.eq(p, "s5".ptr) == 1 {
-        return 21
-    }
-    if cstr.eq(p, "s6".ptr) == 1 {
-        return 22
-    }
-    if cstr.eq(p, "s7".ptr) == 1 {
-        return 23
-    }
-    if cstr.eq(p, "s8".ptr) == 1 {
-        return 24
-    }
-    if cstr.eq(p, "s9".ptr) == 1 {
-        return 25
-    }
-    if cstr.eq(p, "s10".ptr) == 1 {
-        return 26
-    }
-    if cstr.eq(p, "s11".ptr) == 1 {
-        return 27
-    }
-    if cstr.eq(p, "t3".ptr) == 1 {
-        return 28
-    }
-    if cstr.eq(p, "t4".ptr) == 1 {
-        return 29
-    }
-    if cstr.eq(p, "t5".ptr) == 1 {
-        return 30
-    }
-    if cstr.eq(p, "t6".ptr) == 1 {
-        return 31
-    }
-    if @p == 'x' {
-        n: i64 = parse_uint(p + 1)
-        if n >= 0 {
-            if n <= 31 {
-                return n
+    if token.len == 2 {
+        first: u8 = token[0]
+        second: u8 = token[1]
+        if first == 'r' && second == 'a' { return 1 }
+        if first == 's' && second == 'p' { return 2 }
+        if first == 'g' && second == 'p' { return 3 }
+        if first == 't' && second == 'p' { return 4 }
+        if first == 'f' && second == 'p' { return 8 }
+        if second >= '0' && second <= '9' {
+            digit: i64 = (second - '0') as i64
+            if first == 't' {
+                if digit <= 2 { return digit + 5 }
+                if digit <= 6 { return digit + 25 }
             }
+            if first == 'a' && digit <= 7 { return digit + 10 }
+            if first == 's' {
+                if digit <= 1 { return digit + 8 }
+                return digit + 16
+            }
+            if first == 'x' && digit <= 9 { return digit }
+        }
+    }
+    if token.len == 3 {
+        if token[0] == 's' && token[1] == '1' {
+            if token[2] == '0' { return 26 }
+            if token[2] == '1' { return 27 }
+        }
+        if token[0] == 'x' {
+            n: i64 = parse_uint(token[1..])
+            if n <= 31 { return n }
         }
     }
     fail("bad register".ptr)
     return -1
 }
 
-parse_imm: (p: u8*) -> i64 {
+parse_imm: (token: u8[]) -> i64 {
     i: u64 = 0
     neg: i64 = 0
-    if @(p + i) == '-' {
-        neg = 1
-        i = i + 1
+    if i < token.len {
+        if token[i] == '-' {
+            neg = 1
+            i = i + 1
+        }
     }
     v: i64 = 0
-    if @(p + i) == '0' {
-        if @(p + i + 1) == 'x' {
+    if i < token.len {
+        if token[i] == '0' {
+        if i + 1 < token.len {
+        if token[i + 1] == 'x' {
             i = i + 2
-            while @(p + i) != 0 {
-                c: u8 = @(p + i)
+            while i < token.len {
+                c: u8 = token[i]
                 d: i64 = -1
                 if c >= '0' {
                     if c <= '9' {
@@ -382,9 +313,11 @@ parse_imm: (p: u8*) -> i64 {
             }
             return v
         }
+        }
+        }
     }
-    while @(p + i) != 0 {
-        c: u8 = @(p + i)
+    while i < token.len {
+        c: u8 = token[i]
         if c < '0' {
             break
         }
@@ -400,64 +333,43 @@ parse_imm: (p: u8*) -> i64 {
     return v
 }
 
-parse_mem: (p: u8*) -> MemOperand {
-    imm: i64 = parse_imm(p)
+parse_mem: (token: u8[]) -> MemOperand {
+    imm: i64 = parse_imm(token)
     i: u64 = 0
-    while @(p + i) != 0 {
-        if @(p + i) == '(' {
+    while i < token.len {
+        if token[i] == '(' {
             break
         }
         i = i + 1
     }
-    if @(p + i) != '(' {
+    if i == token.len {
         fail("bad memory operand".ptr)
         return { .imm = imm, .reg = 0 }
     }
     i = i + 1
-    rbuf: u8[8] = []
-    rp: u8* = &rbuf[0]
+    start: u64 = i
     k: u64 = 0
-    while @(p + i) != 0 {
-        c: u8 = @(p + i)
+    while i < token.len {
+        c: u8 = token[i]
         if c == ')' {
             break
         }
-        if k < 7 {
-            d: u8* = rp + k
-            @d = c
-            k = k + 1
-        }
+        k = k + 1
         i = i + 1
     }
-    t: u8* = rp + k
-    @t = 0 as u8
-    return { .imm = imm, .reg = reg_num(rp) }
+    return { .imm = imm, .reg = reg_num(token[start..start + k]) }
 }
 
 ; --- Label table ---
 
-add_label: (name: u8*, off: i64, sec: Section) {
+add_label: (name: u8[], off: i64, sec: Section) {
     if lbl_count >= 64 {
         fail("too many labels".ptr)
         return
     }
     lab: Label* = &labels[lbl_count]
     dst: u8* = lab as u8*
-    i: u64 = 0
-    while 1 == 1 {
-        c: u8 = @(name + i)
-        if i >= 15 {
-            break
-        }
-        d: u8* = dst + i
-        @d = c
-        if c == 0 {
-            break
-        }
-        i = i + 1
-    }
-    t: u8* = dst + i
-    @t = 0 as u8
+    text.copy_name16(dst, name)
     lab.addr = off
     lab.sec = sec
     lbl_count = lbl_count + 1
@@ -477,12 +389,12 @@ resolve_labels: () {
     }
 }
 
-find_label: (name: u8*) -> i64 {
+find_label: (name: u8[]) -> i64 {
     i: i64 = 0
     while i < lbl_count {
         lab: Label* = &labels[i]
         cand: u8* = lab as u8*
-        if cstr.eq(cand, name) == 1 {
+        if cstr.eq_slice(cstr.view(cand, 16), name) == 1 {
             return lab.addr
         }
         i = i + 1
@@ -491,12 +403,12 @@ find_label: (name: u8*) -> i64 {
     return -1
 }
 
-export label_defined: (name: u8*) -> i64 {
+export label_defined: (name: u8[]) -> i64 {
     i: i64 = 0
     while i < lbl_count {
         lab: Label* = &labels[i]
         cand: u8* = lab as u8*
-        if cstr.eq(cand, name) == 1 {
+        if cstr.eq_slice(cstr.view(cand, 16), name) == 1 {
             return 1
         }
         i = i + 1
@@ -504,7 +416,7 @@ export label_defined: (name: u8*) -> i64 {
     return 0
 }
 
-add_globl: (name: u8*) {
+add_globl: (name: u8[]) {
     if is_globl(name) == 1 {
         return
     }
@@ -512,27 +424,15 @@ add_globl: (name: u8*) {
         return
     }
     dst: u8* = glbl_names + (glbl_count as u64) * 16
-    i: u64 = 0
-    while i < 15 {
-        c: u8 = @(name + i)
-        e: u8* = dst + i
-        @e = c
-        if c == 0 {
-            glbl_count = glbl_count + 1
-            return
-        }
-        i = i + 1
-    }
-    z: u8* = dst + 15
-    @z = 0 as u8
+    text.copy_name16(dst, name)
     glbl_count = glbl_count + 1
 }
 
-export is_globl: (name: u8*) -> i64 {
+export is_globl: (name: u8[]) -> i64 {
     i: i64 = 0
     while i < glbl_count {
         cand: u8* = glbl_names + (i as u64) * 16
-        if cstr.eq(cand, name) == 1 {
+        if cstr.eq_slice(cstr.view(cand, 16), name) == 1 {
             return 1
         }
         i = i + 1
@@ -540,25 +440,14 @@ export is_globl: (name: u8*) -> i64 {
     return 0
 }
 
-add_reloc: (name: u8*, off: i64, kind: RelocKind) {
+add_reloc: (name: u8[], off: i64, kind: RelocKind) {
     if nreloc >= 256 {
         fail("too many relocations".ptr)
         return
     }
     r: Reloc* = &relocs[nreloc]
     dst: u8* = r as u8*
-    i: u64 = 0
-    while i < 15 {
-        c: u8 = @(name + i)
-        e: u8* = dst + i
-        @e = c
-        if c == 0 {
-            break
-        }
-        i = i + 1
-    }
-    t: u8* = dst + i
-    @t = 0 as u8
+    text.copy_name16(dst, name)
     r.off = off
     r.kind = kind
     nreloc = nreloc + 1
@@ -627,12 +516,12 @@ enc_s: (rs1: i64, rs2: i64, imm: i64, funct3: i64) -> u32 {
          | ((funct3 as u32) << 12) | (i4_0 << 7) | (0x23 as u32)
 }
 
-emit_load_operand: (rd: u8*, operand: u8*, funct3: i64) {
+emit_load_operand: (rd: u8[], operand: u8[], funct3: i64) {
     { imm: i64, reg: i64 } = parse_mem(operand)
     emit_word(enc_i(reg_num(rd), reg, imm, funct3, 0x03))
 }
 
-emit_store_operand: (rs: u8*, operand: u8*, funct3: i64) {
+emit_store_operand: (rs: u8[], operand: u8[], funct3: i64) {
     { imm: i64, reg: i64 } = parse_mem(operand)
     emit_word(enc_s(reg, reg_num(rs), imm, funct3))
 }
@@ -699,28 +588,32 @@ split_pcrel: (delta: i64) {
     pcrel_hi = (delta - lo) >> 12
 }
 
-data_string: (pass: i64, line_p: u8*, zt: i64) -> i64 {
+data_string: (pass: i64, line: u8[], zt: i64) -> i64 {
     i: u64 = 0
-    while @(line_p + i) != 0 {
-        if @(line_p + i) == '"' {
+    while i < line.len {
+        if line[i] == '"' {
             break
         }
         i = i + 1
     }
-    if @(line_p + i) != '"' {
+    if i == line.len {
         fail("string: missing quote".ptr)
         return 0
     }
     i = i + 1
     n: i64 = 0
-    while @(line_p + i) != 0 {
-        c: u8 = @(line_p + i)
+    while i < line.len {
+        c: u8 = line[i]
         if c == '"' {
             break
         }
         if c == '\\' {
             i = i + 1
-            e: u8 = @(line_p + i)
+            if i == line.len {
+                fail("string: trailing escape".ptr)
+                return 0
+            }
+            e: u8 = line[i]
             c = match e {
                 'n'  -> '\n' as u8
                 't'  -> '\t' as u8
@@ -746,22 +639,32 @@ data_string: (pass: i64, line_p: u8*, zt: i64) -> i64 {
     return n
 }
 
-decode_directive: (name: u8*) -> Directive {
-    if cstr.eq(name, ".text".ptr) == 1 { return Directive.Text }
-    if cstr.eq(name, ".data".ptr) == 1 { return Directive.Data }
-    if cstr.eq(name, ".rodata".ptr) == 1 { return Directive.Rodata }
-    if cstr.eq(name, ".bss".ptr) == 1 { return Directive.Bss }
-    if cstr.eq(name, ".section".ptr) == 1 { return Directive.Section }
-    if cstr.eq(name, ".globl".ptr) == 1 { return Directive.Globl }
-    if cstr.eq(name, ".byte".ptr) == 1 { return Directive.Byte }
-    if cstr.eq(name, ".word".ptr) == 1 { return Directive.Word }
-    if cstr.eq(name, ".zero".ptr) == 1 { return Directive.Zero }
-    if cstr.eq(name, ".asciz".ptr) == 1 { return Directive.Asciz }
-    if cstr.eq(name, ".ascii".ptr) == 1 { return Directive.Ascii }
-    return Directive.Unknown
+token_hash: (token: u8[]) -> u64 {
+    hash: u64 = 2166136261
+    for byte in token {
+        hash = ((hash ^ (byte as u64)) * 16777619) & 0xFFFFFFFF
+    }
+    return hash
 }
 
-handle_directive: (pass: i64, base: i64, line_p: u8*) -> i64 {
+decode_directive: (name: u8[]) -> Directive {
+    return match token_hash(name) {
+        229455399 -> Directive.Bss
+        1135569119 -> Directive.Zero
+        1301906482 -> Directive.Rodata
+        1486807952 -> Directive.Section
+        1880857985 -> Directive.Data
+        2292723394 -> Directive.Text
+        2510560331 -> Directive.Byte
+        2672855249 -> Directive.Globl
+        3661584689 -> Directive.Word
+        3867520260 -> Directive.Ascii
+        4186295021 -> Directive.Asciz
+        _ -> Directive.Unknown
+    }
+}
+
+handle_directive: (pass: i64, base: i64, line: u8[]) -> i64 {
     directive: Directive = decode_directive(tok_at(base))
     match directive {
         Directive.Text -> {
@@ -781,8 +684,8 @@ handle_directive: (pass: i64, base: i64, line_p: u8*) -> i64 {
             return 0
         }
         Directive.Section -> {
-            a: u8* = tok_at(base + 1)
-            if cstr.eq(a, ".text".ptr) == 1 {
+            a: u8[] = tok_at(base + 1)
+            if cstr.eq_slice(a, ".text") == 1 {
                 cur_sec = Section.TextSection
             } else {
                 cur_sec = Section.DataSection
@@ -819,10 +722,10 @@ handle_directive: (pass: i64, base: i64, line_p: u8*) -> i64 {
             return n
         }
         Directive.Asciz -> {
-            return data_string(pass, line_p, 1)
+            return data_string(pass, line, 1)
         }
         Directive.Ascii -> {
-            return data_string(pass, line_p, 0)
+            return data_string(pass, line, 0)
         }
         Directive.Unknown -> {
             fail("unknown directive".ptr)
@@ -832,69 +735,71 @@ handle_directive: (pass: i64, base: i64, line_p: u8*) -> i64 {
     return 0
 }
 
-decode_opcode: (name: u8*) -> Opcode {
-    if cstr.eq(name, "add".ptr) == 1 { return Opcode.Add }
-    if cstr.eq(name, "addi".ptr) == 1 { return Opcode.Addi }
-    if cstr.eq(name, "addiw".ptr) == 1 { return Opcode.Addiw }
-    if cstr.eq(name, "and".ptr) == 1 { return Opcode.And }
-    if cstr.eq(name, "andi".ptr) == 1 { return Opcode.Andi }
-    if cstr.eq(name, "auipc".ptr) == 1 { return Opcode.Auipc }
-    if cstr.eq(name, "beq".ptr) == 1 { return Opcode.Beq }
-    if cstr.eq(name, "bge".ptr) == 1 { return Opcode.Bge }
-    if cstr.eq(name, "bgeu".ptr) == 1 { return Opcode.Bgeu }
-    if cstr.eq(name, "blt".ptr) == 1 { return Opcode.Blt }
-    if cstr.eq(name, "bltu".ptr) == 1 { return Opcode.Bltu }
-    if cstr.eq(name, "bne".ptr) == 1 { return Opcode.Bne }
-    if cstr.eq(name, "call".ptr) == 1 { return Opcode.Call }
-    if cstr.eq(name, "div".ptr) == 1 { return Opcode.Div }
-    if cstr.eq(name, "divu".ptr) == 1 { return Opcode.Divu }
-    if cstr.eq(name, "ecall".ptr) == 1 { return Opcode.Ecall }
-    if cstr.eq(name, "j".ptr) == 1 { return Opcode.J }
-    if cstr.eq(name, "jal".ptr) == 1 { return Opcode.Jal }
-    if cstr.eq(name, "jalr".ptr) == 1 { return Opcode.Jalr }
-    if cstr.eq(name, "la".ptr) == 1 { return Opcode.La }
-    if cstr.eq(name, "lb".ptr) == 1 { return Opcode.Lb }
-    if cstr.eq(name, "lbu".ptr) == 1 { return Opcode.Lbu }
-    if cstr.eq(name, "ld".ptr) == 1 { return Opcode.Ld }
-    if cstr.eq(name, "lh".ptr) == 1 { return Opcode.Lh }
-    if cstr.eq(name, "lhu".ptr) == 1 { return Opcode.Lhu }
-    if cstr.eq(name, "li".ptr) == 1 { return Opcode.Li }
-    if cstr.eq(name, "lui".ptr) == 1 { return Opcode.Lui }
-    if cstr.eq(name, "lw".ptr) == 1 { return Opcode.Lw }
-    if cstr.eq(name, "lwu".ptr) == 1 { return Opcode.Lwu }
-    if cstr.eq(name, "mul".ptr) == 1 { return Opcode.Mul }
-    if cstr.eq(name, "mv".ptr) == 1 { return Opcode.Mv }
-    if cstr.eq(name, "nop".ptr) == 1 { return Opcode.Nop }
-    if cstr.eq(name, "or".ptr) == 1 { return Opcode.Or }
-    if cstr.eq(name, "ori".ptr) == 1 { return Opcode.Ori }
-    if cstr.eq(name, "rem".ptr) == 1 { return Opcode.Rem }
-    if cstr.eq(name, "remu".ptr) == 1 { return Opcode.Remu }
-    if cstr.eq(name, "ret".ptr) == 1 { return Opcode.Ret }
-    if cstr.eq(name, "sb".ptr) == 1 { return Opcode.Sb }
-    if cstr.eq(name, "sd".ptr) == 1 { return Opcode.Sd }
-    if cstr.eq(name, "sh".ptr) == 1 { return Opcode.Sh }
-    if cstr.eq(name, "sll".ptr) == 1 { return Opcode.Sll }
-    if cstr.eq(name, "slli".ptr) == 1 { return Opcode.Slli }
-    if cstr.eq(name, "slt".ptr) == 1 { return Opcode.Slt }
-    if cstr.eq(name, "slti".ptr) == 1 { return Opcode.Slti }
-    if cstr.eq(name, "sltiu".ptr) == 1 { return Opcode.Sltiu }
-    if cstr.eq(name, "sltu".ptr) == 1 { return Opcode.Sltu }
-    if cstr.eq(name, "sra".ptr) == 1 { return Opcode.Sra }
-    if cstr.eq(name, "srai".ptr) == 1 { return Opcode.Srai }
-    if cstr.eq(name, "srl".ptr) == 1 { return Opcode.Srl }
-    if cstr.eq(name, "srli".ptr) == 1 { return Opcode.Srli }
-    if cstr.eq(name, "sub".ptr) == 1 { return Opcode.Sub }
-    if cstr.eq(name, "sw".ptr) == 1 { return Opcode.Sw }
-    if cstr.eq(name, "xor".ptr) == 1 { return Opcode.Xor }
-    if cstr.eq(name, "xori".ptr) == 1 { return Opcode.Xori }
-    return Opcode.Unknown
+decode_opcode: (name: u8[]) -> Opcode {
+    return match token_hash(name) {
+        254395046 -> Opcode.And
+        407142512 -> Opcode.Addiw
+        492171374 -> Opcode.Jalr
+        632395326 -> Opcode.Nop
+        752007166 -> Opcode.Srai
+        821323692 -> Opcode.Ret
+        894566304 -> Opcode.Sb
+        993596020 -> Opcode.Add
+        995232018 -> Opcode.Sd
+        1032681555 -> Opcode.Lwu
+        1062342494 -> Opcode.Sh
+        1077001542 -> Opcode.Li
+        1093779161 -> Opcode.Lh
+        1194444875 -> Opcode.Lb
+        1211222494 -> Opcode.La
+        1240764167 -> Opcode.Rem
+        1246896303 -> Opcode.Sw
+        1295110589 -> Opcode.Ld
+        1297033412 -> Opcode.Lhu
+        1357722663 -> Opcode.Srli
+        1365129626 -> Opcode.Lbu
+        1435638601 -> Opcode.Lui
+        1437780985 -> Opcode.Bge
+        1465094407 -> Opcode.Divu
+        1473741735 -> Opcode.Addi
+        1496191754 -> Opcode.Mv
+        1513219636 -> Opcode.Lw
+        1563699588 -> Opcode.Or
+        1571707747 -> Opcode.Beq
+        1821928899 -> Opcode.Auipc
+        1862248424 -> Opcode.Bltu
+        1876040605 -> Opcode.Sltu
+        1908981340 -> Opcode.Bne
+        1939311297 -> Opcode.Slli
+        1943151081 -> Opcode.Slti
+        1953918308 -> Opcode.Bgeu
+        1992575245 -> Opcode.Blt
+        2527302016 -> Opcode.Ecall
+        2786983959 -> Opcode.Ori
+        2914888669 -> Opcode.Andi
+        3018949801 -> Opcode.Call
+        3224913586 -> Opcode.Sll
+        3429620606 -> Opcode.Xor
+        3510427299 -> Opcode.Sra
+        3627576442 -> Opcode.Slt
+        3694981108 -> Opcode.Srl
+        3696113941 -> Opcode.Sub
+        3724398710 -> Opcode.Remu
+        3756903144 -> Opcode.Jal
+        3838436661 -> Opcode.Xori
+        3848448840 -> Opcode.Div
+        3951357313 -> Opcode.Mul
+        4010556029 -> Opcode.J
+        4023052436 -> Opcode.Sltiu
+        _ -> Opcode.Unknown
+    }
 }
 
 encode_instr: (pass: i64, base: i64, pc: i64) -> i64 {
-    m: u8* = tok_at(base)
-    o0: u8* = tok_at(base + 1)
-    o1: u8* = tok_at(base + 2)
-    o2: u8* = tok_at(base + 3)
+    m: u8[] = tok_at(base)
+    o0: u8[] = tok_at(base + 1)
+    o1: u8[] = tok_at(base + 2)
+    o2: u8[] = tok_at(base + 3)
     opcode: Opcode = decode_opcode(m)
 
     match opcode {
@@ -1315,16 +1220,14 @@ assemble: (pass: i64) {
                 }
             }
         }
-        term: u8* = line_p + j
-        @term = 0 as u8
-
-        strip_comment(line_p)
-        tokenize(line_p)
+        line_view: u8[] = line[0..j]
+        clean: u8[] = strip_comment(line_view)
+        tokenize(clean)
         if ntok != 0 {
             base: i64 = 0
-            first: u8* = tok_at(0)
+            first: u8[] = tok_at(0)
             if ends_colon(first) == 1 {
-                drop_colon(first)
+                first = drop_colon(first)
                 if pass == 1 {
                     match cur_sec {
                         TextSection -> { add_label(first, tpc, Section.TextSection) }
@@ -1334,9 +1237,13 @@ assemble: (pass: i64) {
                 base = 1
             }
             if base < ntok {
-                d0: u8* = tok_at(base)
-                if @d0 == '.' {
-                    sz: i64 = handle_directive(pass, base, line_p)
+                d0: u8[] = tok_at(base)
+                is_directive: bool = false
+                if d0.len > 0 {
+                    is_directive = d0[0] == '.'
+                }
+                if is_directive {
+                    sz: i64 = handle_directive(pass, base, clean)
                     match cur_sec {
                         TextSection -> {}
                         DataSection -> { dpc = dpc + sz }
@@ -1355,13 +1262,12 @@ assemble: (pass: i64) {
 
 ; --- Output ---
 
-ends_dot_o: (path: u8*) -> i64 {
-    l: u64 = cstr.len(path)
-    if l < 2 {
+ends_dot_o: (path: u8[]) -> i64 {
+    if path.len < 2 {
         return 0
     }
-    if @(path + (l - 2)) == '.' {
-        if @(path + (l - 1)) == 'o' {
+    if path[path.len - 2] == '.' {
+        if path[path.len - 1] == 'o' {
             return 1
         }
     }
@@ -1383,12 +1289,12 @@ main: () -> i32 {
         return 1
     }
 
-    arg: u8* = ARG_BASE as u8*
+    arg: u8[] = runtime.arg()
     src_path: u8[128] = []
     out_path: u8[128] = []
     src_pp: u8* = &src_path[0]
     out_pp: u8* = &out_path[0]
-    if text.split_two(arg, src_pp, out_pp) == false {
+    if text.split_two(arg, src_path[..], out_path[..]) == false {
         console.writeln("as: usage: as <src> <out>".ptr)
         return 1
     }
@@ -1408,7 +1314,7 @@ main: () -> i32 {
     src_len = n as u64
     src[src_len] = 0 as u8
 
-    obj_mode = ends_dot_o(out_pp)
+    obj_mode = ends_dot_o(cstr.view(out_pp, 128))
     lbl_count = 0
     code_len = 0
     data_len = 0

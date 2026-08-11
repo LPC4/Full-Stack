@@ -24,7 +24,7 @@ enum TokenKind {
     TokNe
 }
 
-struct Token { text: u8[16], kind: TokenKind, val: i64 }
+struct Token { text: u8[16], len: u64, kind: TokenKind, val: i64 }
 
 enum NodeKind {
     NodeInt

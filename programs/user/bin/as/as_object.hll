@@ -15,14 +15,12 @@ symbols: Symbol[128] = []
 nsym: i64 = 0
 first_global: i64 = 0
 
-out_str: (off: u64, src: u8*) -> u64 {
-    i: u64 = 0
-    while @(src + i) != 0 {
+out_str: (off: u64, src: u8[]) -> u64 {
+    for i in 0..src.len {
         d: u8* = as_state.out + off + i
-        @d = @(src + i)
-        i = i + 1
+        @d = src[i]
     }
-    return i
+    return src.len
 }
 
 out_bytes: (off: u64, src: u8*, n: u64) {
@@ -32,24 +30,24 @@ out_bytes: (off: u64, src: u8*, n: u64) {
     }
 }
 
-push_sym: (name: u8*, value: i64, shndx: i64) {
+push_sym: (name: u8[], value: i64, shndx: i64) {
     if nsym >= 128 {
         as_state.fail("too many symbols".ptr)
         return
     }
     sym: Symbol* = &symbols[nsym]
     dst: u8* = sym as u8*
-    text.copy_name16(dst, cstr.view(name, 24))
+    text.copy_name16(dst, name)
     sym.value = value
     sym.shndx = shndx
     nsym = nsym + 1
 }
 
-sym_index: (name: u8*) -> i64 {
+sym_index: (name: u8[]) -> i64 {
     for i in 1..nsym {
         sym: Symbol* = &symbols[i]
         cand: u8* = sym as u8*
-        if cstr.eq(cand, name) == 1 {
+        if cstr.eq_slice(cstr.view(cand, 16), name) == 1 {
             return i
         }
     }
@@ -58,10 +56,10 @@ sym_index: (name: u8*) -> i64 {
 
 build_symbols: () {
     nsym = 0
-    push_sym("".ptr, 0, 0)
+    push_sym("", 0, 0)
     for i in 0..as_state.lbl_count {
         lab: Label* = &as_state.labels[i]
-        nm: u8* = lab as u8*
+        nm: u8[] = cstr.view(lab as u8*, 16)
         if as_state.is_globl(nm) == 0 {
             shndx: i64 = 1
             match lab.sec {
@@ -74,7 +72,7 @@ build_symbols: () {
     first_global = nsym
     for i in 0..as_state.lbl_count {
         lab: Label* = &as_state.labels[i]
-        nm: u8* = lab as u8*
+        nm: u8[] = cstr.view(lab as u8*, 16)
         if as_state.is_globl(nm) == 1 {
             shndx: i64 = 1
             match lab.sec {
@@ -86,7 +84,7 @@ build_symbols: () {
     }
     for i in 0..as_state.nreloc {
         r: Reloc* = &as_state.relocs[i]
-        rn: u8* = r as u8*
+        rn: u8[] = cstr.view(r as u8*, 16)
         if as_state.label_defined(rn) == 0 {
             if sym_index(rn) < 0 {
                 push_sym(rn, 0, 0)
@@ -134,18 +132,18 @@ export write_object: () -> u64 {
     for si in 1..nsym {
         sym: Symbol* = &symbols[si]
         sym.name_off = cursor as i64
-        nm: u8* = sym as u8*
-        cursor = cursor + cstr.len(nm) + 1
+        nm: u8[] = cstr.view(sym as u8*, 16)
+        cursor = cursor + nm.len + 1
     }
     strtab_len: u64 = cursor
 
     shstr_off: u64 = strtab_off + strtab_len
-    out_str(shstr_off + 1, ".text".ptr)
-    out_str(shstr_off + 7, ".data".ptr)
-    out_str(shstr_off + 13, ".rela.text".ptr)
-    out_str(shstr_off + 24, ".symtab".ptr)
-    out_str(shstr_off + 32, ".strtab".ptr)
-    out_str(shstr_off + 40, ".shstrtab".ptr)
+    out_str(shstr_off + 1, ".text")
+    out_str(shstr_off + 7, ".data")
+    out_str(shstr_off + 13, ".rela.text")
+    out_str(shstr_off + 24, ".symtab")
+    out_str(shstr_off + 32, ".strtab")
+    out_str(shstr_off + 40, ".shstrtab")
     shstr_len: u64 = 50
     shoff: u64 = (shstr_off + shstr_len + 7) / 8 * 8
 
@@ -173,7 +171,7 @@ export write_object: () -> u64 {
 
     for ri in 0..as_state.nreloc {
         r: Reloc* = &as_state.relocs[ri]
-        rn: u8* = r as u8*
+        rn: u8[] = cstr.view(r as u8*, 16)
         eoff: u64 = rela_off + (ri as u64) * 24
         rtype: u64 = match r.kind {
             Jal       -> 17
@@ -207,7 +205,7 @@ export write_object: () -> u64 {
 
     for si in 1..nsym {
         sym: Symbol* = &symbols[si]
-        nm: u8* = sym as u8*
+        nm: u8[] = cstr.view(sym as u8*, 16)
         out_str(strtab_off + (sym.name_off as u64), nm)
     }
 

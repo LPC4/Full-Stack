@@ -3,9 +3,8 @@ console := import("console")
 sys := import("sys")
 cstr := import("cstr")
 text := import("text")
+runtime := import("runtime")
 codegen := import("./cc_codegen.hll")
-
-const ARG_BASE = 0x7FF00000
 
 ; --- Compiler state ---
 src: u8* = null
@@ -86,6 +85,7 @@ export emit_int: (v: i64) {
 push_tok: (kind: TokenKind, val: i64) {
     if ntok < 2048 {
         t: Token* = &toks[ntok]
+        t.len = 0
         t.kind = kind
         t.val = val
         d: u8* = (&toks[ntok]) as u8*
@@ -137,8 +137,7 @@ set_tok_txt: (idx: i64, start: u64, len: u64) {
     if t > 15 {
         t = 15
     }
-    z: u8* = d + t
-    @z = 0 as u8
+    toks[idx].len = t
 }
 
 scan_punct: (i: u64) -> u64 {
@@ -293,8 +292,13 @@ cur_val: () -> i64 {
     return t.val
 }
 
-cur_txt: () -> u8* {
-    return (&toks[pos]) as u8*
+cur_txt: () -> u8[] {
+    token: Token* = &toks[pos]
+    empty: u8[1] = []
+    view: u8[] = empty[0..0]
+    view.ptr = token as u8*
+    view.len = token.len
+    return view
 }
 
 nxt_kind: () -> TokenKind {
@@ -408,7 +412,7 @@ parse_primary: () -> i64 {
     }
     TokIdent -> {
         nm: u8[24] = []
-        text.copy_name16(&nm[0], cstr.view(cur_txt(), 16))
+        text.copy_name16(&nm[0], cur_txt())
         adv()
         if kind_is(cur_kind(), TokenKind.TokLParen) {
             adv()
@@ -519,8 +523,8 @@ parse_expr: () -> i64 {
 parse_stmt: () -> i64 {
     k: TokenKind = cur_kind()
     if kind_is(k, TokenKind.TokIdent) {
-        t: u8* = cur_txt()
-        if name_eq(t, "return") == 1 {
+        t: u8[] = cur_txt()
+        if cstr.eq_slice(t, "return") == 1 {
             adv()
             e: i64 = parse_expr()
             n: i64 = mk(NodeKind.NodeReturn)
@@ -528,7 +532,7 @@ parse_stmt: () -> i64 {
             nd.a = e
             return n
         }
-        if name_eq(t, "if") == 1 {
+        if cstr.eq_slice(t, "if") == 1 {
             adv()
             c: i64 = parse_expr()
             expect(TokenKind.TokLBrace, "expected { after if".ptr)
@@ -540,7 +544,7 @@ parse_stmt: () -> i64 {
             nd.b = body
             return n
         }
-        if name_eq(t, "while") == 1 {
+        if cstr.eq_slice(t, "while") == 1 {
             adv()
             c: i64 = parse_expr()
             expect(TokenKind.TokLBrace, "expected { after while".ptr)
@@ -555,7 +559,7 @@ parse_stmt: () -> i64 {
         k1: TokenKind = nxt_kind()
         if kind_is(k1, TokenKind.TokColon) {
             nm: u8[24] = []
-            text.copy_name16(&nm[0], cstr.view(cur_txt(), 16))
+            text.copy_name16(&nm[0], cur_txt())
             adv()
             adv()
             expect(TokenKind.TokIdent, "expected type in decl".ptr)
@@ -570,7 +574,7 @@ parse_stmt: () -> i64 {
         }
         if kind_is(k1, TokenKind.TokAssign) {
             nm: u8[24] = []
-            text.copy_name16(&nm[0], cstr.view(cur_txt(), 16))
+            text.copy_name16(&nm[0], cur_txt())
             adv()
             adv()
             e: i64 = parse_expr()
@@ -625,7 +629,7 @@ parse_function: () {
         return
     }
     fidx: i64 = nfn
-    text.copy_name16((&fns[fidx]) as u8*, cstr.view(cur_txt(), 16))
+    text.copy_name16((&fns[fidx]) as u8*, cur_txt())
     adv()
     expect(TokenKind.TokColon, "expected : after function name".ptr)
     expect(TokenKind.TokLParen, "expected ( before params".ptr)
@@ -638,7 +642,7 @@ parse_function: () {
                 break
             }
             pn: u8[24] = []
-            text.copy_name16(&pn[0], cstr.view(cur_txt(), 16))
+            text.copy_name16(&pn[0], cur_txt())
             adv()
             expect(TokenKind.TokColon, "expected : in parameter".ptr)
             expect(TokenKind.TokIdent, "expected parameter type".ptr)
@@ -689,12 +693,12 @@ main: () -> i32 {
         return 1
     }
 
-    arg: u8* = ARG_BASE as u8*
+    arg: u8[] = runtime.arg()
     src_path: u8[128] = []
     out_path: u8[128] = []
     src_pp: u8* = &src_path[0]
     out_pp: u8* = &out_path[0]
-    if text.split_two(arg, src_pp, out_pp) == false {
+    if text.split_two(arg, src_path[..], out_path[..]) == false {
         console.writeln("cc: usage: cc <src.hll> <out.s>".ptr)
         return 1
     }

@@ -1,6 +1,7 @@
 ; Relocation patching and executable emission for ld.hll.
 ld_state := import("./ld.hll")
 sys := import("sys")
+cstr := import("cstr")
 
 const USER_CODE_BASE = 0x40000000
 const HDR = 4096
@@ -62,13 +63,15 @@ export apply_relocs: () {
     for m in 0..ld_state.nmod {
         mb: i64 = ld_state.mod_base[m]
         f: u8* = ld_state.objbuf + (mb as u64)
-        ti: i64 = ld_state.sec_index_of(f, ".text".ptr)
-        di: i64 = ld_state.sec_index_of(f, ".data".ptr)
-        ld_state.sec_find(f, ".symtab".ptr)
+        file_len: u64 = ld_state.mod_size[m] as u64
+        ti: i64 = ld_state.sec_index_of(f, file_len, ".text")
+        di: i64 = ld_state.sec_index_of(f, file_len, ".data")
+        ld_state.sec_find(f, file_len, ".symtab")
         symoff: u64 = ld_state.sec_off
-        ld_state.sec_find(f, ".strtab".ptr)
+        ld_state.sec_find(f, file_len, ".strtab")
         strp: u8* = f + ld_state.sec_off
-        if ld_state.sec_find(f, ".rela.text".ptr) == 1 {
+        strsize: u64 = ld_state.sec_size
+        if ld_state.sec_find(f, file_len, ".rela.text") == 1 {
             roff: u64 = ld_state.sec_off
             nr: u64 = ld_state.sec_size / 24
             for j in 0..nr {
@@ -80,7 +83,6 @@ export apply_relocs: () {
                 shndx: i64 = ld_state.rd_le(s, 6, 2) as i64
                 value: u64 = ld_state.rd_le(s, 8, 8)
                 noff: u64 = ld_state.rd_le(s, 0, 4)
-                nm: u8* = strp + noff
                 target: i64 = 0
                 if shndx == ti {
                     target = ld_state.text_vbase + ld_state.mod_text_off[m] + (value as i64)
@@ -88,10 +90,20 @@ export apply_relocs: () {
                     if shndx == di {
                         target = ld_state.data_vbase + ld_state.mod_data_off[m] + (value as i64)
                     } else {
-                        target = ld_state.gsym_lookup(nm)
-                        if target < 0 {
+                        if noff >= strsize {
                             ld_state.fail("undefined symbol".ptr)
-                            target = 0
+                        } else {
+                            name_cap: u64 = strsize - noff
+                            name: u8[] = cstr.view(strp + noff, name_cap)
+                            if name.len == name_cap {
+                                ld_state.fail("undefined symbol".ptr)
+                            } else {
+                                target = ld_state.gsym_lookup(name)
+                                if target < 0 {
+                                    ld_state.fail("undefined symbol".ptr)
+                                    target = 0
+                                }
+                            }
                         }
                     }
                 }
@@ -106,7 +118,7 @@ export apply_relocs: () {
 ; --- Output ---
 
 export emit_exec: (out_path: u8*) {
-    entry: i64 = ld_state.gsym_lookup("_start".ptr)
+    entry: i64 = ld_state.gsym_lookup("_start")
     if entry < 0 {
         ld_state.fail("no _start symbol".ptr)
         return
@@ -154,7 +166,7 @@ export emit_exec: (out_path: u8*) {
     }
     total: u64 = (HDR as u64) + payload_len
 
-    ofd: i64 = sys.open(out_path, 2)
+    ofd: i64 = sys.open(cstr.view(out_path, 256), 2)
     if ofd < 0 {
         ld_state.fail("cannot create output".ptr)
         return

@@ -454,8 +454,7 @@ impl HighLevelCompiler {
             else_label: branch_else.clone(),
         });
 
-        // Lower then branch. Locals live in stack slots, so the merge needs no
-        // phi nodes; SSA construction is future work (see PHI_PLAN.md).
+        // Locals live in stack slots until the SSA work in COMPILER_QUALITY_PLAN.md.
         self.start_new_block(then_label.0.clone());
         self.lower_block(ir_program, then_block);
         self.set_terminator(IrTerminator::Jump(merge_label.clone()));
@@ -499,8 +498,7 @@ impl HighLevelCompiler {
             else_label: exit_label.clone(),
         });
 
-        // Loop-carried locals live in stack slots, so the exit block needs no
-        // phi nodes; SSA construction is future work (see PHI_PLAN.md).
+        // Loop-carried locals stay in stack slots until COMPILER_QUALITY_PLAN.md.
         self.start_new_block(body_label.0.clone());
         self.loop_labels
             .push((cond_label.clone(), exit_label.clone()));

@@ -2,7 +2,20 @@
 external main: () -> i32
 sys := import("sys")
 
-export _start: () {
+arg_ptr: u8* = null
+arg_len: u64 = 0
+
+export runtime_arg: () -> u8[] {
+	empty: u8[1] = []
+	arg: u8[] = empty[0..0]
+	arg.ptr = arg_ptr
+	arg.len = arg_len
+	return arg
+}
+
+export _start: (entry_arg_ptr: u8*, entry_arg_len: u64) {
+	arg_ptr = entry_arg_ptr
+	arg_len = entry_arg_len
 	code: i32 = main()
 	sys.exit(code as i64)
 }

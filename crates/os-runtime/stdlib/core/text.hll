@@ -65,37 +65,41 @@ export find_sub: (hay: u8*, needle: u8*) -> i64 {
 
 ; --- Argument splitting ---
 
-; Split `arg` at the first space into `a` (before) and `b` (after, spaces skipped),
-; both NUL-terminated. Returns false when there is no second field.
-export split_two: (arg: u8*, a: u8*, b: u8*) -> bool {
+; Split `arg` into two NUL-terminated compatibility buffers.
+export split_two: (arg: u8[], a: u8[], b: u8[]) -> bool {
 	i: u64 = 0
-	while @(arg + i) != 0 {
-		if @(arg + i) == ' ' {
+	while i < arg.len {
+		if arg[i] == ' ' {
 			break
 		}
-		da: u8* = a + i
-		@da = @(arg + i)
+		if i + 1 >= a.len {
+			return false
+		}
+		a[i] = arg[i]
 		i = i + 1
 	}
-	ta: u8* = a + i
-	@ta = 0 as u8
-	if @(arg + i) == 0 {
+	a[i] = 0 as u8
+	if i == arg.len {
 		return false
 	}
-	while @(arg + i) == ' ' {
+	while i < arg.len {
+		if arg[i] != ' ' {
+			break
+		}
 		i = i + 1
 	}
-	if @(arg + i) == 0 {
+	if i == arg.len {
 		return false
 	}
 	k: u64 = 0
-	while @(arg + i) != 0 {
-		db: u8* = b + k
-		@db = @(arg + i)
+	while i < arg.len {
+		if k + 1 >= b.len {
+			return false
+		}
+		b[k] = arg[i]
 		i = i + 1
 		k = k + 1
 	}
-	tb: u8* = b + k
-	@tb = 0 as u8
+	b[k] = 0 as u8
 	return true
 }

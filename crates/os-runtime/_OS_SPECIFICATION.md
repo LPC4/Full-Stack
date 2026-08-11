@@ -250,7 +250,9 @@ even for compute-bound processes that never yield.
 `exec` (syscall 103) loads a static ELF (7.4) into a fresh per-process root at
 `0x4000_0000`, parents the child to its launcher (captured before the root
 switches), and enqueues it. The native call carries pointer-length pairs for the
-executable path and argument. `exec_redir` uses the fixed `ExecRequest` layout in
+executable path and argument. The child starts with the argument pointer and length
+in `a0`/`a1`; hosted `_start` exposes that bounded value through `runtime.arg()`.
+`exec_redir` uses the fixed `ExecRequest` layout in
 7.2 and transfers descriptors opened by the parent. Temporary argument and ELF
 buffers are released on every ordinary return. `process_peek_pid` reports the next
 pid to be assigned.
@@ -616,7 +618,7 @@ static heap, 4.2), and `string` (`len`/`is_empty`/`equals`/`copy`/`concat`).
 
 ### 9.3 `hosted/`
 
-`runtime` (`_start` -> `main` -> `sys.exit`), `sys` (the slice-first userspace
+`runtime` (bounded entry argument, `_start` -> `main` -> `sys.exit`), `sys` (the slice-first userspace
 wrappers for the syscalls in 7.2), `cstr` (bounded conversions at sentinel-format
 boundaries), and hosted `console` (stdout through `sys.write`, so redirection works).
 Linked by U-mode programs that run under the kernel.

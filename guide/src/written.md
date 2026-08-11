@@ -1511,14 +1511,29 @@ jumps here at execution, not to `main`. Here's what `_start` looks like:
 external main: () -> i32
 sys := import("sys")
 
-export _start: () {
+arg_ptr: u8* = null
+arg_len: u64 = 0
+
+export runtime_arg: () -> u8[] {
+	empty: u8[1] = []
+	arg: u8[] = empty[0..0]
+	arg.ptr = arg_ptr
+	arg.len = arg_len
+	return arg
+}
+
+export _start: (entry_arg_ptr: u8*, entry_arg_len: u64) {
+	arg_ptr = entry_arg_ptr
+	arg_len = entry_arg_len
 	code: i32 = main()
 	sys.exit(code as i64)
 }
 ```
 
 `external main` tells the compiler that somebody else will provide `main`. That somebody else is you! The runtime calls
-`main`, captures whatever it returns into `code`, and then calls `sys.exit(code)`.
+`main`, captures whatever it returns into `code`, and then calls `sys.exit(code)`. Under the kernel,
+the loader places the process argument pointer and length in `a0` and `a1`, `runtime.arg()` keeps
+that bounded slice for tools that consume an argument.
 
 Continue stepping until `jal ra, main` is next. Step once more and the machine jumps into the small
 `main` function that does 1 + 1 and returns 2. Step through it and you're back in `_start`, about to

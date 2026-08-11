@@ -3,8 +3,8 @@ console := import("console")
 sys := import("sys")
 cstr := import("cstr")
 text := import("text")
+runtime := import("runtime")
 
-const ARG_BASE = 0x7FF00000
 const MAXLINES = 200
 const LINEW = 128
 
@@ -130,10 +130,10 @@ fix_cur: () {
 
 ; --- File load / save ---
 
-ed_load: (path: u8*) {
+ed_load: (path: u8[]) {
     nlines = 0
     cur = 0
-    fd: i64 = sys.open(cstr.view(path, 256), 2)
+    fd: i64 = sys.open(path, 2)
     if fd < 0 {
         return
     }
@@ -180,7 +180,7 @@ ed_load: (path: u8*) {
     }
 }
 
-ed_write: (path: u8*) {
+ed_write: (path: u8[]) {
     bp: u8* = scratch
     total: u64 = 0
     for i in 0..nlines {
@@ -201,7 +201,7 @@ ed_write: (path: u8*) {
         }
     }
 
-    fd: i64 = sys.open(cstr.view(path, 256), 2)
+    fd: i64 = sys.open(path, 2)
     if fd < 0 {
         console.writeln("edit: write failed (open)".ptr)
         return
@@ -433,7 +433,7 @@ main: () -> i32 {
         return 1
     }
 
-    path: u8* = ARG_BASE as u8*
+    path: u8[] = runtime.arg()
     ed_load(path)
 
     ed_help()

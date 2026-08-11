@@ -37,5 +37,7 @@ e33b6cb372e23f27 09_hll_functions/sum_of_squares.build
 3462b6fe3fa1dc2e 09_hll_functions/sum_of_squares.hll
 e8f6605948ad5b00 09_hll_functions/sum_of_squares.ir
 3458e9157fb56fe0 09_hll_functions/sum_of_squares.s
-b2c7d430fe21b3f5 10_stdlib/build_sequence.build
-e29737699d866f0a 10_stdlib/build_sequence.hll
+d756d3ea6f4f5525 10_stdlib/build_sequence.build
+4e812c24e59c3c4a 10_stdlib/build_sequence.hll
+8b1cbc38d672b08d 10_stdlib/simple_malloc.build
+64c304e04d44a3ef 10_stdlib/simple_malloc.hll

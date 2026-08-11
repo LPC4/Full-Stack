@@ -249,8 +249,7 @@ A phi selects the incoming value associated with the predecessor block. The back
 to edge copies with parallel-assignment semantics. Conditional edges may route through generated
 trampoline labels so copies execute only on the selected edge.
 
-The HLL front end does not yet emit organic phi nodes. Mutable locals remain in stack slots. See
-`.ai/plan/PHI_PLAN.md` for the separate mem2reg roadmap.
+The HLL front end does not yet emit organic phi nodes. Mutable locals remain in stack slots.
 
 ### 5.7 Inline assembly
 

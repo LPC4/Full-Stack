@@ -4,8 +4,8 @@ sys := import("sys")
 cstr := import("cstr")
 link := import("./ld_link.hll")
 text := import("text")
+runtime := import("runtime")
 
-const ARG_BASE = 0x7FF00000
 const USER_CODE_BASE = 0x40000000
 const HDR = 4096
 const PAD = 32
@@ -212,27 +212,33 @@ build_globals: () {
     }
 }
 
-parse_args: (arg: u8*) {
+parse_args: (arg: u8[]) -> bool {
     npath = 0
     i: u64 = 0
     cur: u64 = 0
-    while @(arg + i) != 0 {
-        while @(arg + i) == ' ' {
+    while i < arg.len {
+        while i < arg.len {
+            if arg[i] != ' ' {
+                break
+            }
             i = i + 1
         }
-        if @(arg + i) == 0 {
+        if i == arg.len {
             break
         }
         if npath >= 16 {
             break
         }
         path_off[npath] = cur as i64
-        while @(arg + i) != 0 {
-            if @(arg + i) == ' ' {
+        while i < arg.len {
+            if arg[i] == ' ' {
                 break
             }
+            if cur + 1 >= 2048 {
+                return false
+            }
             d: u8* = path_pool + cur
-            @d = @(arg + i)
+            @d = arg[i]
             cur = cur + 1
             i = i + 1
         }
@@ -241,6 +247,7 @@ parse_args: (arg: u8*) {
         cur = cur + 1
         npath = npath + 1
     }
+    return true
 }
 
 main: () -> i32 {
@@ -257,8 +264,11 @@ main: () -> i32 {
         return 1
     }
 
-    arg: u8* = ARG_BASE as u8*
-    parse_args(arg)
+    arg: u8[] = runtime.arg()
+    if parse_args(arg) == false {
+        console.writeln("ld: argument list too long".ptr)
+        return 1
+    }
     if npath < 2 {
         console.writeln("ld: usage: ld <obj>... <out>".ptr)
         return 1

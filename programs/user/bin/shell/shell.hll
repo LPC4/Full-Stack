@@ -4,16 +4,89 @@ sys := import("sys")
 cstr := import("cstr")
 text := import("text")
 fileops := import("./shell_fileops.hll")
+enum ShellCommand {
+    Exit
+    Cd
+    Fg
+    Kill
+    Edit
+    Touch
+    Mkdir
+    Rmdir
+    Rm
+    Mv
+    Assembler
+    Compiler
+    Linker
+    Run
+    Ls
+    Cat
+    Echo
+    Pwd
+    Jobs
+    Help
+    Unknown
+}
+
+sh_hash: (text: u8[]) -> u64 {
+    hash: u64 = 2166136261
+    for byte in text {
+        hash = ((hash ^ (byte as u64)) * 16777619) & 0xFFFFFFFF
+    }
+    return hash
+}
+
+sh_decode: (text: u8[]) -> ShellCommand {
+    return match sh_hash(text) {
+        3454868101 -> ShellCommand.Exit
+        1529452802 -> ShellCommand.Cd
+        1780675802 -> ShellCommand.Fg
+        3306112409 -> ShellCommand.Kill
+        1541920145 -> ShellCommand.Edit
+        1770621400 -> ShellCommand.Touch
+        2883839448 -> ShellCommand.Mkdir
+        1044810463 -> ShellCommand.Rmdir
+        1616151016 -> ShellCommand.Rm
+        1496191754 -> ShellCommand.Mv
+        1579491469 -> ShellCommand.Assembler
+        1445564707 -> ShellCommand.Compiler
+        1295110589 -> ShellCommand.Linker
+        718098122 -> ShellCommand.Run
+        1446109160 -> ShellCommand.Ls
+        108289031 -> ShellCommand.Cat
+        3567113348 -> ShellCommand.Echo
+        1433271620 -> ShellCommand.Pwd
+        3825668221 -> ShellCommand.Jobs
+        946971642 -> ShellCommand.Help
+        _ -> ShellCommand.Unknown
+    }
+}
+
+
+sh_len: (text: u8*, capacity: u64) -> u64 {
+    len: u64 = 0
+    while len < capacity {
+        if @(text + len) == 0 {
+            break
+        }
+        len = len + 1
+    }
+    return len
+}
+
+sh_copy: (dst: u8*, capacity: u64, src: u8*, src_capacity: u64) -> i64 {
+    return cstr.write(dst, capacity, cstr.view(src, src_capacity))
+}
 
 ; --- Path helpers ---
 
 export sh_join_path: (cwd: u8*, arg: u8*, out: u8*) {
     if @arg == '/' {
-        cstr.copy(out, arg)
+        sh_copy(out, 256, arg, 256)
         return
     }
-    cstr.copy(out, cwd)
-    l: u64 = cstr.len(out)
+    sh_copy(out, 256, cwd, 256)
+    l: u64 = sh_len(out, 256)
     if l == 0 {
         slash: u8* = out + l
         @slash = '/' as u8
@@ -38,7 +111,7 @@ export sh_join_path: (cwd: u8*, arg: u8*, out: u8*) {
 }
 
 sh_path_pop: (cwd: u8*) {
-    l: u64 = cstr.len(cwd)
+    l: u64 = sh_len(cwd, 256)
     if l <= 1 {
         return
     }
@@ -107,7 +180,7 @@ sh_out: (s: u8*) {
         console.write(s)
         return
     }
-    n: u64 = cstr.len(s)
+    n: u64 = sh_len(s, 256)
     sys.write(sh_sink_fd, s, n)
 }
 
@@ -157,7 +230,7 @@ cmd_ls: (cwd: u8*, arg: u8*) {
     target: u8[256] = []
     target_p: u8* = &target[0]
     if @arg == 0 {
-        cstr.copy(target_p, cwd)
+        sh_copy(target_p, 256, cwd, 256)
     } else {
         sh_join_path(cwd, arg, target_p)
     }
@@ -207,15 +280,15 @@ cmd_cd: (cwd: u8*, arg: u8*) {
     if @arg == 0 {
         return
     }
-    if cstr.eq(arg, "/".ptr) == 1 {
+    if cstr.eq_slice(cstr.view(arg, 256), "/") == 1 {
         t: u8* = cwd + 1
         @t = 0 as u8
         return
     }
-    if cstr.eq(arg, ".".ptr) == 1 {
+    if cstr.eq_slice(cstr.view(arg, 256), ".") == 1 {
         return
     }
-    if cstr.eq(arg, "..".ptr) == 1 {
+    if cstr.eq_slice(cstr.view(arg, 256), "..") == 1 {
         sh_path_pop(cwd)
         return
     }
@@ -233,7 +306,7 @@ cmd_cd: (cwd: u8*, arg: u8*) {
         console.writeln(arg)
         return
     }
-    cstr.copy(cwd, target_p)
+    sh_copy(cwd, 256, target_p, 256)
 }
 
 sh_is_exec: (path: u8*) -> i64 {
@@ -439,8 +512,8 @@ sh_try_dir: (dir: u8*, name: u8*, out: u8*) -> i64 {
     if sh_is_exec(out) == 1 {
         return 1
     }
-    l: u64 = cstr.len(out)
-    cstr.copy(out + l, ".elf".ptr)
+    l: u64 = sh_len(out, 256)
+    cstr.write(out + l, 256 - l, ".elf")
     if sh_is_exec(out) == 1 {
         return 1
     }
@@ -467,8 +540,8 @@ sh_resolve_program: (cwd: u8*, name: u8*, out: u8*) -> i64 {
         if sh_is_exec(out) == 1 {
             return 1
         }
-        l: u64 = cstr.len(out)
-        cstr.copy(out + l, ".elf".ptr)
+        l: u64 = sh_len(out, 256)
+        cstr.write(out + l, 256 - l, ".elf")
         if sh_is_exec(out) == 1 {
             return 1
         }
@@ -542,7 +615,7 @@ sh_launch_redir: (target_p: u8*, name: u8*, bg: i64, out_p: u8*, in_p: u8*, out_
 
 cmd_exec: (cwd: u8*, line: u8*) {
     bg: i64 = 0
-    l: u64 = cstr.len(line)
+    l: u64 = sh_len(line, 256)
     while l > 0 {
         if @(line + (l - 1)) != ' ' {
             break
@@ -602,13 +675,13 @@ cmd_exec: (cwd: u8*, line: u8*) {
         tt: u8* = tok_p + tn
         @tt = 0 as u8
 
-        if cstr.eq(tok_p, ">".ptr) == 1 {
+        if cstr.eq_slice(tok[0..tn], ">") == 1 {
             redir = 1
         } else {
-            if cstr.eq(tok_p, ">>".ptr) == 1 {
+            if cstr.eq_slice(tok[0..tn], ">>") == 1 {
                 redir = 2
             } else {
-                if cstr.eq(tok_p, "<".ptr) == 1 {
+                if cstr.eq_slice(tok[0..tn], "<") == 1 {
                     redir = 3
                 } else {
                     if redir == 3 {
@@ -625,7 +698,7 @@ cmd_exec: (cwd: u8*, line: u8*) {
                             redir = 0
                         } else {
                             if @name_p == 0 {
-                                cstr.copy(name_p, tok_p)
+                                cstr.write(name_p, 256, tok[0..tn])
                             }
                         }
                     }
@@ -801,11 +874,11 @@ sh_run_tool2: (cwd: u8*, arg: u8*, elf_p: u8*, usage: u8*) {
     sh_join_path(cwd, dst_p, out_abs_p)
     packed: u8[256] = []
     packed_p: u8* = &packed[0]
-    cstr.copy(packed_p, src_abs_p)
-    pl: u64 = cstr.len(packed_p)
+    sh_copy(packed_p, 256, src_abs_p, 256)
+    pl: u64 = sh_len(packed_p, 256)
     sep: u8* = packed_p + pl
     @sep = ' ' as u8
-    cstr.copy(packed_p + pl + 1, out_abs_p)
+    sh_copy(packed_p + pl + 1, 255 - pl, out_abs_p, 256)
     pid: i64 = sys.exec_arg(cstr.view(elf_p, 256), cstr.view(packed_p, 256))
     if pid < 0 {
         console.write("cannot launch ".ptr)
@@ -860,8 +933,8 @@ cmd_ld: (cwd: u8*, arg: u8*) {
             @sep = ' ' as u8
             plen = plen + 1
         }
-        al: u64 = cstr.len(abs_p)
-        cstr.copy(packed_p + plen, abs_p)
+        al: u64 = sh_len(abs_p, 256)
+        sh_copy(packed_p + plen, 512 - plen, abs_p, 256)
         plen = plen + al
         ntok = ntok + 1
     }
@@ -926,50 +999,29 @@ cmd_help: () {
     sh_outln("control   Ctrl-C stops a foreground program.   exit  quits.".ptr)
 }
 
-sh_is_out_builtin: (name: u8*) -> i64 {
-    if cstr.eq(name, "ls".ptr) == 1 {
-        return 1
-    }
-    if cstr.eq(name, "cat".ptr) == 1 {
-        return 1
-    }
-    if cstr.eq(name, "echo".ptr) == 1 {
-        return 1
-    }
-    if cstr.eq(name, "pwd".ptr) == 1 {
-        return 1
-    }
-    if cstr.eq(name, "jobs".ptr) == 1 {
-        return 1
-    }
-    if cstr.eq(name, "help".ptr) == 1 {
-        return 1
+sh_is_out_builtin: (name: u8[]) -> i64 {
+    command: ShellCommand = sh_decode(name)
+    match command {
+        Ls -> { return 1 }
+        Cat -> { return 1 }
+        Echo -> { return 1 }
+        Pwd -> { return 1 }
+        Jobs -> { return 1 }
+        Help -> { return 1 }
+        _ -> { return 0 }
     }
     return 0
 }
 
-sh_dispatch_out_builtin: (cwd: u8*, cmd: u8*, args: u8*) {
-    if cstr.eq(cmd, "ls".ptr) == 1 {
-        cmd_ls(cwd, args)
-        return
+sh_dispatch_out_builtin: (cwd: u8*, command: ShellCommand, args: u8*) {
+    match command {
+        Ls -> { cmd_ls(cwd, args) }
+        Cat -> { cmd_cat(cwd, args) }
+        Echo -> { cmd_echo(args) }
+        Pwd -> { cmd_pwd(cwd) }
+        Jobs -> { cmd_jobs() }
+        _ -> { cmd_help() }
     }
-    if cstr.eq(cmd, "cat".ptr) == 1 {
-        cmd_cat(cwd, args)
-        return
-    }
-    if cstr.eq(cmd, "echo".ptr) == 1 {
-        cmd_echo(args)
-        return
-    }
-    if cstr.eq(cmd, "pwd".ptr) == 1 {
-        cmd_pwd(cwd)
-        return
-    }
-    if cstr.eq(cmd, "jobs".ptr) == 1 {
-        cmd_jobs()
-        return
-    }
-    cmd_help()
 }
 
 ; --- Pipelines ---
@@ -1011,7 +1063,7 @@ sh_run_stage: (cwd: u8*, line: u8*, def_in: u8*, def_out: u8*) {
     append: i64 = 0
     mode: i64 = 0
     cn: u64 = 0
-    l: u64 = cstr.len(line)
+    l: u64 = sh_len(line, 256)
     i: u64 = 0
     while i < l {
         while i < l {
@@ -1039,13 +1091,13 @@ sh_run_stage: (cwd: u8*, line: u8*, def_in: u8*, def_out: u8*) {
         tt: u8* = tok_p + tn
         @tt = 0 as u8
 
-        if cstr.eq(tok_p, ">".ptr) == 1 {
+        if cstr.eq_slice(tok[0..tn], ">") == 1 {
             mode = 1
         } else {
-            if cstr.eq(tok_p, ">>".ptr) == 1 {
+            if cstr.eq_slice(tok[0..tn], ">>") == 1 {
                 mode = 2
             } else {
-                if cstr.eq(tok_p, "<".ptr) == 1 {
+                if cstr.eq_slice(tok[0..tn], "<") == 1 {
                     mode = 3
                 } else {
                     if mode == 1 {
@@ -1106,7 +1158,9 @@ sh_run_stage: (cwd: u8*, line: u8*, def_in: u8*, def_out: u8*) {
         eff_in = in_abs_p
     }
 
-    if sh_is_out_builtin(name_p) == 1 {
+    name_view: u8[] = cstr.view(name_p, 64)
+    command: ShellCommand = sh_decode(name_view)
+    if sh_is_out_builtin(name_view) == 1 {
         if eff_out != null {
             fd: i64 = sys.open(cstr.view(eff_out, 256), 2)
             if fd < 0 {
@@ -1127,7 +1181,7 @@ sh_run_stage: (cwd: u8*, line: u8*, def_in: u8*, def_out: u8*) {
                 sh_src_fd = sfd
             }
         }
-        sh_dispatch_out_builtin(cwd, name_p, args)
+        sh_dispatch_out_builtin(cwd, command, args)
         sh_src_close()
         sh_sink_close()
         return
@@ -1150,7 +1204,7 @@ sh_run_stage: (cwd: u8*, line: u8*, def_in: u8*, def_out: u8*) {
 }
 
 cmd_pipe: (cwd: u8*, line: u8*) {
-    l: u64 = cstr.len(line)
+    l: u64 = sh_len(line, 256)
     while l > 0 {
         if @(line + (l - 1)) != ' ' {
             break
@@ -1230,7 +1284,7 @@ cmd_pipe: (cwd: u8*, line: u8*) {
 
 ; Runs each `&&` segment only if the previous segment exited 0.
 run_line: (cwd: u8*, line: u8*) {
-    l: u64 = cstr.len(line)
+    l: u64 = sh_len(line, 256)
 
     starts: u64[8] = []
     ends: u64[8] = []
@@ -1318,93 +1372,31 @@ handle_command: (cwd: u8*, line: u8*) {
     cmd: u8[32] = []
     cmd_p: u8* = &cmd[0]
     sh_first_word(line, cmd_p)
-    if @cmd_p == 0 {
-        return
-    }
+    command: ShellCommand = sh_decode(cstr.view(cmd_p, 32))
 
-    if cstr.eq(cmd_p, "exit".ptr) == 1 {
-        sys.exit(0)
-        return
+    match command {
+        Exit -> { sys.exit(0) }
+        Cd -> { cmd_cd(cwd, sh_skip_word(line)) }
+        Fg -> { cmd_fg(sh_skip_word(line)) }
+        Kill -> { cmd_kill(sh_skip_word(line)) }
+        Edit -> { cmd_edit(cwd, sh_skip_word(line)) }
+        Touch -> { fileops.cmd_touch(cwd, sh_skip_word(line)) }
+        Mkdir -> { fileops.cmd_mkdir(cwd, sh_skip_word(line)) }
+        Rmdir -> { fileops.cmd_rmdir(cwd, sh_skip_word(line)) }
+        Rm -> { fileops.cmd_rm(cwd, sh_skip_word(line)) }
+        Mv -> { fileops.cmd_mv(cwd, sh_skip_word(line)) }
+        Assembler -> { cmd_as(cwd, sh_skip_word(line)) }
+        Compiler -> { cmd_cc(cwd, sh_skip_word(line)) }
+        Linker -> { cmd_ld(cwd, sh_skip_word(line)) }
+        Run -> { cmd_run(cwd, sh_skip_word(line)) }
+        Ls -> { sh_run_stage(cwd, line, 0 as u8*, 0 as u8*) }
+        Cat -> { sh_run_stage(cwd, line, 0 as u8*, 0 as u8*) }
+        Echo -> { sh_run_stage(cwd, line, 0 as u8*, 0 as u8*) }
+        Pwd -> { sh_run_stage(cwd, line, 0 as u8*, 0 as u8*) }
+        Jobs -> { sh_run_stage(cwd, line, 0 as u8*, 0 as u8*) }
+        Help -> { sh_run_stage(cwd, line, 0 as u8*, 0 as u8*) }
+        Unknown -> { cmd_exec(cwd, line) }
     }
-    if cstr.eq(cmd_p, "cd".ptr) == 1 {
-        cmd_cd(cwd, sh_skip_word(line))
-        return
-    }
-    if cstr.eq(cmd_p, "fg".ptr) == 1 {
-        cmd_fg(sh_skip_word(line))
-        return
-    }
-    if cstr.eq(cmd_p, "kill".ptr) == 1 {
-        cmd_kill(sh_skip_word(line))
-        return
-    }
-    if cstr.eq(cmd_p, "edit".ptr) == 1 {
-        cmd_edit(cwd, sh_skip_word(line))
-        return
-    }
-    if cstr.eq(cmd_p, "touch".ptr) == 1 {
-        fileops.cmd_touch(cwd, sh_skip_word(line))
-        return
-    }
-    if cstr.eq(cmd_p, "mkdir".ptr) == 1 {
-        fileops.cmd_mkdir(cwd, sh_skip_word(line))
-        return
-    }
-    if cstr.eq(cmd_p, "rmdir".ptr) == 1 {
-        fileops.cmd_rmdir(cwd, sh_skip_word(line))
-        return
-    }
-    if cstr.eq(cmd_p, "rm".ptr) == 1 {
-        fileops.cmd_rm(cwd, sh_skip_word(line))
-        return
-    }
-    if cstr.eq(cmd_p, "mv".ptr) == 1 {
-        fileops.cmd_mv(cwd, sh_skip_word(line))
-        return
-    }
-    if cstr.eq(cmd_p, "as".ptr) == 1 {
-        cmd_as(cwd, sh_skip_word(line))
-        return
-    }
-    if cstr.eq(cmd_p, "cc".ptr) == 1 {
-        cmd_cc(cwd, sh_skip_word(line))
-        return
-    }
-    if cstr.eq(cmd_p, "ld".ptr) == 1 {
-        cmd_ld(cwd, sh_skip_word(line))
-        return
-    }
-    if cstr.eq(cmd_p, "run".ptr) == 1 {
-        cmd_run(cwd, sh_skip_word(line))
-        return
-    }
-
-    if cstr.eq(cmd_p, "ls".ptr) == 1 {
-        sh_run_stage(cwd, line, 0 as u8*, 0 as u8*)
-        return
-    }
-    if cstr.eq(cmd_p, "cat".ptr) == 1 {
-        sh_run_stage(cwd, line, 0 as u8*, 0 as u8*)
-        return
-    }
-    if cstr.eq(cmd_p, "echo".ptr) == 1 {
-        sh_run_stage(cwd, line, 0 as u8*, 0 as u8*)
-        return
-    }
-    if cstr.eq(cmd_p, "pwd".ptr) == 1 {
-        sh_run_stage(cwd, line, 0 as u8*, 0 as u8*)
-        return
-    }
-    if cstr.eq(cmd_p, "jobs".ptr) == 1 {
-        sh_run_stage(cwd, line, 0 as u8*, 0 as u8*)
-        return
-    }
-    if cstr.eq(cmd_p, "help".ptr) == 1 {
-        sh_run_stage(cwd, line, 0 as u8*, 0 as u8*)
-        return
-    }
-
-    cmd_exec(cwd, line)
 }
 
 main: () -> i32 {

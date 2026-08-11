@@ -62,7 +62,7 @@ const USER_PAGE_FLAGS = VMM_R + VMM_W + VMM_X + VMM_U
 const USER_HEAP_BASE  = 0x60000000
 const USER_HEAP_FLAGS = VMM_R + VMM_W + VMM_U
 
-; Per-process page holding the exec argument string; zeroed when there is none.
+; Per-process page holding the bounded exec argument bytes.
 const USER_ARG_BASE  = 0x7FF00000
 const USER_ARG_FLAGS = VMM_R + VMM_W + VMM_U
 const USER_ARG_MAX   = 4095
@@ -257,9 +257,8 @@ export sys_exec_impl: (options: ExecOptions) -> i64 {
         return -1 as i64
     }
 
-    arg_buf: u8* = utilities.malloc(USER_ARG_MAX + 1)
+    arg_buf: u8* = utilities.malloc(USER_ARG_MAX)
     defer utilities.kfree(arg_buf)
-    mem.memset(arg_buf, 0, USER_ARG_MAX + 1)
     if options.arg_len != 0 {
         if options.arg_len > USER_ARG_MAX ||
            user_range_ok(options.arg, options.arg_len, 0) == 0 {
@@ -319,15 +318,19 @@ export sys_exec_impl: (options: ExecOptions) -> i64 {
         process.set_stdin_fd(pcb, options.in_fd as u64)
     }
 
-    ; Map the argument page into the child and copy the staged string in. Always
-    ; mapped, so a program can read USER_ARG_BASE even when it has no argument.
+    ; The hosted entry receives the bounded argument through a0/a1.
     arg_pa: u8* = pmm.alloc()
     if arg_pa == null {
         fs.close(fd)
         return -1 as i64
     }
-    mem.memcpy(arg_pa, arg_buf, USER_ARG_MAX + 1)
+    mem.memset(arg_pa, 0, 4096)
+    if options.arg_len != 0 {
+        mem.memcpy(arg_pa, arg_buf, options.arg_len)
+    }
     vmm.map(USER_ARG_BASE, arg_pa as u64, USER_ARG_FLAGS)
+    pcb.frame.x10 = USER_ARG_BASE
+    pcb.frame.x11 = options.arg_len
 
     ; Load the ELF segments into the child's (now active) address space.
     segs: i64 = load_elf_segments(fd, hdr)

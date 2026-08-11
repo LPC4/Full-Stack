@@ -1078,8 +1078,8 @@ The normal source API is qualified through imports:
 
 ```hll
 console.writeln("hello".ptr)
-fd: i64 = sys.open("/tmp/a".ptr, 0)
-same: i64 = cstr.eq("a".ptr, "a".ptr)
+fd: i64 = sys.open("/tmp/a", 0)
+view: u8[] = cstr.view("a".ptr, 2)
 ok: bool = string.equals("x", "x")
 mem.copy(dst, src, n)
 ptr: u8* = alloc.malloc(64)
