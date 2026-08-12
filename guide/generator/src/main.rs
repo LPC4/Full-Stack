@@ -9,6 +9,7 @@
 mod code;
 mod config;
 mod freshness;
+mod include;
 mod page;
 mod render;
 mod repository;
@@ -175,12 +176,14 @@ fn prepare_output(args: &Args, repo_root: &Path) -> Result<PathBuf, String> {
     Ok(output)
 }
 
-fn load_pages(root: &Path, config: &Config) -> Result<Vec<Page>, String> {
+fn load_pages(root: &Path, repo_root: &Path, config: &Config) -> Result<Vec<Page>, String> {
     let mut authored_parts = Vec::new();
     for part in &config.parts {
         let source = root.join(&part.source);
         let markdown = std::fs::read_to_string(&source)
             .map_err(|e| format!("cannot read {}: {e}", source.display()))?;
+        let markdown = include::expand(&markdown, repo_root)
+            .map_err(|e| format!("cannot expand {}: {e}", source.display()))?;
         authored_parts.push((part.title.as_str(), markdown));
     }
     Ok(split::split_parts(
@@ -211,7 +214,7 @@ fn run() -> Result<(), String> {
         false
     };
 
-    let pages = load_pages(root, &config)?;
+    let pages = load_pages(root, repo_root, &config)?;
     if pages.is_empty() {
         return Err("no pages were produced".into());
     }

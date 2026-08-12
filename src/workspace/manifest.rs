@@ -1,5 +1,4 @@
-use crate::build::{BuildError, BuildManifest, BuildSource, ImportClosurePolicy, StdlibPolicy};
-use crate::compilation_pipeline::TargetMode;
+use crate::build::{BuildError, BuildManifest, BuildSource, decode_build_manifest};
 use crate::workspace::{VPath, WorkspaceFs};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -12,16 +11,12 @@ pub fn load_build_manifest(
     path: &VPath,
 ) -> Result<BuildManifest, Vec<WorkspaceManifestDiagnostic>> {
     let manifest_text = read_text(fs, path)?;
-    let values = fs_utils::build_manifest::parse(&manifest_text)
-        .map_err(|err| vec![diagnostic(format!("manifest parse error: {}", err.0))])?;
-
-    let root_ref = values
-        .get("root")
-        .ok_or_else(|| vec![diagnostic("build manifest missing `root`")])?;
-    let root_path = resolve_relative(path, root_ref)
+    let decoded = decode_build_manifest(&manifest_text)
+        .map_err(|err| vec![diagnostic(format!("manifest parse error: {err}"))])?;
+    let root_path = resolve_relative(path, &decoded.root)
         .map_err(|err| vec![diagnostic(format!("invalid root path: {err}"))])?;
     let root_source = read_text(fs, &root_path)?;
-    let name = values.string("name").unwrap_or_else(|| {
+    let name = decoded.name.clone().unwrap_or_else(|| {
         root_path
             .file_name()
             .unwrap_or("program")
@@ -29,71 +24,30 @@ pub fn load_build_manifest(
             .trim_end_matches(".s")
             .to_owned()
     });
-    let target = values
-        .get("target")
-        .map(parse_target_mode)
-        .transpose()
-        .map_err(|err| vec![diagnostic(err)])?
-        .unwrap_or(TargetMode::Hosted);
-
-    let mut manifest = match target {
-        TargetMode::Kernel => BuildManifest::kernel(name.clone(), ""),
-        TargetMode::Hosted | TargetMode::Freestanding => BuildManifest::hosted(name.clone(), ""),
-    };
-    manifest.name = name.clone();
-    manifest.target = target;
-    manifest.root = BuildSource::inline_with_path(name, root_source, root_path.as_str());
-    if crate::build::is_asm_path(root_path.as_str()) {
-        manifest.apply_asm_root_defaults();
-    }
-    manifest.entry = values.string("entry");
-    manifest.stdlib = values
-        .get("stdlib")
-        .map(|value| parse_stdlib_policy(value, target))
-        .transpose()
-        .map_err(|err| vec![diagnostic(err)])?
-        .unwrap_or(manifest.stdlib);
-
-    if let Some(enabled) = values
-        .bool("import_closure")
-        .map_err(|err| vec![diagnostic(err.0)])?
-    {
-        manifest.import_closure = if enabled {
-            ImportClosurePolicy::Enabled {
-                mangle_symbols: !matches!(target, TargetMode::Kernel),
-            }
-        } else {
-            ImportClosurePolicy::Disabled
-        };
-    }
-    if let Some(mangle_symbols) = values
-        .bool("mangle_symbols")
-        .map_err(|err| vec![diagnostic(err.0)])?
-        && matches!(manifest.import_closure, ImportClosurePolicy::Enabled { .. })
-    {
-        manifest.import_closure = ImportClosurePolicy::Enabled { mangle_symbols };
-    }
-    if let Some(prelude_ref) = values.get("source_prelude") {
+    let source_prelude = if let Some(prelude_ref) = &decoded.source_prelude {
         let prelude_path = resolve_relative(path, prelude_ref)
             .map_err(|err| vec![diagnostic(format!("invalid source_prelude path: {err}"))])?;
-        manifest.source_prelude = Some(read_text(fs, &prelude_path)?);
-    }
-    if let Some(exports) = values
-        .list("abi_exports")
-        .map_err(|err| vec![diagnostic(err.0)])?
-    {
-        manifest.abi_exports = exports;
-    }
-    if let Some(out_ref) = values.string("out") {
-        let out_path = resolve_relative(path, &out_ref)
-            .map_err(|err| vec![diagnostic(format!("invalid out path: {err}"))])?;
-        manifest.artifact_root = Some(out_path.as_str().into());
-        manifest.write_artifacts = true;
-    }
-    manifest.latency =
-        crate::build::parse_memory_latency_config(&values).map_err(|err| vec![diagnostic(err)])?;
-
-    Ok(manifest)
+        Some(read_text(fs, &prelude_path)?)
+    } else {
+        None
+    };
+    let artifact_root = decoded
+        .out
+        .as_deref()
+        .map(|out_ref| {
+            resolve_relative(path, out_ref)
+                .map(|path| path.as_str().into())
+                .map_err(|err| vec![diagnostic(format!("invalid out path: {err}"))])
+        })
+        .transpose()?;
+    let asm_root = crate::build::is_asm_path(root_path.as_str());
+    Ok(decoded.into_manifest(
+        name.clone(),
+        BuildSource::inline_with_path(name, root_source, root_path.as_str()),
+        asm_root,
+        source_prelude,
+        artifact_root,
+    ))
 }
 
 fn read_text(
@@ -120,26 +74,6 @@ fn resolve_relative(
     }
 }
 
-fn parse_target_mode(value: &str) -> Result<TargetMode, String> {
-    match value {
-        "hosted" => Ok(TargetMode::Hosted),
-        "freestanding" => Ok(TargetMode::Freestanding),
-        "kernel" => Ok(TargetMode::Kernel),
-        _ => Err(format!("unknown target `{value}`")),
-    }
-}
-
-fn parse_stdlib_policy(value: &str, target: TargetMode) -> Result<StdlibPolicy, String> {
-    match value {
-        "none" => Ok(StdlibPolicy::None),
-        "target" => Ok(StdlibPolicy::Explicit(target)),
-        "hosted" => Ok(StdlibPolicy::Explicit(TargetMode::Hosted)),
-        "freestanding" => Ok(StdlibPolicy::Explicit(TargetMode::Freestanding)),
-        "kernel" => Ok(StdlibPolicy::Explicit(TargetMode::Kernel)),
-        _ => Err(format!("unknown stdlib policy `{value}`")),
-    }
-}
-
 fn diagnostic(message: impl Into<String>) -> WorkspaceManifestDiagnostic {
     WorkspaceManifestDiagnostic {
         message: message.into(),
@@ -161,7 +95,7 @@ impl From<Vec<WorkspaceManifestDiagnostic>> for BuildError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::build::{BuildExecutor, BuildSource};
+    use crate::build::{BuildExecutor, BuildSource, ImportClosurePolicy, StdlibPolicy};
     use crate::workspace::MemoryFs;
 
     #[test]
@@ -307,5 +241,58 @@ mod tests {
             manifest.artifact_root.expect("out").display().to_string(),
             "programs/demo/build"
         );
+    }
+
+    #[test]
+    fn native_and_workspace_manifests_share_decoded_semantics() {
+        let text = "name = \"parity\"\nroot = \"main.hll\"\ntarget = \"hosted\"\n\
+                    entry = \"main\"\nstdlib = \"none\"\nimport_closure = false\n\
+                    mangle_symbols = false\nsource_prelude = \"types.hll\"\n\
+                    abi_exports = [\"main\", \"helper\"]\nout = \"artifacts\"\n\
+                    latency = \"realistic\"\nlatency_dram = 300\n";
+        let source = "main: () -> i32 { return 0 }\n";
+        let prelude = "struct Pair { left: i32, right: i32 }\n";
+
+        let root =
+            std::env::temp_dir().join(format!("full-stack-manifest-parity-{}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("create fixture");
+        std::fs::write(root.join("demo.build"), text).expect("write native manifest");
+        std::fs::write(root.join("main.hll"), source).expect("write native source");
+        std::fs::write(root.join("types.hll"), prelude).expect("write native prelude");
+        let native = BuildManifest::from_file(root.join("demo.build")).expect("native manifest");
+
+        let mut fs = MemoryFs::new();
+        for (path, contents) in [
+            ("project/demo.build", text),
+            ("project/main.hll", source),
+            ("project/types.hll", prelude),
+        ] {
+            fs.write_text(&VPath::parse(path).expect("path"), contents)
+                .expect("write workspace fixture");
+        }
+        let workspace = load_build_manifest(
+            &fs,
+            &VPath::parse("project/demo.build").expect("manifest path"),
+        )
+        .expect("workspace manifest");
+
+        assert_eq!(
+            BuildExecutor::plan(&native),
+            BuildExecutor::plan(&workspace)
+        );
+        assert_eq!(native.latency, workspace.latency);
+        assert_eq!(native.source_prelude, workspace.source_prelude);
+        assert_eq!(native.write_artifacts, workspace.write_artifacts);
+        assert_eq!(
+            native
+                .artifact_root
+                .as_deref()
+                .and_then(std::path::Path::file_name),
+            workspace
+                .artifact_root
+                .as_deref()
+                .and_then(std::path::Path::file_name)
+        );
+        std::fs::remove_dir_all(root).expect("remove fixture");
     }
 }

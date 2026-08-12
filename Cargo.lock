@@ -470,6 +470,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
+name = "benchmark-runner"
+version = "0.1.0"
+dependencies = [
+ "asm_to_binary",
+ "full_stack",
+ "hll_to_ir",
+ "serde_json",
+ "virtual_machine",
+]
+
+[[package]]
 name = "bit-set"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1290,6 +1301,9 @@ dependencies = [
 [[package]]
 name = "fs_utils"
 version = "0.1.0"
+dependencies = [
+ "asm_to_binary",
+]
 
 [[package]]
 name = "full_stack"
@@ -1664,6 +1678,7 @@ checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 name = "hll_to_ir"
 version = "2.0.1"
 dependencies = [
+ "asm_to_binary",
  "fs_utils",
  "log",
  "os_runtime",
@@ -1828,7 +1843,6 @@ version = "1.0.0"
 dependencies = [
  "asm_to_binary",
  "hll_to_ir",
- "log",
 ]
 
 [[package]]

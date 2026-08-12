@@ -1,0 +1,43 @@
+; 32x32 integer matmul repeated {{N}} times: the showcase loop nest.
+console := import("console")
+
+main: () -> i32 {
+    a: i64[1024] = []
+    b: i64[1024] = []
+    c: i64[1024] = []
+    i: i64 = 0
+    while i < 1024 {
+        a[i] = (i * 7 + 3) & 63
+        b[i] = (i * 13 + 5) & 63
+        i = i + 1
+    }
+    passes: i64 = {{N}}
+    p: i64 = 0
+    while p < passes {
+        r: i64 = 0
+        while r < 32 {
+            col: i64 = 0
+            while col < 32 {
+                acc: i64 = 0
+                k: i64 = 0
+                while k < 32 {
+                    acc = acc + a[r * 32 + k] * b[k * 32 + col]
+                    k = k + 1
+                }
+                c[r * 32 + col] = acc
+                col = col + 1
+            }
+            r = r + 1
+        }
+        p = p + 1
+    }
+    sum: i64 = 0
+    j: i64 = 0
+    while j < 1024 {
+        sum = sum + c[j]
+        j = j + 1
+    }
+    console.print_int(sum)
+    if sum == 0 { return 1 }
+    return 0
+}

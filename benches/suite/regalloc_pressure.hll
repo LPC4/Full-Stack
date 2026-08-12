@@ -1,0 +1,38 @@
+; Ten live accumulators across the loop body force register pressure.
+; Without the graph-coloring allocator every temp round-trips the stack.
+console := import("console")
+
+main: () -> i32 {
+    n: i64 = {{N}}
+    a0: i64 = 1
+    a1: i64 = 2
+    a2: i64 = 3
+    a3: i64 = 4
+    a4: i64 = 5
+    a5: i64 = 6
+    a6: i64 = 7
+    a7: i64 = 8
+    a8: i64 = 9
+    a9: i64 = 10
+    i: i64 = 0
+    while i < n {
+        a0 = a0 + i
+        a1 = a1 ^ a0
+        a2 = a2 + a1
+        a3 = a3 ^ a2
+        a4 = a4 + a3
+        a5 = a5 ^ a4
+        a6 = a6 + a5
+        a7 = a7 ^ a6
+        a8 = a8 + a7
+        a9 = a9 ^ a8
+        a0 = a0 & 1048575          ; keep magnitudes bounded, no overflow
+        a4 = a4 & 1048575
+        a8 = a8 & 1048575
+        i = i + 1
+    }
+    sum: i64 = a0 + a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8 + a9
+    console.print_int(sum)
+    if sum == 0 { return 1 }       ; weak guard; cross-variant check is primary
+    return 0
+}

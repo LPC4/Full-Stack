@@ -267,22 +267,7 @@ fn collect_type_names(code: &str) -> HashSet<String> {
 }
 
 fn is_register_word(word: &str) -> bool {
-    const ABI_INT_REGS: &[&str] = &[
-        "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2", "t3", "t4", "t5", "t6", "s0", "s1", "s2",
-        "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "a0", "a1", "a2", "a3", "a4", "a5",
-        "a6", "a7",
-    ];
-
-    const ABI_FP_REGS: &[&str] = &[
-        "ft0", "ft1", "ft2", "ft3", "ft4", "ft5", "ft6", "ft7", "fs0", "fs1", "fs2", "fs3", "fs4",
-        "fs5", "fs6", "fs7", "fs8", "fs9", "fs10", "fs11", "fa0", "fa1", "fa2", "fa3", "fa4",
-        "fa5", "fa6", "fa7",
-    ];
-
-    ABI_INT_REGS.contains(&word)
-        || ABI_FP_REGS.contains(&word)
-        || (word.starts_with('x') && word[1..].chars().all(|c| c.is_ascii_digit()))
-        || (word.starts_with('f') && word[1..].chars().all(|c| c.is_ascii_digit()))
+    asm_to_binary::isa::is_register_name(word)
 }
 
 fn push_inline_asm_code_part(out: &mut Out, base: usize, code_part: &str) {

@@ -81,7 +81,9 @@ fn link_stdlib_and_run(user_src: &str) -> (String, Option<i64>) {
     let stdlib_objs =
         CompilationPipeline::compile_stdlib_objects(TargetMode::Hosted).expect("stdlib compile");
     let user_result = pipeline.compile(user_src).expect("user compile");
-    let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
+    let (_, user_tokens) = pipeline
+        .compile_ir_to_assembly_with_tokens(&user_result.ir_program)
+        .expect("valid IR layout");
     let user_obj = pipeline.assemble(&user_tokens).expect("user assemble");
     let mut modules: Vec<(&str, &AssembledOutput)> =
         stdlib_objs.iter().map(|(n, o)| (n.as_str(), o)).collect();
@@ -110,7 +112,9 @@ fn stdlib_provides_malloc() {
     let mut tokens = Vec::new();
     for (_, src) in get_stdlib_modules_for_mode(TargetMode::Hosted).iter() {
         let result = pipeline.compile(src).expect("stdlib compile");
-        let (_, t) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
+        let (_, t) = pipeline
+            .compile_ir_to_assembly_with_tokens(&result.ir_program)
+            .expect("valid IR layout");
         tokens.extend(t);
     }
     assert!(!tokens.is_empty(), "stdlib token stream must not be empty");
@@ -197,7 +201,9 @@ fn stdlib_provides_runtime() {
     let mut tokens = Vec::new();
     for (_, src) in get_stdlib_modules_for_mode(TargetMode::Hosted).iter() {
         let result = pipeline.compile(src).expect("stdlib compile");
-        let (_, t) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
+        let (_, t) = pipeline
+            .compile_ir_to_assembly_with_tokens(&result.ir_program)
+            .expect("valid IR layout");
         tokens.extend(t);
     }
     use asm_to_binary::rv_instruction::RvInstruction;

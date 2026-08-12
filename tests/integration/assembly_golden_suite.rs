@@ -52,7 +52,7 @@ fn execute_assembly_golden_suite() {
                 )
             });
 
-            let actual_asm = pipeline.compile_ir_to_assembly(&result.ir_program);
+            let actual_asm = pipeline.compile_ir_to_assembly(&result.ir_program).expect("valid IR layout");
             let actual_asm = actual_asm.replace("\r\n", "\n").trim().to_string();
 
             let asm_path = path.with_extension("s");

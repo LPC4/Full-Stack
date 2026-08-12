@@ -1,8 +1,0 @@
-; Hosted process entry. User-facing console/syscall APIs live in console/sys modules.
-external main: () -> i32
-sys := import("sys")
-
-export _start: () {
-    code: i32 = main()
-    sys.exit(code as i64)
-}

@@ -3,9 +3,10 @@
 //! These tests drive the same logic the `fsc` binary uses, calling the
 //! underlying library functions directly so no binary invocation is needed.
 
-use asm_to_binary::AssembledOutput;
 use full_stack::compilation_pipeline::{CompilationPipeline, TargetMode};
-use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
+
+#[path = "../common/hosted_hll.rs"]
+mod hosted_hll;
 
 // --- Shared helpers ---
 
@@ -22,30 +23,17 @@ fn make_pipeline(mode: TargetMode, prefix: &str) -> CompilationPipeline {
 
 // Compile HLL + hosted stdlib -> assembled output -> run -> (uart, exit_code).
 fn run_hll(src: &str) -> (String, i64) {
-    let stdlib_objs = CompilationPipeline::compile_stdlib_objects(TargetMode::Hosted)
-        .expect("stdlib compile failed");
-
-    let user_pipeline = make_pipeline(TargetMode::Hosted, USER_PREFIX);
-    let user_result = user_pipeline.compile(src).expect("user compile failed");
-    let (_, user_tokens) =
-        user_pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
-    let user_obj = user_pipeline
-        .assemble(&user_tokens)
-        .expect("assemble user object failed");
-
-    let mut modules: Vec<(&str, &AssembledOutput)> =
-        stdlib_objs.iter().map(|(n, o)| (n.as_str(), o)).collect();
-    modules.push(("user", &user_obj));
-    let assembled = user_pipeline
-        .link_assembled_objects(&modules)
-        .expect("object link failed");
-
-    let mut vm = VirtualMachine::new(&assembled);
-    let result = vm.run(5_000_000);
-
+    let result = hosted_hll::run(
+        src,
+        hosted_hll::HostedOptions {
+            run_semantic_analysis: false,
+            string_prefix: Some(USER_PREFIX),
+            ..hosted_hll::HostedOptions::default()
+        },
+    );
     let code = match result.outcome {
-        StepOutcome::Halted(c) => c,
-        StepOutcome::Continue => panic!("program timed out"),
+        virtual_machine::virtual_machine::StepOutcome::Halted(c) => c,
+        virtual_machine::virtual_machine::StepOutcome::Continue => panic!("program timed out"),
     };
     (result.uart_output, code)
 }
@@ -61,7 +49,7 @@ fn hll_to_ir_text(src: &str) -> String {
 fn hll_to_asm_text(src: &str) -> String {
     let pipeline = make_pipeline(TargetMode::Hosted, USER_PREFIX);
     let result = pipeline.compile(src).expect("compile failed");
-    pipeline.compile_ir_to_assembly(&result.ir_program)
+    pipeline.compile_ir_to_assembly(&result.ir_program).expect("valid IR layout")
 }
 
 // --- hll-to-ir tests ---

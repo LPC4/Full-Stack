@@ -1,0 +1,27 @@
+; Stride-8 walk (64 bytes, one element per cache line) with a rotating
+; start offset so every line is touched: L1 reuse collapses.
+console := import("console")
+
+main: () -> i32 {
+    buf: i64[8192] = []
+    i: i64 = 0
+    while i < 8192 {
+        buf[i] = i & 511
+        i = i + 1
+    }
+    passes: i64 = {{N}}
+    sum: i64 = 0
+    p: i64 = 0
+    while p < passes {
+        start: i64 = p & 7
+        j: i64 = start
+        while j < 8192 {
+            sum = sum + buf[j]
+            j = j + 8
+        }
+        p = p + 1
+    }
+    console.print_int(sum)
+    if sum == 0 { return 1 }
+    return 0
+}

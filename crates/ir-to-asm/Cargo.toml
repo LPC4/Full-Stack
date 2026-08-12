@@ -11,7 +11,6 @@ path = "src/lib.rs"
 [dependencies]
 hll_to_ir = { path = "../hll-to-ir" }
 asm_to_binary = { path = "../asm-to-binary" }
-log = "0.4.27"
 
 [lints]
 workspace = true

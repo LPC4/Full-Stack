@@ -27,6 +27,7 @@ mod macros;
 
 pub mod assembler;
 pub mod encode_decode;
+pub mod isa;
 pub mod object_linker;
 pub mod pseudo;
 pub mod real;
@@ -41,5 +42,9 @@ pub use assembler::output::{
 };
 pub use assembler::reg_parse::parse_int_reg;
 pub use assembler::{Assembler, AssemblerError};
+pub use isa::{
+    FLOAT_REGISTER_NAMES, INTEGER_REGISTER_NAMES, float_register_name, integer_register_name,
+    is_register_name, parse_float_register, parse_integer_register, pcrel_split, register_name,
+};
 pub use object_linker::{LinkerError, ObjectLinker};
 pub use rv_instruction::{RvInstruction, parse_asm_source};

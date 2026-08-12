@@ -1,0 +1,70 @@
+name: Benchmark smoke
+
+on:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1"
+
+jobs:
+  correctness:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run deterministic smoke suite
+        run: |
+          cargo run --release -p benchmark-runner -- run --suite teaching --benchmark load_use_chain --memory-latency off --output benches/results/raw/smoke-single.jsonl
+          cargo run --release -p benchmark-runner -- run --suite teaching --benchmark load_use_chain --memory-latency realistic --output benches/results/raw/smoke-latency.jsonl
+      - name: Validate and analyze
+        run: python benches/tools/analyse.py benches/results/raw/smoke-single.jsonl benches/results/raw/smoke-latency.jsonl --output benches/results/generated --fail-on-regression
+      - name: Test analysis formulas
+        run: python -m unittest benches/tools/test_analyse.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-smoke
+          path: |
+            benches/results/raw/smoke-*.jsonl
+            benches/results/generated/
+
+  scheduled-full:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: python -m pip install -r benches/tools/requirements.txt
+      - name: Collect repeated base samples
+        run: |
+          cargo run --release -p benchmark-runner -- run --suite teaching \
+            --samples 20 --warmups 3 --input-size 1 --memory-latency off \
+            --output benches/results/raw/scheduled-base-off.jsonl
+          cargo run --release -p benchmark-runner -- run --suite teaching \
+            --samples 20 --warmups 3 --input-size 1 --memory-latency realistic \
+            --output benches/results/raw/scheduled-base-realistic.jsonl
+      - name: Collect kernel scaling points
+        run: |
+          for benchmark in sieve matmul fib_recursive strsearch; do
+            cargo run --release -p benchmark-runner -- run --suite teaching \
+              --benchmark "$benchmark" --samples 1 --input-size 2 \
+              --memory-latency off \
+              --output "benches/results/raw/scheduled-scale-${benchmark}.jsonl"
+          done
+      - name: Generate analysis and report artifacts
+        run: |
+          cargo run --release -p benchmark-runner -- exhibits --output benches/results/exhibits
+          python benches/tools/analyse.py benches/results/raw/scheduled-*.jsonl \
+            --output benches/results/generated
+          python benches/tools/figures.py benches/results/generated/summary.csv
+          python benches/tools/report.py benches/results/generated/summary.csv --exhibits benches/results/exhibits
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-full-${{ github.run_id }}
+          retention-days: 90
+          path: benches/results/

@@ -18,6 +18,13 @@ pub enum Directive {
 impl Directive {
     /// Try to parse a raw directive string. Returns None if it doesn't start with `.`.
     pub fn parse(raw: &str) -> Option<Self> {
+        Self::parse_with_constants(raw, &HashMap::new())
+    }
+
+    pub(crate) fn parse_with_constants(
+        raw: &str,
+        constants: &HashMap<String, i64>,
+    ) -> Option<Self> {
         let s = raw.trim();
         if !s.starts_with('.') {
             return None;
@@ -31,25 +38,47 @@ impl Directive {
             .unwrap_or((s, ""));
 
         match mnemonic {
-            ".section" => Some(Self::Section(rest.to_owned())),
-            ".text" => Some(Self::Section(".text".to_owned())),
-            ".data" => Some(Self::Section(".data".to_owned())),
-            ".rodata" => Some(Self::Section(".rodata".to_owned())),
-            ".bss" => Some(Self::Section(".bss".to_owned())),
-            ".globl" | ".global" => Some(Self::Globl(rest.to_owned())),
-            ".align" => rest.trim().parse().ok().map(Self::Align),
-            ".balign" => rest.trim().parse().ok().map(Self::Balign),
-            ".byte" => rest.trim().parse().ok().map(Self::Byte),
-            ".half" | ".short" => rest.trim().parse().ok().map(Self::Half),
-            ".word" | ".long" => rest.trim().parse().ok().map(Self::Word),
-            ".dword" | ".quad" => rest.trim().parse().ok().map(Self::Dword),
-            ".asciz" | ".string" => Some(Self::Asciz(parse_quoted_string(rest))),
-            ".space" | ".zero" => rest.trim().parse().ok().map(Self::Space),
+            ".section" if !rest.is_empty() => Some(Self::Section(rest.to_owned())),
+            ".text" if rest.is_empty() => Some(Self::Section(".text".to_owned())),
+            ".data" if rest.is_empty() => Some(Self::Section(".data".to_owned())),
+            ".rodata" if rest.is_empty() => Some(Self::Section(".rodata".to_owned())),
+            ".bss" if rest.is_empty() => Some(Self::Section(".bss".to_owned())),
+            ".globl" | ".global" if !rest.is_empty() => Some(Self::Globl(rest.to_owned())),
+            ".align" => parse_u64(rest, constants).map(Self::Align),
+            ".balign" => parse_u64(rest, constants).map(Self::Balign),
+            ".byte" => parse_u64(rest, constants)
+                .and_then(|value| value.try_into().ok())
+                .map(Self::Byte),
+            ".half" | ".short" => parse_u64(rest, constants)
+                .and_then(|value| value.try_into().ok())
+                .map(Self::Half),
+            ".word" | ".long" => parse_u64(rest, constants)
+                .and_then(|value| value.try_into().ok())
+                .map(Self::Word),
+            ".dword" | ".quad" => parse_u64(rest, constants).map(Self::Dword),
+            ".asciz" | ".string" => parse_quoted_string(rest).map(Self::Asciz),
+            ".space" | ".zero" => parse_u64(rest, constants).map(Self::Space),
             ".equ" | ".set" => {
                 let mut parts = rest.splitn(2, ',');
-                let name = parts.next()?.trim().to_owned();
+                let name = parts.next()?.trim();
+                if name.is_empty()
+                    || !name
+                        .chars()
+                        .all(|character| character.is_ascii_alphanumeric() || character == '_')
+                {
+                    return None;
+                }
                 let val: i64 = parts.next()?.trim().parse().ok()?;
-                Some(Self::Equ(name, val))
+                Some(Self::Equ(name.to_owned(), val))
+            }
+            _ if [
+                ".section", ".text", ".data", ".rodata", ".bss", ".globl", ".global", ".align",
+                ".balign", ".byte", ".half", ".short", ".word", ".long", ".dword", ".quad",
+                ".asciz", ".string", ".space", ".zero", ".equ", ".set",
+            ]
+            .contains(&mnemonic) =>
+            {
+                None
             }
             _ => Some(Self::Unknown(s.to_owned())),
         }
@@ -58,20 +87,26 @@ impl Directive {
 
 // Strip the surrounding `"..."` from a quoted string directive argument.
 // Anything after the closing quote is a trailing comment and is discarded.
-fn parse_quoted_string(s: &str) -> String {
+fn parse_quoted_string(s: &str) -> Option<String> {
     let s = s.trim();
-    let Some(body) = s.strip_prefix('"') else {
-        return s.to_owned();
-    };
-    let Some(close) = find_closing_quote(body) else {
-        return s.to_owned();
-    };
-    body[..close]
-        .replace("\\n", "\n")
-        .replace("\\t", "\t")
-        .replace("\\r", "\r")
-        .replace("\\\"", "\"")
-        .replace("\\\\", "\\")
+    let body = s.strip_prefix('"')?;
+    let close = find_closing_quote(body)?;
+    Some(
+        body[..close]
+            .replace("\\n", "\n")
+            .replace("\\t", "\t")
+            .replace("\\r", "\r")
+            .replace("\\\"", "\"")
+            .replace("\\\\", "\\"),
+    )
+}
+
+fn parse_u64(value: &str, constants: &HashMap<String, i64>) -> Option<u64> {
+    if let Some(value) = constants.get(value.trim()) {
+        (*value).try_into().ok()
+    } else {
+        value.trim().parse().ok()
+    }
 }
 
 // Byte index of the first unescaped `"` in an already-opened string literal.
@@ -87,3 +122,4 @@ fn find_closing_quote(body: &str) -> Option<usize> {
     }
     None
 }
+use std::collections::HashMap;

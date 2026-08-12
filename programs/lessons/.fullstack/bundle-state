@@ -22,7 +22,7 @@ dee2c34c87060efc 05_stack_frames/sum_of_squares.s
 1afeb877c6880db1 06_uart/hello_world.s
 5834dd06375e737e 06_uart/print_char.build
 c6da2b5f094de1c2 06_uart/print_char.s
-e93f68b94f7cd66d 07_qemu/hello_world.s
+af5caf937d3b90cb 07_qemu/hello_world.s
 2f6ce30e2c4e770d 08_hll/compiler_pipeline.build
 d37e270b129439ca 08_hll/compiler_pipeline.hll
 64f14e9a6e6e8654 08_hll/compiler_pipeline.ir

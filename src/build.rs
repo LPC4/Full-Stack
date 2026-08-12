@@ -107,74 +107,131 @@ impl BuildManifest {
         let path = path.into();
         let text = fs::read_to_string(&path).map_err(BuildError::Io)?;
         let base_dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
-        let values =
-            fs_utils::build_manifest::parse(&text).map_err(|err| BuildError::Manifest(err.0))?;
-
-        let root_path = values
-            .get("root")
-            .ok_or_else(|| BuildError::Manifest("build manifest missing `root`".to_owned()))?;
-        let root_path = resolve_manifest_path(base_dir, root_path);
-        let name = values.string("name").unwrap_or_else(|| {
+        let decoded = decode_build_manifest(&text).map_err(BuildError::Manifest)?;
+        let root_path = resolve_manifest_path(base_dir, &decoded.root);
+        let fallback_name = || {
             root_path
                 .file_stem()
                 .and_then(|stem| stem.to_str())
                 .unwrap_or("program")
                 .to_owned()
-        });
-        let target = values
-            .get("target")
-            .map(parse_target_mode)
-            .transpose()?
-            .unwrap_or(TargetMode::Hosted);
-
-        let mut manifest = match target {
-            TargetMode::Kernel => Self::kernel(name.clone(), ""),
-            TargetMode::Hosted | TargetMode::Freestanding => Self::hosted(name.clone(), ""),
         };
-        manifest.target = target;
-        manifest.name = name.clone();
+        let source_prelude = if let Some(path) = &decoded.source_prelude {
+            let path = resolve_manifest_path(base_dir, path);
+            Some(fs::read_to_string(path).map_err(BuildError::Io)?)
+        } else {
+            None
+        };
+        let artifact_root = decoded
+            .out
+            .as_deref()
+            .map(|out| resolve_manifest_path(base_dir, out));
+        let name = decoded.name.clone().unwrap_or_else(fallback_name);
         let asm_root = is_asm_path(&root_path.to_string_lossy());
-        manifest.root = BuildSource::path(name, root_path);
+        Ok(decoded.into_manifest(
+            name.clone(),
+            BuildSource::path(name, root_path),
+            asm_root,
+            source_prelude,
+            artifact_root,
+        ))
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct DecodedBuildManifest {
+    pub root: String,
+    pub name: Option<String>,
+    pub target: TargetMode,
+    pub entry: Option<String>,
+    pub stdlib: Option<StdlibPolicy>,
+    pub import_closure: Option<bool>,
+    pub mangle_symbols: Option<bool>,
+    pub source_prelude: Option<String>,
+    pub abi_exports: Option<Vec<String>>,
+    pub out: Option<String>,
+    pub latency: Option<MemoryLatencyConfig>,
+}
+
+impl DecodedBuildManifest {
+    pub(crate) fn into_manifest(
+        self,
+        name: String,
+        root: BuildSource,
+        asm_root: bool,
+        source_prelude: Option<String>,
+        artifact_root: Option<PathBuf>,
+    ) -> BuildManifest {
+        let mut manifest = match self.target {
+            TargetMode::Kernel => BuildManifest::kernel(name.clone(), ""),
+            TargetMode::Hosted | TargetMode::Freestanding => {
+                BuildManifest::hosted(name.clone(), "")
+            }
+        };
+        manifest.name = name;
+        manifest.target = self.target;
+        manifest.root = root;
         if asm_root {
             manifest.apply_asm_root_defaults();
         }
-        manifest.entry = values.string("entry");
-        manifest.stdlib = values
-            .get("stdlib")
-            .map(|value| parse_stdlib_policy(value, target))
-            .transpose()?
-            .unwrap_or(manifest.stdlib);
-
-        if let Some(enabled) = values.bool("import_closure").map_err(manifest_error)? {
+        manifest.entry = self.entry;
+        manifest.stdlib = self.stdlib.unwrap_or(manifest.stdlib);
+        if let Some(enabled) = self.import_closure {
             manifest.import_closure = if enabled {
                 ImportClosurePolicy::Enabled {
-                    mangle_symbols: !matches!(target, TargetMode::Kernel),
+                    mangle_symbols: !matches!(self.target, TargetMode::Kernel),
                 }
             } else {
                 ImportClosurePolicy::Disabled
             };
         }
-        if let Some(mangle_symbols) = values.bool("mangle_symbols").map_err(manifest_error)?
+        if let Some(mangle_symbols) = self.mangle_symbols
             && matches!(manifest.import_closure, ImportClosurePolicy::Enabled { .. })
         {
             manifest.import_closure = ImportClosurePolicy::Enabled { mangle_symbols };
         }
-
-        if let Some(path) = values.get("source_prelude") {
-            let path = resolve_manifest_path(base_dir, path);
-            manifest.source_prelude = Some(fs::read_to_string(path).map_err(BuildError::Io)?);
-        }
-        if let Some(exports) = values.list("abi_exports").map_err(manifest_error)? {
+        manifest.source_prelude = source_prelude;
+        if let Some(exports) = self.abi_exports {
             manifest.abi_exports = exports;
         }
-        if let Some(out) = values.string("out") {
-            manifest.artifact_root = Some(resolve_manifest_path(base_dir, &out));
-            manifest.write_artifacts = true;
-        }
-        manifest.latency = parse_memory_latency_config(&values).map_err(BuildError::Manifest)?;
-
-        Ok(manifest)
+        manifest.write_artifacts = self.out.is_some();
+        manifest.artifact_root = artifact_root;
+        manifest.latency = self.latency;
+        manifest
     }
+}
+
+pub(crate) fn decode_build_manifest(text: &str) -> Result<DecodedBuildManifest, String> {
+    let values = fs_utils::build_manifest::parse(text).map_err(|err| err.0)?;
+    let root = values
+        .string("root")
+        .ok_or_else(|| "build manifest missing `root`".to_owned())?;
+    let target = values
+        .get("target")
+        .map(parse_target_mode)
+        .transpose()?
+        .unwrap_or(TargetMode::Hosted);
+    let stdlib = values
+        .get("stdlib")
+        .map(|value| parse_stdlib_policy(value, target))
+        .transpose()?;
+    let import_closure = values.bool("import_closure").map_err(|err| err.0)?;
+    let mangle_symbols = values.bool("mangle_symbols").map_err(|err| err.0)?;
+    let abi_exports = values.list("abi_exports").map_err(|err| err.0)?;
+    let latency = parse_memory_latency_config(&values)?;
+    Ok(DecodedBuildManifest {
+        root,
+        name: values.string("name"),
+        target,
+        entry: values.string("entry"),
+        stdlib,
+        import_closure,
+        mangle_symbols,
+        source_prelude: values.string("source_prelude"),
+        abi_exports,
+        out: values.string("out"),
+        latency,
+    })
 }
 
 #[derive(Clone, Debug)]
@@ -490,7 +547,9 @@ impl BuildExecutor {
         let result = pipeline
             .compile(&source.source)
             .map_err(BuildError::Compile)?;
-        let (_, tokens) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
+        let (_, tokens) = pipeline
+            .compile_ir_to_assembly_with_tokens(&result.ir_program)
+            .map_err(|error| BuildError::Compile(CompilationError::Codegen(error)))?;
         let assembled = pipeline
             .assemble_named(&source.name, &tokens)
             .map_err(|err| BuildError::Assemble(err.message))?;
@@ -529,10 +588,6 @@ impl BuildExecutor {
         }
         pipeline
     }
-}
-
-fn manifest_error(err: fs_utils::build_manifest::ManifestError) -> BuildError {
-    BuildError::Manifest(err.0)
 }
 
 pub(crate) fn parse_memory_latency_config(
@@ -586,25 +641,23 @@ pub(crate) fn parse_memory_latency_config(
     Ok(Some(config))
 }
 
-fn parse_target_mode(value: &str) -> Result<TargetMode, BuildError> {
+fn parse_target_mode(value: &str) -> Result<TargetMode, String> {
     match value {
         "hosted" => Ok(TargetMode::Hosted),
         "freestanding" => Ok(TargetMode::Freestanding),
         "kernel" => Ok(TargetMode::Kernel),
-        _ => Err(BuildError::Manifest(format!("unknown target `{value}`"))),
+        _ => Err(format!("unknown target `{value}`")),
     }
 }
 
-fn parse_stdlib_policy(value: &str, target: TargetMode) -> Result<StdlibPolicy, BuildError> {
+fn parse_stdlib_policy(value: &str, target: TargetMode) -> Result<StdlibPolicy, String> {
     match value {
         "none" => Ok(StdlibPolicy::None),
         "target" => Ok(StdlibPolicy::Explicit(target)),
         "hosted" => Ok(StdlibPolicy::Explicit(TargetMode::Hosted)),
         "freestanding" => Ok(StdlibPolicy::Explicit(TargetMode::Freestanding)),
         "kernel" => Ok(StdlibPolicy::Explicit(TargetMode::Kernel)),
-        _ => Err(BuildError::Manifest(format!(
-            "unknown stdlib policy `{value}`"
-        ))),
+        _ => Err(format!("unknown stdlib policy `{value}`")),
     }
 }
 

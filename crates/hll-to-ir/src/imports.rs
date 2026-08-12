@@ -1179,6 +1179,14 @@ pub fn extract_interface(source: &str) -> Result<String, String> {
 /// importer's mangled references resolve to the target module's mangled definitions.
 pub fn extract_interface_prefixed(source: &str, prefix: &str) -> Result<String, String> {
     let program = parse_module(source)?;
+    let import_aliases = program
+        .declarations
+        .iter()
+        .filter_map(|decl| match &decl.decl {
+            DeclNode::ModuleImport { alias, .. } => Some(alias.as_str()),
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
     let exported_interfaces = program
         .declarations
         .iter()
@@ -1202,18 +1210,135 @@ pub fn extract_interface_prefixed(source: &str, prefix: &str) -> Result<String, 
                 "exported declaration exposes private interface `{private}` in its bounds"
             ));
         }
-        let node = match &decl.decl {
+        let mut node = match &decl.decl {
             DeclNode::Function { generics, .. } if !generics.is_empty() => {
                 prepare_generic_export(&decl.decl, prefix, &exported_symbols, &private_symbols)?
             }
             other => other.clone(),
         };
+        flatten_import_types(&mut node, &import_aliases);
         if let Some(rendered) = render_export(&node, prefix)? {
             out.push_str(&rendered);
             out.push('\n');
         }
     }
     Ok(out)
+}
+
+fn flatten_import_types(decl: &mut DeclNode, import_aliases: &HashSet<&str>) {
+    let flatten_bounds = |bounds: &mut [(String, crate::ast::Path)]| {
+        for (_, path) in bounds {
+            flatten_import_path(path, import_aliases);
+        }
+    };
+    match decl {
+        DeclNode::Function {
+            bounds,
+            params,
+            return_type,
+            ..
+        } => {
+            flatten_bounds(bounds);
+            for param in params {
+                flatten_import_type(&mut param.ty, import_aliases);
+            }
+            if let Some(ReturnType::Single(ty)) = return_type {
+                flatten_import_type(ty, import_aliases);
+            }
+        }
+        DeclNode::Variable { ty, .. } => {
+            flatten_import_type(ty, import_aliases);
+        }
+        DeclNode::Type { bounds, ty, .. } => {
+            flatten_bounds(bounds);
+            flatten_import_type(ty, import_aliases);
+        }
+        DeclNode::Struct { bounds, fields, .. } => {
+            flatten_bounds(bounds);
+            for field in fields {
+                flatten_import_type(&mut field.ty, import_aliases);
+            }
+        }
+        DeclNode::Enum {
+            bounds, variants, ..
+        } => {
+            flatten_bounds(bounds);
+            for variant in variants {
+                for ty in &mut variant.payload {
+                    flatten_import_type(ty, import_aliases);
+                }
+            }
+        }
+        DeclNode::Interface { methods, .. } => {
+            for method in methods {
+                for param in &mut method.params {
+                    flatten_import_type(&mut param.ty, import_aliases);
+                }
+                if let Some(ReturnType::Single(ty)) = &mut method.return_type {
+                    flatten_import_type(ty, import_aliases);
+                }
+            }
+        }
+        DeclNode::AssociatedItems { aliases, .. } => {
+            for (_, ty) in aliases {
+                flatten_import_type(ty, import_aliases);
+            }
+        }
+        DeclNode::InferredVariable { .. }
+        | DeclNode::Const { .. }
+        | DeclNode::ModuleImport { .. } => {}
+    }
+}
+
+fn flatten_import_path(path: &mut crate::ast::Path, import_aliases: &HashSet<&str>) {
+    if path.segments.len() >= 2 && import_aliases.contains(path.segments[0].as_str()) {
+        *path = crate::ast::Path::from_segments(path.segments.iter().skip(1).cloned().collect());
+    }
+}
+
+fn flatten_import_type(ty: &mut Type, import_aliases: &HashSet<&str>) {
+    match ty {
+        Type::Primitive(_) => {}
+        Type::Pointer(inner) | Type::Slice(inner) => flatten_import_type(inner, import_aliases),
+        Type::Array(_, inner) => flatten_import_type(inner, import_aliases),
+        Type::Function {
+            params,
+            return_type,
+        } => {
+            for param in params {
+                flatten_import_type(param, import_aliases);
+            }
+            if let Some(return_type) = return_type {
+                flatten_import_type(return_type, import_aliases);
+            }
+        }
+        Type::Struct(fields) => {
+            for field in fields {
+                flatten_import_type(&mut field.ty, import_aliases);
+            }
+        }
+        Type::DynamicReference(path) => {
+            flatten_import_path(path, import_aliases);
+        }
+        Type::Named { name, args } => {
+            flatten_import_path(name, import_aliases);
+            for arg in args {
+                flatten_import_type(arg, import_aliases);
+            }
+        }
+        Type::Associated {
+            owner, owner_args, ..
+        } => {
+            if let Some((base, member)) = owner.split_once('.')
+                && import_aliases.contains(base)
+            {
+                *owner = member.to_owned();
+            }
+            for arg in owner_args {
+                flatten_import_type(arg, import_aliases);
+            }
+        }
+    }
 }
 
 // A module's exported fn/global names, and the names an importer could never resolve
@@ -2336,6 +2461,19 @@ export resize: (n: u64, items: Reloc[]) -> Reloc* { return null }
         );
         assert!(
             interface.contains("external resize: (n: u64, items: Reloc[]) -> Reloc*"),
+            "{interface}"
+        );
+    }
+
+    #[test]
+    fn exported_signatures_flatten_types_from_transitive_imports() {
+        let source = r#"
+layout := import("layout")
+export handle: (frame: layout.TrapFrame*) -> layout.SysAction { return 0 as layout.SysAction }
+"#;
+        let interface = extract_interface(source).unwrap();
+        assert!(
+            interface.contains("external handle: (frame: TrapFrame*) -> SysAction"),
             "{interface}"
         );
     }

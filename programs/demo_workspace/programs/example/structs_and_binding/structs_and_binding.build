@@ -1,7 +1,0 @@
-name = "structs_and_binding"
-target = "hosted"
-root = "structs_and_binding.hll"
-entry = "_start"
-stdlib = "hosted"
-import_closure = true
-mangle_symbols = true

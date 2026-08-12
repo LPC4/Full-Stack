@@ -56,7 +56,7 @@ fn compile_and_run_kernel(kernel_src: &str) -> (String, Option<i64>, u64) {
 
     let user_pipeline = CompilationPipeline::new();
     let user = user_pipeline.compile(kernel_src).expect("kernel compile");
-    let (_, user_tokens) = user_pipeline.compile_ir_to_assembly_with_tokens(&user.ir_program);
+    let (_, user_tokens) = user_pipeline.compile_ir_to_assembly_with_tokens(&user.ir_program).expect("valid IR layout");
     let mut user_obj = user_pipeline.assemble(&user_tokens).expect("user assemble");
     for export in &snippet_manifest.abi_exports {
         user_obj.mark_entry_global(export);

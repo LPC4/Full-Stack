@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -57,6 +58,133 @@ pub enum IrType {
     // front end can spot it for bounds checks, for-loops, and coercion.
     Slice(Box<Self>),
     Named(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TypeLayout {
+    pub size: usize,
+    pub alignment: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypeLayoutError {
+    UnresolvedName(String),
+    AliasCycle(String),
+    Overflow,
+}
+
+impl fmt::Display for TypeLayoutError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnresolvedName(name) => write!(f, "unresolved IR type `{name}`"),
+            Self::AliasCycle(name) => write!(f, "IR type alias cycle through `{name}`"),
+            Self::Overflow => write!(f, "IR type layout arithmetic overflow"),
+        }
+    }
+}
+
+impl std::error::Error for TypeLayoutError {}
+
+pub fn type_layout(
+    ty: &IrType,
+    aliases: &HashMap<String, IrType>,
+) -> Result<TypeLayout, TypeLayoutError> {
+    type_layout_inner(ty, aliases, &mut HashSet::new())
+}
+
+pub fn type_resolves_to_void(
+    ty: &IrType,
+    aliases: &HashMap<String, IrType>,
+) -> Result<bool, TypeLayoutError> {
+    let mut resolving = HashSet::new();
+    let mut current = ty;
+    loop {
+        match current {
+            IrType::Void => return Ok(true),
+            IrType::Named(name) => {
+                if !resolving.insert(name.clone()) {
+                    return Err(TypeLayoutError::AliasCycle(name.clone()));
+                }
+                current = aliases
+                    .get(name)
+                    .ok_or_else(|| TypeLayoutError::UnresolvedName(name.clone()))?;
+            }
+            _ => return Ok(false),
+        }
+    }
+}
+
+fn type_layout_inner(
+    ty: &IrType,
+    aliases: &HashMap<String, IrType>,
+    resolving: &mut HashSet<String>,
+) -> Result<TypeLayout, TypeLayoutError> {
+    let scalar = |size| TypeLayout {
+        size,
+        alignment: size.max(1),
+    };
+    match ty {
+        IrType::Void => Ok(scalar(0)),
+        IrType::Integer(width) => Ok(scalar(match width {
+            IntWidth::I1 | IntWidth::I8 => 1,
+            IntWidth::I16 => 2,
+            IntWidth::I32 => 4,
+            IntWidth::I64 => 8,
+        })),
+        IrType::Float(width) => Ok(scalar(match width {
+            FloatWidth::F32 => 4,
+            FloatWidth::F64 => 8,
+        })),
+        IrType::Pointer(_) | IrType::FunctionPointer { .. } => Ok(scalar(8)),
+        IrType::Slice(_) => Ok(TypeLayout {
+            size: 16,
+            alignment: 8,
+        }),
+        IrType::Array { len, element } => {
+            let element = type_layout_inner(element, aliases, resolving)?;
+            Ok(TypeLayout {
+                size: element
+                    .size
+                    .checked_mul(*len)
+                    .ok_or(TypeLayoutError::Overflow)?,
+                alignment: element.alignment,
+            })
+        }
+        IrType::Aggregate(fields) => {
+            let mut size = 0usize;
+            let mut alignment = 1usize;
+            for (_, field) in fields {
+                let field = type_layout_inner(field, aliases, resolving)?;
+                alignment = alignment.max(field.alignment);
+                size = checked_align(size, field.alignment)?;
+                size = size
+                    .checked_add(field.size)
+                    .ok_or(TypeLayoutError::Overflow)?;
+            }
+            Ok(TypeLayout {
+                size: checked_align(size, alignment)?,
+                alignment,
+            })
+        }
+        IrType::Named(name) => {
+            let Some(resolved) = aliases.get(name) else {
+                return Err(TypeLayoutError::UnresolvedName(name.clone()));
+            };
+            if !resolving.insert(name.clone()) {
+                return Err(TypeLayoutError::AliasCycle(name.clone()));
+            }
+            let layout = type_layout_inner(resolved, aliases, resolving);
+            resolving.remove(name);
+            layout
+        }
+    }
+}
+
+fn checked_align(value: usize, alignment: usize) -> Result<usize, TypeLayoutError> {
+    value
+        .checked_add(alignment - 1)
+        .map(|sum| sum & !(alignment - 1))
+        .ok_or(TypeLayoutError::Overflow)
 }
 
 impl fmt::Display for IrType {
@@ -132,6 +260,76 @@ mod tests {
             }
             .to_string(),
             "fn()"
+        );
+    }
+
+    #[test]
+    fn layouts_resolve_nested_aliases_and_padding() {
+        let aliases = HashMap::from([
+            ("Byte".to_owned(), IrType::Integer(IntWidth::I8)),
+            ("Alias".to_owned(), IrType::Named("Byte".to_owned())),
+        ]);
+        let ty = IrType::Aggregate(vec![
+            ("head".to_owned(), IrType::Named("Alias".to_owned())),
+            (
+                "items".to_owned(),
+                IrType::Array {
+                    len: 2,
+                    element: Box::new(IrType::Integer(IntWidth::I64)),
+                },
+            ),
+        ]);
+        assert_eq!(
+            type_layout(&ty, &aliases),
+            Ok(TypeLayout {
+                size: 24,
+                alignment: 8
+            })
+        );
+        assert_eq!(
+            type_layout(&IrType::Void, &aliases),
+            Ok(TypeLayout {
+                size: 0,
+                alignment: 1
+            })
+        );
+    }
+
+    #[test]
+    fn layouts_report_unresolved_cycles_and_overflow() {
+        let aliases = HashMap::from([
+            ("A".to_owned(), IrType::Named("B".to_owned())),
+            ("B".to_owned(), IrType::Named("A".to_owned())),
+        ]);
+        assert_eq!(
+            type_layout(&IrType::Named("Missing".to_owned()), &aliases),
+            Err(TypeLayoutError::UnresolvedName("Missing".to_owned()))
+        );
+        assert!(matches!(
+            type_layout(&IrType::Named("A".to_owned()), &aliases),
+            Err(TypeLayoutError::AliasCycle(_))
+        ));
+        assert_eq!(
+            type_layout(
+                &IrType::Array {
+                    len: usize::MAX,
+                    element: Box::new(IrType::Integer(IntWidth::I64)),
+                },
+                &HashMap::new()
+            ),
+            Err(TypeLayoutError::Overflow)
+        );
+    }
+
+    #[test]
+    fn void_detection_follows_aliases() {
+        let aliases = HashMap::from([
+            ("Nothing".to_owned(), IrType::Void),
+            ("Alias".to_owned(), IrType::Named("Nothing".to_owned())),
+        ]);
+        assert_eq!(
+            type_resolves_to_void(&IrType::Named("Alias".to_owned()), &aliases),
+            Ok(true)
         );
     }
 }

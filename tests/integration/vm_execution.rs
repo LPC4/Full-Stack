@@ -42,7 +42,7 @@ fn run_hll_with_limit(src: &str, max_steps: u64) -> (VirtualMachine, StepOutcome
     pipeline.set_write_artifacts(false);
 
     let user_result = pipeline.compile(src).expect("user compile failed");
-    let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
+    let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program).expect("valid IR layout");
     let user_obj = pipeline
         .assemble(&user_tokens)
         .expect("user assemble failed");
@@ -61,7 +61,7 @@ fn run_ir(program: &IrProgram) -> (VirtualMachine, StepOutcome, String) {
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
 
-    let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(program);
+    let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(program).expect("valid IR layout");
     let user_obj = pipeline
         .assemble(&user_tokens)
         .expect("user assemble failed");
@@ -455,7 +455,7 @@ fn run_hll_peephole(src: &str, peephole: bool) -> (StepOutcome, String, usize) {
     pipeline.set_peephole(peephole);
 
     let user_result = pipeline.compile(src).expect("user compile failed");
-    let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
+    let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program).expect("valid IR layout");
     let code_lines = user_tokens.iter().filter(|t| t.is_code()).count();
     let user_obj = pipeline
         .assemble(&user_tokens)
@@ -521,7 +521,7 @@ fn run_hll_omit_fp(src: &str, omit_fp: bool) -> (StepOutcome, String, usize) {
     pipeline.set_omit_frame_pointer(omit_fp);
 
     let user_result = pipeline.compile(src).expect("user compile failed");
-    let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
+    let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program).expect("valid IR layout");
     let code_lines = user_tokens.iter().filter(|t| t.is_code()).count();
     let user_obj = pipeline
         .assemble(&user_tokens)
@@ -576,7 +576,7 @@ fn run_hll_optimize(src: &str, opts: hll_to_ir::OptOptions) -> (StepOutcome, Str
     pipeline.set_optimize(opts);
 
     let user_result = pipeline.compile(src).expect("user compile failed");
-    let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
+    let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program).expect("valid IR layout");
     let code_lines = user_tokens.iter().filter(|t| t.is_code()).count();
     let user_obj = pipeline
         .assemble(&user_tokens)
@@ -898,7 +898,7 @@ main: () -> i32 {
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     let user_result = pipeline.compile(src).expect("user compile failed");
-    let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
+    let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program).expect("valid IR layout");
     let user_obj = pipeline
         .assemble(&user_tokens)
         .expect("user assemble failed");

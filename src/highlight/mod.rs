@@ -22,11 +22,6 @@ pub fn highlight_ir(theme: &egui::Style, code: &str) -> LayoutJob {
     layout(theme, code, Lang::Ir)
 }
 
-/// Highlights AST and token output.
-pub fn highlight_ast(theme: &egui::Style, code: &str) -> LayoutJob {
-    layout(theme, code, Lang::Ast)
-}
-
 fn layout(theme: &egui::Style, code: &str, lang: Lang) -> LayoutJob {
     let palette = SyntaxPalette::dark();
     let font_id = egui::TextStyle::Monospace.resolve(theme);

@@ -30,6 +30,7 @@
       <sourceFolder url="file://$MODULE_DIR$/guide/generator/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/guide/wasm/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/virtual-machine/examples" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/benches/runner/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />

@@ -192,20 +192,6 @@ const INSTRUCTIONS: &[&str] = &[
     "fabs.d",
 ];
 
-// ABI register names (integer)
-const INT_REGS: &[&str] = &[
-    "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2", "t3", "t4", "t5", "t6", "s0", "s1", "s2",
-    "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "a0", "a1", "a2", "a3", "a4", "a5",
-    "a6", "a7",
-];
-
-// Floating-point ABI names
-const FP_REGS: &[&str] = &[
-    "ft0", "ft1", "ft2", "ft3", "ft4", "ft5", "ft6", "ft7", "fs0", "fs1", "fs2", "fs3", "fs4",
-    "fs5", "fs6", "fs7", "fs8", "fs9", "fs10", "fs11", "fa0", "fa1", "fa2", "fa3", "fa4", "fa5",
-    "fa6", "fa7",
-];
-
 // Common assembler directives
 const DIRECTIVES: &[&str] = &[
     ".text", ".data", ".bss", ".rodata", ".globl", ".local", ".weak", ".align", ".balign",
@@ -275,11 +261,7 @@ pub(crate) fn highlight(code: &str, out: &mut Out) {
                 } else if INSTRUCTIONS.contains(&word) {
                     out.push(base + start, base + end, Class::Keyword);
                     start = end;
-                } else if INT_REGS.contains(&word)
-                    || FP_REGS.contains(&word)
-                    || word.starts_with('x')
-                    || word.starts_with('f')
-                {
+                } else if asm_to_binary::isa::is_register_name(word) {
                     out.push(base + start, base + end, Class::Register);
                     start = end;
                 } else if DIRECTIVES.contains(&word) {

@@ -90,6 +90,18 @@ stack slots. Field-layout and ABI comments are also retained; comments that mere
 Postfix types compose from the inside out. `i8*[4]` is an array of four pointers, while `i8[4]*`
 is a pointer to an array.
 
+Layout is owned by the IR crate and is represented as `{ size, alignment }`. `void` has layout
+`{ 0, 1 }`; pointers and function pointers are `{ 8, 8 }`; slices are `{ 16, 8 }`. Arrays use
+checked element-size multiplication. Aggregates align each field and round the final size to the
+maximum field alignment, with all addition and rounding checked for overflow. Resolving a named
+type can fail for an unknown name or a by-value alias cycle. Pointer indirection breaks a layout
+cycle because the pointer itself has fixed layout.
+
+Before emitting any assembly, the RV64 backend validates every type appearing in aliases,
+extern declarations, globals, function signatures, and typed instructions. `CompilerRv64::compile`
+and `compile_with_tokens` return a code-generation error for an invalid layout; they never assign
+a placeholder size to an unresolved type.
+
 ## 4. Top-level declarations
 
 ### 4.1 Type aliases

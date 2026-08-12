@@ -6,11 +6,7 @@ arg_ptr: u8* = null
 arg_len: u64 = 0
 
 export runtime_arg: () -> u8[] {
-	empty: u8[1] = []
-	arg: u8[] = empty[0..0]
-	arg.ptr = arg_ptr
-	arg.len = arg_len
-	return arg
+	return { .ptr = arg_ptr, .len = arg_len }
 }
 
 export _start: (entry_arg_ptr: u8*, entry_arg_len: u64) {

@@ -71,6 +71,10 @@ impl TypeContext {
         self.named_types.get(name)
     }
 
+    pub(crate) fn named_types(&self) -> &HashMap<String, IrType> {
+        &self.named_types
+    }
+
     /// Reverse lookup: the registered name of a structurally resolved aggregate.
     /// Used when a receiver's named type was already lowered to its field list.
     pub fn name_of_aggregate(&self, ty: &IrType) -> Option<&str> {

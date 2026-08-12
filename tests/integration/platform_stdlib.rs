@@ -21,7 +21,7 @@ fn run_hll(src: &str) -> (String, Option<i64>) {
     let stdlib_objs =
         CompilationPipeline::compile_stdlib_objects(TargetMode::Hosted).expect("stdlib compile");
     let user = pipeline.compile(src).expect("user compile");
-    let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user.ir_program);
+    let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user.ir_program).expect("valid IR layout");
     let user_obj = pipeline.assemble(&user_tokens).expect("user assemble");
     let mut modules: Vec<(&str, &AssembledOutput)> =
         stdlib_objs.iter().map(|(n, o)| (n.as_str(), o)).collect();
@@ -1007,7 +1007,7 @@ fn run_kernel_hll_with_layout_prelude(
         user_pipeline.set_source_prelude(os_runtime::kernel::LAYOUT);
     }
     let user = user_pipeline.compile(user_src).expect("user compile");
-    let (_, user_tokens) = user_pipeline.compile_ir_to_assembly_with_tokens(&user.ir_program);
+    let (_, user_tokens) = user_pipeline.compile_ir_to_assembly_with_tokens(&user.ir_program).expect("valid IR layout");
     let mut user_obj = user_pipeline.assemble(&user_tokens).expect("user assemble");
     for export in &snippet_manifest.abi_exports {
         user_obj.mark_entry_global(export);
@@ -1166,7 +1166,7 @@ fn kernel_boot_missing_kmain_is_assemble_error() {
     let user = user_pipeline
         .compile("main: () -> i32 { return 0 }")
         .expect("user compile");
-    let (_, user_tokens) = user_pipeline.compile_ir_to_assembly_with_tokens(&user.ir_program);
+    let (_, user_tokens) = user_pipeline.compile_ir_to_assembly_with_tokens(&user.ir_program).expect("valid IR layout");
     let user_obj = user_pipeline.assemble(&user_tokens).expect("user assemble");
 
     let mut modules: Vec<(&str, &AssembledOutput)> =
@@ -1236,11 +1236,11 @@ fn cross_module_call_works() {
     "#;
 
     let a_result = pipeline.compile(module_a).expect("module a compile");
-    let (_, a_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&a_result.ir_program);
+    let (_, a_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&a_result.ir_program).expect("valid IR layout");
     let a_obj = pipeline.assemble_named("a", &a_tokens).expect("a assemble");
 
     let b_result = pipeline.compile(module_b).expect("module b compile");
-    let (_, b_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&b_result.ir_program);
+    let (_, b_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&b_result.ir_program).expect("valid IR layout");
     let b_obj = pipeline.assemble_named("b", &b_tokens).expect("b assemble");
 
     let mut modules: Vec<(&str, &AssembledOutput)> =
@@ -1286,11 +1286,11 @@ fn cross_module_la_works() {
     "#;
 
     let a_result = pipeline.compile(module_a).expect("module a compile");
-    let (_, a_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&a_result.ir_program);
+    let (_, a_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&a_result.ir_program).expect("valid IR layout");
     let a_obj = pipeline.assemble_named("a", &a_tokens).expect("a assemble");
 
     let b_result = pipeline.compile(module_b).expect("module b compile");
-    let (_, b_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&b_result.ir_program);
+    let (_, b_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&b_result.ir_program).expect("valid IR layout");
     let b_obj = pipeline.assemble_named("b", &b_tokens).expect("b assemble");
 
     let mut modules: Vec<(&str, &AssembledOutput)> =
@@ -1345,11 +1345,11 @@ fn cross_module_tail_works() {
     "#;
 
     let a_result = pipeline.compile(module_a).expect("module a compile");
-    let (_, a_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&a_result.ir_program);
+    let (_, a_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&a_result.ir_program).expect("valid IR layout");
     let a_obj = pipeline.assemble_named("a", &a_tokens).expect("a assemble");
 
     let b_result = pipeline.compile(module_b).expect("module b compile");
-    let (_, b_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&b_result.ir_program);
+    let (_, b_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&b_result.ir_program).expect("valid IR layout");
     let b_obj = pipeline.assemble_named("b", &b_tokens).expect("b assemble");
 
     let mut modules: Vec<(&str, &AssembledOutput)> =
@@ -1402,15 +1402,15 @@ fn cross_module_chain_three_works() {
     "#;
 
     let a_result = pipeline.compile(module_a).expect("a compile");
-    let (_, a_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&a_result.ir_program);
+    let (_, a_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&a_result.ir_program).expect("valid IR layout");
     let a_obj = pipeline.assemble_named("a", &a_tokens).expect("a assemble");
 
     let b_result = pipeline.compile(module_b).expect("b compile");
-    let (_, b_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&b_result.ir_program);
+    let (_, b_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&b_result.ir_program).expect("valid IR layout");
     let b_obj = pipeline.assemble_named("b", &b_tokens).expect("b assemble");
 
     let c_result = pipeline.compile(module_c).expect("c compile");
-    let (_, c_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&c_result.ir_program);
+    let (_, c_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&c_result.ir_program).expect("valid IR layout");
     let c_obj = pipeline.assemble_named("c", &c_tokens).expect("c assemble");
 
     let mut modules: Vec<(&str, &AssembledOutput)> =
@@ -1463,11 +1463,11 @@ fn cross_module_external_global_shared_storage() {
     "#;
 
     let a_result = pipeline.compile(module_a).expect("module a compile");
-    let (_, a_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&a_result.ir_program);
+    let (_, a_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&a_result.ir_program).expect("valid IR layout");
     let a_obj = pipeline.assemble_named("a", &a_tokens).expect("a assemble");
 
     let b_result = pipeline.compile(module_b).expect("module b compile");
-    let (_, b_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&b_result.ir_program);
+    let (_, b_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&b_result.ir_program).expect("valid IR layout");
     let b_obj = pipeline.assemble_named("b", &b_tokens).expect("b assemble");
 
     let mut modules: Vec<(&str, &AssembledOutput)> =

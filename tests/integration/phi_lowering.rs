@@ -23,7 +23,7 @@ fn run_ir(program: &IrProgram, regalloc: bool) -> i64 {
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     pipeline.set_register_allocation(regalloc);
-    let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(program);
+    let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(program).expect("valid IR layout");
     let user_obj = pipeline
         .assemble(&user_tokens)
         .expect("user assemble failed");

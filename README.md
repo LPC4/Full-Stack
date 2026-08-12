@@ -215,8 +215,8 @@ fsc run        kernel.elf                         # load a pre-linked ELF
 | `programs/user/` | Boot-FS userspace tools, demos, samples, and fixtures |
 | `programs/example/` | Host-compiled example HLL programs, one folder per program |
 | `programs/lessons/` | Guided RISC-V assembly lessons, one folder per lesson |
-| `programs/demo_workspace/` | Demo workspace the IDE materializes for its default preset |
 | `programs/test/` | Golden compiler fixtures and integration HLL inputs |
+| `benches/` | Reproducible compiler and VM benchmark suite, analysis, and figures |
 | `tests/` | Rust integration tests (VM execution, compiler suite, kernel boots) |
 | `guide/` | Full-Stack Guide generator, authored lesson, figures, theme, and WASM sandbox |
 

@@ -437,12 +437,6 @@ fn find_symbol_section_name_via_map<'a>(
 
 // --- PC-relative splitting ---
 
-fn pcrel_split(offset: i64) -> (i32, i32) {
-    let lo12 = ((offset & 0xFFF) as i32).wrapping_sub(if offset & 0x800 != 0 { 0x1000 } else { 0 });
-    let hi20 = ((offset - lo12 as i64) >> 12) as i32;
-    (hi20, lo12)
-}
-
 fn read_u32_at(buf: &[u8], off: usize) -> Result<u32, LinkerError> {
     let end = off + 4;
     let Some(bytes) = buf.get(off..end) else {
@@ -482,7 +476,7 @@ fn patch_call_pair(
     let offset = (target_abs as i64)
         .wrapping_add(addend)
         .wrapping_sub(site_abs as i64);
-    let (hi20, lo12) = pcrel_split(offset);
+    let (hi20, lo12) = crate::isa::pcrel_split(offset);
 
     let auipc_patched = (auipc_word & 0x0000_0FFF) | (((hi20 << 12) as u32) & 0xFFFF_F000);
     let jalr_patched = (jalr_word & !(0xFFF << 20)) | (((lo12 as u32) & 0xFFF) << 20);
@@ -539,7 +533,7 @@ fn patch_la(
     let offset = (target_abs as i64)
         .wrapping_add(addend)
         .wrapping_sub(site_abs as i64);
-    let (hi20, lo12) = pcrel_split(offset);
+    let (hi20, lo12) = crate::isa::pcrel_split(offset);
 
     let auipc_patched = (auipc_word & 0x0000_0FFF) | (((hi20 << 12) as u32) & 0xFFFF_F000);
     let addi_patched = (addi_word & !0xFFF0_0000) | (((lo12 as u32) & 0xFFF) << 20);

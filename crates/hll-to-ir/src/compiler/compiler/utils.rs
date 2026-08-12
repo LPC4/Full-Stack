@@ -1,6 +1,6 @@
 use super::{
-    Expression, FloatWidth, HighLevelCompiler, IntWidth, IrBlock, IrInstruction, IrLabel,
-    IrRegister, IrTerminator, IrType,
+    Expression, HighLevelCompiler, IrBlock, IrInstruction, IrLabel, IrRegister, IrTerminator,
+    IrType,
 };
 
 impl HighLevelCompiler {
@@ -142,73 +142,21 @@ impl HighLevelCompiler {
     }
 
     pub(super) fn type_size_in_bytes(&self, ty: &IrType) -> usize {
-        match &self.resolve_named_type(ty) {
-            IrType::Integer(width) => match width {
-                IntWidth::I1 | IntWidth::I8 => 1,
-                IntWidth::I16 => 2,
-                IntWidth::I32 => 4,
-                IntWidth::I64 => 8,
-            },
-            IrType::Float(width) => match width {
-                FloatWidth::F32 => 4,
-                FloatWidth::F64 => 8,
-            },
-            IrType::Pointer(_) => 8,
-            IrType::FunctionPointer { .. } => 8,
-            // Fat pointer: { ptr: 8, len: 8 }.
-            IrType::Slice(_) => 16,
-            IrType::Array { len, element } => len * self.type_size_in_bytes(element),
-            IrType::Aggregate(fields) => {
-                let mut offset = 0i64;
-                let mut aggregate_alignment = 1i64;
-
-                for (_, field_ty) in fields {
-                    let field_alignment = self.type_alignment_in_bytes(field_ty) as i64;
-                    aggregate_alignment = aggregate_alignment.max(field_alignment);
-                    offset = Self::align_to(offset, field_alignment);
-                    offset += self.type_size_in_bytes(field_ty) as i64;
-                }
-
-                Self::align_to(offset, aggregate_alignment) as usize
-            }
-            _ => 0,
-        }
+        crate::type_layout(ty, self.context.types.named_types()).map_or(0, |layout| layout.size)
     }
 
     pub(super) fn reflected_layout(&self, ty: &IrType) -> Option<(usize, usize)> {
-        match &self.resolve_named_type(ty) {
-            IrType::Void | IrType::Named(_) => None,
-            resolved => Some((
-                self.type_size_in_bytes(resolved),
-                self.type_alignment_in_bytes(resolved),
-            )),
+        if crate::type_resolves_to_void(ty, self.context.types.named_types()).ok()? {
+            return None;
         }
+        crate::type_layout(ty, self.context.types.named_types())
+            .ok()
+            .map(|layout| (layout.size, layout.alignment))
     }
 
     pub(super) fn type_alignment_in_bytes(&self, ty: &IrType) -> usize {
-        match &self.resolve_named_type(ty) {
-            IrType::Void => 1,
-            IrType::Integer(width) => match width {
-                IntWidth::I1 | IntWidth::I8 => 1,
-                IntWidth::I16 => 2,
-                IntWidth::I32 => 4,
-                IntWidth::I64 => 8,
-            },
-            IrType::Float(width) => match width {
-                FloatWidth::F32 => 4,
-                FloatWidth::F64 => 8,
-            },
-            IrType::Pointer(_)
-            | IrType::FunctionPointer { .. }
-            | IrType::Named(_)
-            | IrType::Slice(_) => 8,
-            IrType::Array { element, .. } => self.type_alignment_in_bytes(element),
-            IrType::Aggregate(fields) => fields
-                .iter()
-                .map(|(_, t)| self.type_alignment_in_bytes(t))
-                .max()
-                .unwrap_or(1),
-        }
+        crate::type_layout(ty, self.context.types.named_types())
+            .map_or(1, |layout| layout.alignment)
     }
 
     pub(super) fn is_unsigned_primitive_type(ty: &crate::ast::Type) -> bool {

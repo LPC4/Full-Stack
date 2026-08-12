@@ -315,7 +315,9 @@ fn cmd_hll_to_asm(args: &Args) -> Result<ExitCode, CliError> {
     let result = pipeline
         .compile(&src)
         .map_err(|e| CliError::Compile(e.to_string()))?;
-    let (_, tokens) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
+    let (_, tokens) = pipeline
+        .compile_ir_to_assembly_with_tokens(&result.ir_program)
+        .map_err(|error| CliError::Compile(error.to_string()))?;
     let assembled = pipeline
         .assemble(&tokens)
         .map_err(|e| CliError::Assemble(e.to_string()))?;
@@ -331,7 +333,9 @@ fn cmd_hll_to_asm(args: &Args) -> Result<ExitCode, CliError> {
         })?;
         fs::write(output_path, object_bytes)?;
     } else {
-        let asm_text = pipeline.compile_ir_to_assembly(&result.ir_program);
+        let asm_text = pipeline
+            .compile_ir_to_assembly(&result.ir_program)
+            .map_err(|error| CliError::Compile(error.to_string()))?;
         write_or_print(args.output.as_deref(), &asm_text)?;
     }
 

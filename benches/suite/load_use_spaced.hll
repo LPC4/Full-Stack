@@ -1,0 +1,28 @@
+; Same dependent loads, but independent ALU work fills the load-use gap.
+; Compare CPI (not raw cycles) against load_use_chain.
+console := import("console")
+
+main: () -> i32 {
+    next: i64[4096] = []
+    i: i64 = 0
+    while i < 4096 {
+        next[i] = (i + 1) % 4096
+        i = i + 1
+    }
+    n: i64 = {{N}}
+    idx: i64 = 0
+    t0: i64 = 0
+    t1: i64 = 0
+    t2: i64 = 0
+    steps: i64 = 0
+    while steps < n {
+        idx = next[idx]
+        t0 = t0 + 3            ; independent of the load
+        t1 = t1 ^ steps
+        t2 = t2 + t0
+        steps = steps + 1
+    }
+    console.print_int(idx + (t2 & 1023))
+    if idx != n % 4096 { return 1 }
+    return 0
+}

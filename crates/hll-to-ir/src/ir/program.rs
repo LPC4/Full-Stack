@@ -1,6 +1,9 @@
 use crate::ir::block::IrBlock;
+use crate::ir::instruction::IrInstruction;
 use crate::ir::types::IrType;
+use crate::ir::types::{TypeLayoutError, type_layout};
 use crate::ir::values::IrRegister;
+use std::collections::HashMap;
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -196,6 +199,93 @@ impl IrProgram {
 
     pub fn push_function(&mut self, function: IrFunction) {
         self.functions.push(function);
+    }
+
+    pub fn validate_types(&self) -> Result<(), TypeLayoutError> {
+        let aliases = self
+            .type_aliases
+            .iter()
+            .map(|alias| (alias.name.clone(), alias.ty.clone()))
+            .collect::<HashMap<_, _>>();
+
+        for alias in &self.type_aliases {
+            validate_type_tree(&alias.ty, &aliases)?;
+        }
+        for external in &self.extern_fns {
+            for param in &external.params {
+                validate_type_tree(param, &aliases)?;
+            }
+            validate_type_tree(&external.return_type, &aliases)?;
+        }
+        for global in &self.global_vars {
+            validate_type_tree(&global.ty, &aliases)?;
+        }
+        for function in &self.functions {
+            validate_type_tree(&function.return_type, &aliases)?;
+            for param in &function.params {
+                validate_type_tree(&param.ty, &aliases)?;
+            }
+            for block in &function.blocks {
+                for instruction in &block.instructions {
+                    if let Some(ty) = instruction_type(instruction) {
+                        validate_type_tree(ty, &aliases)?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn instruction_type(instruction: &IrInstruction) -> Option<&IrType> {
+    match instruction {
+        IrInstruction::Alloc { ty, .. }
+        | IrInstruction::HeapAlloc { ty, .. }
+        | IrInstruction::Load { ty, .. }
+        | IrInstruction::Store { ty, .. }
+        | IrInstruction::Offset { ty, .. }
+        | IrInstruction::Index { ty, .. }
+        | IrInstruction::Math { ty, .. }
+        | IrInstruction::Unary { ty, .. }
+        | IrInstruction::Cmp { ty, .. }
+        | IrInstruction::Cast { ty, .. }
+        | IrInstruction::Phi { ty, .. } => Some(ty),
+        IrInstruction::IndirectCall { callee_ty, .. } => Some(callee_ty),
+        IrInstruction::Comment(_)
+        | IrInstruction::SourceLine { .. }
+        | IrInstruction::HeapFree { .. }
+        | IrInstruction::InlineAsm { .. }
+        | IrInstruction::ReadReg { .. }
+        | IrInstruction::Call { .. }
+        | IrInstruction::GlobalRef { .. }
+        | IrInstruction::FunctionAddr { .. } => None,
+    }
+}
+
+fn validate_type_tree(
+    ty: &IrType,
+    aliases: &HashMap<String, IrType>,
+) -> Result<(), TypeLayoutError> {
+    type_layout(ty, aliases)?;
+    match ty {
+        IrType::Pointer(inner) | IrType::Slice(inner) => validate_type_tree(inner, aliases),
+        IrType::FunctionPointer {
+            params,
+            return_type,
+        } => {
+            for param in params {
+                validate_type_tree(param, aliases)?;
+            }
+            validate_type_tree(return_type, aliases)
+        }
+        IrType::Aggregate(fields) => {
+            for (_, field) in fields {
+                validate_type_tree(field, aliases)?;
+            }
+            Ok(())
+        }
+        IrType::Array { element, .. } => validate_type_tree(element, aliases),
+        IrType::Void | IrType::Integer(_) | IrType::Float(_) | IrType::Named(_) => Ok(()),
     }
 }
 

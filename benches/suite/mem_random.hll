@@ -1,0 +1,24 @@
+; Pseudo-random indices from a 16-bit LCG over the same 64 KiB working
+; set: worst-case locality, biggest realistic-vs-off cycle ratio.
+console := import("console")
+
+main: () -> i32 {
+    buf: i64[8192] = []
+    i: i64 = 0
+    while i < 8192 {
+        buf[i] = i & 511
+        i = i + 1
+    }
+    n: i64 = {{N}}
+    sum: i64 = 0
+    seed: i64 = 4242
+    k: i64 = 0
+    while k < n {
+        seed = (seed * 25173 + 13849) & 65535
+        sum = sum + buf[seed & 8191]
+        k = k + 1
+    }
+    console.print_int(sum)
+    if sum == 0 { return 1 }
+    return 0
+}

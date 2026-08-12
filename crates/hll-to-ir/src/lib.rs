@@ -80,5 +80,6 @@ pub use token::Span;
 pub use ir::{
     FloatWidth, IntWidth, IrBlock, IrCastMode, IrCmpOp, IrFunction, IrGlobalString, IrGlobalVar,
     IrInstruction, IrLabel, IrMathOp, IrParam, IrProgram, IrRegister, IrTerminator, IrType,
-    IrTypeAlias, IrUnaryOp, IrValue,
+    IrTypeAlias, IrUnaryOp, IrValue, TypeLayout, TypeLayoutError, type_layout,
+    type_resolves_to_void,
 };

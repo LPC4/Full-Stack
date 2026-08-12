@@ -1,19 +1,12 @@
 //! String interpolation runtime and `string.format_into` end-to-end tests.
 
-use asm_to_binary::AssembledOutput;
 use full_stack::compilation_pipeline::CompilationPipeline;
 use hll_to_ir::TargetMode;
 use hll_to_ir::stdlib::{get_stdlib_modules_for_mode, get_stdlib_type_prelude};
-use std::sync::OnceLock;
-use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
+use virtual_machine::virtual_machine::StepOutcome;
 
-fn cached_stdlib_objs() -> &'static [(String, AssembledOutput)] {
-    static STDLIB: OnceLock<Vec<(String, AssembledOutput)>> = OnceLock::new();
-    STDLIB.get_or_init(|| {
-        CompilationPipeline::compile_stdlib_objects(TargetMode::Hosted)
-            .expect("stdlib compile failed")
-    })
-}
+#[path = "../common/hosted_hll.rs"]
+mod hosted_hll;
 
 // Silences the unused-import warning some sibling modules trigger; the prelude
 // getters stay exercised so their symbols cannot rot silently.
@@ -24,25 +17,13 @@ fn stdlib_preludes_resolve() {
 }
 
 fn run_hll(src: &str, max_steps: u64) -> (StepOutcome, String) {
-    let mut pipeline = CompilationPipeline::new();
-    pipeline.set_write_artifacts(false);
-
-    let user_result = pipeline.compile(src).expect("user compile failed");
-    let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
-    let user_obj = pipeline
-        .assemble(&user_tokens)
-        .expect("user assemble failed");
-
-    let mut modules: Vec<(&str, &AssembledOutput)> = cached_stdlib_objs()
-        .iter()
-        .map(|(n, o)| (n.as_str(), o))
-        .collect();
-    modules.push(("user", &user_obj));
-    let assembled = pipeline
-        .link_assembled_objects(&modules)
-        .expect("link failed");
-    let mut vm = VirtualMachine::new(&assembled);
-    let run = vm.run(max_steps);
+    let run = hosted_hll::run(
+        src,
+        hosted_hll::HostedOptions {
+            max_steps,
+            ..hosted_hll::HostedOptions::default()
+        },
+    );
     (run.outcome, run.uart_output)
 }
 

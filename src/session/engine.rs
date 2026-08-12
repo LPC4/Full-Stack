@@ -298,7 +298,9 @@ fn hash_tree(fs: &dyn WorkspaceFs, path: &VPath, hasher: &mut impl Hasher) {
             };
             entries.sort_by(|a, b| a.path.cmp(&b.path));
             for entry in entries {
-                if entry.name.starts_with('.') || entry.name == "out" {
+                if entry.name.starts_with('.')
+                    || entry.name == crate::compilation_pipeline::DEFAULT_ARTIFACT_DIRECTORY
+                {
                     continue;
                 }
                 hash_tree(fs, &entry.path, hasher);

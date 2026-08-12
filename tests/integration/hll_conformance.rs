@@ -1,43 +1,15 @@
 // The `hll-to-ir` conformance tests stop at IR shape. This suite closes the
 // execution gate: each surface must also link and exit with the right code.
 
-use asm_to_binary::AssembledOutput;
 use full_stack::compilation_pipeline::CompilationPipeline;
-use hll_to_ir::TargetMode;
-use std::sync::OnceLock;
-use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
+use virtual_machine::virtual_machine::StepOutcome;
 
-// Compile the hosted stdlib once (per module, no concatenation) and link every
-// user program against the objects.
-fn cached_stdlib_objs() -> &'static [(String, AssembledOutput)] {
-    static STDLIB: OnceLock<Vec<(String, AssembledOutput)>> = OnceLock::new();
-    STDLIB.get_or_init(|| {
-        CompilationPipeline::compile_stdlib_objects(TargetMode::Hosted)
-            .expect("stdlib compile failed")
-    })
-}
+#[path = "../common/hosted_hll.rs"]
+mod hosted_hll;
 
 // Compile a user program, link it against the cached stdlib, and run it in the VM.
 fn run_hll(src: &str) -> StepOutcome {
-    let mut pipeline = CompilationPipeline::new();
-    pipeline.set_write_artifacts(false);
-
-    let user_result = pipeline.compile(src).expect("user compile failed");
-    let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
-    let user_obj = pipeline
-        .assemble(&user_tokens)
-        .expect("user assemble failed");
-
-    let mut modules: Vec<(&str, &AssembledOutput)> = cached_stdlib_objs()
-        .iter()
-        .map(|(n, o)| (n.as_str(), o))
-        .collect();
-    modules.push(("user", &user_obj));
-    let assembled = pipeline
-        .link_assembled_objects(&modules)
-        .expect("link failed");
-    let mut vm = VirtualMachine::new(&assembled);
-    vm.run(5_000_000).outcome
+    hosted_hll::run(src, hosted_hll::HostedOptions::default()).outcome
 }
 
 fn assert_exit(src: &str, code: i64) {

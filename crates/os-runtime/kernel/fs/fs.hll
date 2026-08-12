@@ -35,7 +35,7 @@ struct OpenFile {
     pos: u64,
 }
 
-struct PathSplit {
+export struct PathSplit {
     parent: i64,
     name: u8[],
 }

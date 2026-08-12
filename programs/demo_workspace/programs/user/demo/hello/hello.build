@@ -1,7 +1,0 @@
-name = "hello"
-title = "Hello"
-description = "Minimal user program: prints a greeting, then yields forever."
-kind = "demo"
-target = "hosted"
-stdlib = "hosted"
-root = "user_hello.hll"

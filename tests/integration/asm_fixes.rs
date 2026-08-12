@@ -17,14 +17,14 @@ fn compile_fixture(subdir: &str, name: &str) -> String {
     let result = pipeline
         .compile(&source)
         .unwrap_or_else(|e| panic!("compilation error in {subdir}/{name}: {e}"));
-    pipeline.compile_ir_to_assembly(&result.ir_program)
+    pipeline.compile_ir_to_assembly(&result.ir_program).expect("valid IR layout")
 }
 
 fn compile_inline(source: &str) -> String {
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source).expect("compilation failed");
-    pipeline.compile_ir_to_assembly(&result.ir_program)
+    pipeline.compile_ir_to_assembly(&result.ir_program).expect("valid IR layout")
 }
 
 // -- Store widths --------------------------------------------------------------
@@ -147,7 +147,7 @@ fn many_locals_use_multiple_temp_registers() {
     pipeline.set_write_artifacts(false);
     pipeline.set_register_allocation(false);
     let result = pipeline.compile(MANY_LOCALS).expect("compilation failed");
-    let asm = pipeline.compile_ir_to_assembly(&result.ir_program);
+    let asm = pipeline.compile_ir_to_assembly(&result.ir_program).expect("valid IR layout");
 
     let used: Vec<&str> = ["t0", "t1", "t2", "t3", "t4", "t5", "t6"]
         .iter()

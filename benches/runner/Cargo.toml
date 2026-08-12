@@ -1,0 +1,18 @@
+[package]
+name = "benchmark-runner"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "benchmark-runner"
+path = "src/main.rs"
+
+[dependencies]
+full_stack      = { path = "../.." }
+hll_to_ir       = { path = "../../crates/hll-to-ir" }
+asm_to_binary   = { path = "../../crates/asm-to-binary" }
+virtual_machine = { path = "../../crates/virtual-machine" }
+serde_json      = "1.0"
+
+[lints]
+workspace = true

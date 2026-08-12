@@ -9,6 +9,7 @@ name = "hll_to_ir"
 path = "src/lib.rs"
 
 [dependencies]
+asm_to_binary = { path = "../asm-to-binary" }
 fs_utils = { path = "../fs-utils" }
 os_runtime = { path = "../os-runtime" }
 log      = "0.4.27"

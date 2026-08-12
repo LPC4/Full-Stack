@@ -42,7 +42,7 @@ pub struct Assembler;
 impl Assembler {
     /// Assemble tokens into machine code. Errors on undefined labels or out-of-range branches.
     pub fn assemble(tokens: &[RvInstruction]) -> Result<AssembledOutput, AssemblerError> {
-        let asm_tokens = parser::parse(tokens);
+        let asm_tokens = parser::parse(tokens)?;
         let layout = layout::compute_layout(&asm_tokens)?;
         encode::encode(&asm_tokens, &layout)
     }
@@ -72,7 +72,7 @@ mod tests {
     }
 
     fn parse_one(raw: &str) -> AsmToken {
-        let tokens = parse(&[dir(raw)]);
+        let tokens = parse(&[dir(raw)]).expect("valid source");
         assert_eq!(tokens.len(), 1, "expected exactly one token from `{raw}`");
         tokens.into_iter().next().unwrap()
     }
@@ -223,6 +223,41 @@ mod tests {
         );
     }
 
+    #[test]
+    fn pass_zero_rejects_invalid_source_with_location() {
+        for source in [
+            "bogus a0, a1",
+            ".unknown 1",
+            "addi a0, missing, 1",
+            "addi a0, a1",
+            ".word nope",
+        ] {
+            let tokens = crate::parse_asm_source(Some("bad.s"), source);
+            Assembler::assemble(&tokens).expect_err("invalid source must fail");
+        }
+        let tokens = crate::parse_asm_source(Some("bad.s"), "addi a0, missing, 1");
+        let error = Assembler::assemble(&tokens).expect_err("invalid register must fail");
+        assert!(error.message.contains("bad.s:1"), "{}", error.message);
+    }
+
+    #[test]
+    fn constants_support_forward_numeric_use_and_reject_duplicates() {
+        let source = concat!(
+            ".text\n",
+            "addi a0, zero, ANSWER\n",
+            ".word ANSWER\n",
+            ".equ ANSWER, 42\n",
+        );
+        let output = Assembler::assemble(&crate::parse_asm_source(Some("constants.s"), source))
+            .expect("forward constant");
+        assert_eq!(output.text_bytes().len(), 8);
+        assert_eq!(&output.text_bytes()[4..8], &42u32.to_le_bytes());
+
+        let duplicate = crate::parse_asm_source(None, ".equ N, 1\n.set N, 2\n");
+        let error = Assembler::assemble(&duplicate).expect_err("duplicate constant");
+        assert!(error.message.contains("duplicate assembler constant `N`"));
+    }
+
     // ---- reg_parse ----
 
     #[test]
@@ -328,14 +363,15 @@ mod tests {
     fn parser_real_instruction_passthrough() {
         let tokens = parse(&[RvInstruction::Real(RealInstruction::Addi(Addi::new(
             10, 0, 42,
-        )))]);
+        )))])
+        .expect("valid source");
         assert_eq!(tokens.len(), 1);
         assert!(matches!(tokens[0], AsmToken::Real(_)));
     }
 
     #[test]
     fn parser_label_passthrough() {
-        let tokens = parse(&[RvInstruction::Label("main".to_owned())]);
+        let tokens = parse(&[RvInstruction::Label("main".to_owned())]).expect("valid source");
         assert!(matches!(&tokens[0], AsmToken::Label(n) if n == "main"));
     }
 

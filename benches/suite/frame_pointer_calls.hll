@@ -1,0 +1,21 @@
+; Tight loop over a tiny leaf call: prologue/epilogue overhead dominates,
+; so omitting the frame pointer is directly visible.
+console := import("console")
+
+leaf: (x: i64) -> i64 {
+    return x + 1
+}
+
+main: () -> i32 {
+    n: i64 = {{N}}
+    acc: i64 = 0
+    i: i64 = 0
+    while i < n {
+        acc = acc + leaf(i)
+        i = i + 1
+    }
+    console.print_int(acc)
+    ; sum of (i+1) for i in 0..n equals n*(n-1)/2 + n
+    if acc != (n * (n - 1)) / 2 + n { return 1 }
+    return 0
+}

@@ -12,7 +12,7 @@ use asm_to_binary::riscv::rv64i::{Lb, Ld, Lh, Lw, Sb, Sh, Sw};
 use asm_to_binary::utils::reg_name;
 use hll_to_ir::{
     IrCastMode, IrCmpOp, IrInstruction, IrMathOp, IrProgram, IrTerminator, IrType, IrUnaryOp,
-    IrValue,
+    IrValue, TypeLayoutError,
 };
 use std::collections::HashMap;
 
@@ -23,6 +23,25 @@ const S0: Reg = 8;
 const A0: Reg = 10;
 const A1: Reg = 11;
 const FA0: Reg = 10;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodegenError {
+    pub source: TypeLayoutError,
+}
+
+impl std::fmt::Display for CodegenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "code generation failed: {}", self.source)
+    }
+}
+
+impl std::error::Error for CodegenError {}
+
+impl From<TypeLayoutError> for CodegenError {
+    fn from(source: TypeLayoutError) -> Self {
+        Self { source }
+    }
+}
 
 // One phi node prepared for edge-copy lowering, plus its staging slot.
 struct PhiCopy {
@@ -87,15 +106,19 @@ impl CompilerRv64 {
         self.omit_frame_pointer = enabled;
     }
 
-    pub fn compile(&mut self, program: &IrProgram) -> String {
-        self.compile_with_tokens(program).0
+    /// # Errors
+    /// Returns `CodegenError` when an IR type has no valid target layout.
+    pub fn compile(&mut self, program: &IrProgram) -> Result<String, CodegenError> {
+        self.compile_with_tokens(program).map(|output| output.0)
     }
 
-    /// Compile and return both the text assembly and the structured token stream.
+    /// # Errors
+    /// Returns `CodegenError` when an IR type has no valid target layout.
     pub fn compile_with_tokens(
         &mut self,
         program: &IrProgram,
-    ) -> (String, Vec<asm_to_binary::rv_instruction::RvInstruction>) {
+    ) -> Result<(String, Vec<asm_to_binary::rv_instruction::RvInstruction>), CodegenError> {
+        program.validate_types()?;
         self.compile_inner(program);
         if self.peephole {
             // Render the text from the optimized tokens so the `.s` view matches
@@ -112,9 +135,9 @@ impl CompilerRv64 {
                 .map(|t| t.to_string())
                 .collect::<Vec<_>>()
                 .join("\n");
-            (text, tokens)
+            Ok((text, tokens))
         } else {
-            (self.emitter.finish(), self.emitter.finish_tokens())
+            Ok((self.emitter.finish(), self.emitter.finish_tokens()))
         }
     }
 
@@ -126,6 +149,11 @@ impl CompilerRv64 {
         self.functions_with_sret_param.clear();
         self.heap_alloc_counter = 0;
 
+        for alias in &program.type_aliases {
+            self.type_aliases
+                .insert(alias.name.clone(), alias.ty.clone());
+            self.data.add_type_alias(alias);
+        }
         for s in &program.global_strings {
             self.data.add_global_string(s);
         }
@@ -138,11 +166,6 @@ impl CompilerRv64 {
                     .data
                     .add_data_symbol(&gv.name, size, align, bytes, gv.exported),
             }
-        }
-        for alias in &program.type_aliases {
-            self.type_aliases
-                .insert(alias.name.clone(), alias.ty.clone());
-            self.data.add_type_alias(alias);
         }
         // Cross-module signatures first; local definitions overwrite on collision.
         for ext in &program.extern_fns {
@@ -2000,7 +2023,9 @@ mod tests {
         let mut program = IrProgram::new("m");
         program.push_function(func);
 
-        let (_text, tokens) = CompilerRv64::new().compile_with_tokens(&program);
+        let (_text, tokens) = CompilerRv64::new()
+            .compile_with_tokens(&program)
+            .expect("valid program");
         let out = Assembler::assemble(&tokens).expect("assemble");
 
         // The marker attributes the return sequence to prog.hll:7.
@@ -2056,7 +2081,9 @@ mod tests {
             let mut program = IrProgram::new("test");
             program.push_function(func);
 
-            let asm = CompilerRv64::new().compile(&program);
+            let asm = CompilerRv64::new()
+                .compile(&program)
+                .expect("valid program");
             assert!(
                 asm.contains("slli") && asm.contains("srli"),
                 "zext from {width:?} must emit slli/srli to zero the high bits; asm:\n{asm}"
@@ -2117,10 +2144,25 @@ mod tests {
         let mut program = IrProgram::new("test");
         program.push_function(func);
 
-        let asm = CompilerRv64::new().compile(&program);
+        let asm = CompilerRv64::new()
+            .compile(&program)
+            .expect("valid program");
         assert!(
             asm.contains("jalr"),
             "indirect call should emit jalr:\n{asm}"
+        );
+    }
+
+    #[test]
+    fn invalid_ir_layout_stops_codegen() {
+        let mut program = IrProgram::new("invalid");
+        program.push_function(IrFunction::new("main", IrType::Named("Missing".to_owned())));
+        let error = CompilerRv64::new()
+            .compile(&program)
+            .expect_err("unresolved type");
+        assert_eq!(
+            error.source,
+            hll_to_ir::TypeLayoutError::UnresolvedName("Missing".to_owned())
         );
     }
 }

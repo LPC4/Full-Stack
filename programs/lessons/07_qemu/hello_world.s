@@ -1,5 +1,5 @@
 # 06's hello world, ported to qemu-system-riscv64 -machine virt.
-# Built with the GNU toolchain, not the IDE: see the afterword in teaching/written.md.
+# Built with the GNU toolchain, not the IDE: see "The same code on QEMU" in guide/src/written.md.
 
 .data
 msg:

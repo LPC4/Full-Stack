@@ -26,7 +26,7 @@ fn cached_stdlib_objs(regalloc: bool) -> &'static [(String, AssembledOutput)] {
             .iter()
             .map(|(name, src)| {
                 let r = pipeline.compile(src).expect("stdlib compile failed");
-                let (_, tokens) = pipeline.compile_ir_to_assembly_with_tokens(&r.ir_program);
+                let (_, tokens) = pipeline.compile_ir_to_assembly_with_tokens(&r.ir_program).expect("valid IR layout");
                 let obj = pipeline
                     .assemble_named(name, &tokens)
                     .expect("stdlib assemble failed");
@@ -44,7 +44,7 @@ fn run_with_regalloc(src: &str, regalloc: bool) -> (StepOutcome, String, usize, 
     pipeline.set_register_allocation(regalloc);
 
     let user_result = pipeline.compile(src).expect("user compile failed");
-    let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
+    let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program).expect("valid IR layout");
     let code_lines = user_tokens.iter().filter(|t| t.is_code()).count();
     let user_obj = pipeline
         .assemble(&user_tokens)
@@ -346,7 +346,7 @@ main: () -> i32 {
     pipeline.set_peephole(true);
     pipeline.set_optimize(hll_to_ir::OptOptions::all());
     let user_result = pipeline.compile(src).expect("user compile failed");
-    let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
+    let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program).expect("valid IR layout");
     let user_obj = pipeline
         .assemble(&user_tokens)
         .expect("user assemble failed");

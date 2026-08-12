@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render the TikZ figures in teaching/written.tex to SVG for the Guide.
+"""Render the tracked TikZ figure source to SVG for the Guide.
 
 Run locally, not in CI: the generated SVGs are committed so the Pages build
 needs no LaTeX. Requires `tectonic` on PATH and PyMuPDF (`pip install pymupdf`).
@@ -18,7 +18,7 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-TEX = REPO / "teaching" / "written.tex"
+TEX = REPO / "guide" / "figures" / "figures.tex"
 OUT = REPO / "guide" / "figures"
 NAMES = REPO / "guide" / "figures" / "figures.toml"
 
@@ -40,7 +40,7 @@ TINT = re.compile(r"\b([a-zA-Z][a-zA-Z0-9]*)!(\d+)(?![\d!])")
 
 def read_tex():
     if not TEX.is_file():
-        sys.exit(f"missing {TEX}. teaching/ is git-ignored; it must exist locally.")
+        sys.exit(f"missing {TEX}")
     return TEX.read_text(encoding="utf-8").splitlines()
 
 

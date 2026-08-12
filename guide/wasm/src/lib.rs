@@ -18,11 +18,7 @@ use wasm_bindgen::prelude::*;
 const SNIPPET: &str = "snippet";
 const SNIPPET_DONE: &str = "__full_stack_guide_snippet_done";
 
-const ABI_NAMES: [&str; 32] = [
-    "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2", "s0", "s1", "a0", "a1", "a2", "a3", "a4",
-    "a5", "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "t3", "t4",
-    "t5", "t6",
-];
+const ABI_NAMES: [&str; 32] = asm_to_binary::INTEGER_REGISTER_NAMES;
 
 #[derive(Serialize, Default)]
 pub struct Register {
@@ -133,32 +129,6 @@ fn needs_wrapping(source: &str) -> bool {
     })
 }
 
-// True if the line should have produced machine code.
-fn is_code_line(line: &str) -> bool {
-    let body = line.split(['#', ';']).next().unwrap_or("").trim();
-    let body = match body.split_once(':') {
-        Some((_, rest)) => rest.trim(),
-        None => body,
-    };
-    !body.is_empty() && !body.starts_with('.')
-}
-
-/// Lines that produced no machine code. The assembler only warns on those, so
-/// without this check a typo would silently assemble to a program that does nothing.
-fn unrecognised_lines(program: &str, assembled: &AssembledOutput) -> Vec<usize> {
-    let emitted: std::collections::HashSet<usize> = assembled
-        .line_table_iter()
-        .map(|entry| entry.line as usize)
-        .collect();
-
-    program
-        .lines()
-        .enumerate()
-        .filter(|(index, line)| is_code_line(line) && !emitted.contains(&(index + 1)))
-        .map(|(index, _)| index + 1)
-        .collect()
-}
-
 /// Assembles and runs `source`, returning what the reader should see.
 pub fn run(source: &str, max_steps: u64, bare: bool) -> Outcome {
     let wrapped = !bare && needs_wrapping(source);
@@ -173,18 +143,6 @@ pub fn run(source: &str, max_steps: u64, bare: bool) -> Outcome {
         Ok(assembled) => assembled,
         Err(error) => return Outcome::failed(error.message),
     };
-
-    let skipped = unrecognised_lines(&program, &assembled);
-    if !skipped.is_empty() {
-        let lines: Vec<&str> = program.lines().collect();
-        let detail = skipped
-            .iter()
-            .take(3)
-            .map(|n| format!("  line {n}: {}", lines[n - 1].trim()))
-            .collect::<Vec<_>>()
-            .join("\n");
-        return Outcome::failed(format!("could not assemble:\n{detail}"));
-    }
 
     let mut vm = VirtualMachine::new(&assembled);
     let result = if wrapped {
@@ -307,7 +265,9 @@ fn compile_hll_object(
         .functions
         .iter()
         .any(|function| function.name == "main");
-    let (_, tokens) = CompilerRv64::new().compile_with_tokens(&output.ir);
+    let (_, tokens) = CompilerRv64::new()
+        .compile_with_tokens(&output.ir)
+        .map_err(|error| error.to_string())?;
     let mut assembled = Assembler::assemble(&tokens).map_err(|error| error.message)?;
     let globals: Vec<String> = assembled
         .symbols_iter()
@@ -521,7 +481,7 @@ mod tests {
 
     #[test]
     fn every_runnable_guide_example_executes_and_matches_expectations() {
-        let markdown = include_str!("../../src/written.md");
+        let markdown = include_str!(concat!(env!("OUT_DIR"), "/guide.md"));
         let mut runnable = false;
         let mut bare = false;
         let mut language = String::new();

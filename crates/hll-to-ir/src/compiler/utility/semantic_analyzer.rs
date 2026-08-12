@@ -3,7 +3,7 @@ use crate::ast::{
     Pattern, PrimaryExpr, Program, ReturnType, Statement, Type, UnaryOp,
 };
 use crate::compiler::{Diagnostic, utility};
-use crate::ir::IrType;
+use crate::ir::{IntWidth, IrType};
 use crate::monomorphize::substitute_type;
 use crate::token::Span;
 use std::collections::{HashMap, HashSet};
@@ -675,11 +675,11 @@ impl SemanticAnalyzer {
                     Ok(format!("*{inner_name}"))
                 }
                 PrimaryExpr::AsmReg { reg } => {
-                    const ALLOWED: &[&str] = &[
-                        "sp", "fp", "ra", "gp", "tp", "a0", "a1", "a2", "a3", "a4", "a5", "a6",
-                        "a7", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11",
-                    ];
-                    if !ALLOWED.contains(&reg.as_str()) {
+                    let allowed =
+                        asm_to_binary::parse_integer_register(reg).is_some_and(|number| {
+                            !matches!(number, 0 | 5..=7 | 28..=31) && !(number == 8 && reg == "s0")
+                        });
+                    if !allowed {
                         self.error(format!(
                             "asm_reg: `{reg}` is not an allowed ABI register (temp registers t0-t6 and s0/fp are excluded by name)"
                         ));
@@ -1666,13 +1666,19 @@ impl SemanticAnalyzer {
         rest: bool,
         expected: &IrType,
     ) -> Result<(), ()> {
-        let resolved = self.resolve_named_ir_type(expected);
-        let IrType::Aggregate(declared_fields) = resolved else {
-            self.error(format!(
-                "contextual struct literal requires a struct target, found `{}`",
-                self.context.get_type_name(expected)
-            ));
-            return Err(());
+        let declared_fields = match self.resolve_named_ir_type(expected) {
+            IrType::Aggregate(fields) => fields,
+            IrType::Slice(element) => vec![
+                ("ptr".to_owned(), IrType::Pointer(element)),
+                ("len".to_owned(), IrType::Integer(IntWidth::I64)),
+            ],
+            _ => {
+                self.error(format!(
+                    "contextual struct literal requires a struct or slice target, found `{}`",
+                    self.context.get_type_name(expected)
+                ));
+                return Err(());
+            }
         };
 
         let mut seen = HashSet::new();

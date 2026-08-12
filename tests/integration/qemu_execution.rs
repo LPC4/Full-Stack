@@ -34,7 +34,7 @@ fn compile_to_asm(source: &str) -> String {
         let r = p
             .compile(src)
             .unwrap_or_else(|e| panic!("stdlib compilation failed: {e}"));
-        let (asm, _) = p.compile_ir_to_assembly_with_tokens(&r.ir_program);
+        let (asm, _) = p.compile_ir_to_assembly_with_tokens(&r.ir_program).expect("valid IR layout");
         stdlib_asm.push_str(&asm);
         stdlib_asm.push('\n');
     }
@@ -44,7 +44,7 @@ fn compile_to_asm(source: &str) -> String {
     let user_result = user_pipeline
         .compile(source)
         .unwrap_or_else(|e| panic!("HLL compilation failed: {e}"));
-    let (user_asm, _) = user_pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
+    let (user_asm, _) = user_pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program).expect("valid IR layout");
 
     let combined = format!("{}\n{}", stdlib_asm, user_asm);
     strip_comments(&combined)
@@ -156,7 +156,7 @@ fn compile_to_elf(source: &str) -> Vec<u8> {
     let user_result = pipeline
         .compile(source)
         .unwrap_or_else(|e| panic!("HLL compilation failed: {e}"));
-    let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
+    let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program).expect("valid IR layout");
     let user_obj = pipeline
         .assemble(&user_tokens)
         .unwrap_or_else(|e| panic!("user assembly failed: {e}"));

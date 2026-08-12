@@ -1,0 +1,22 @@
+; Same LCG work as branch_random, but the branch tests a slowly-changing
+; counter bit pattern instead of the seed: nearly always predicted.
+console := import("console")
+
+main: () -> i32 {
+    n: i64 = {{N}}
+    acc: i64 = 0
+    seed: i64 = 12345
+    i: i64 = 0
+    while i < n {
+        seed = (seed * 25173 + 13849) & 65535
+        if (i & 1023) != 1023 {
+            acc = acc + 1
+        } else {
+            acc = acc + 2
+        }
+        i = i + 1
+    }
+    console.print_int(acc + (seed & 0))
+    if acc == 0 { return 1 }
+    return 0
+}

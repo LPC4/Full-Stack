@@ -17,4 +17,4 @@
 
 pub mod compiler;
 
-pub use compiler::compiler_rv64::CompilerRv64;
+pub use compiler::compiler_rv64::{CodegenError, CompilerRv64};

@@ -26,6 +26,10 @@ fn direct_imports(source: &str) -> (String, HashMap<String, hll_to_ir::imports::
         .map(|(_alias, path)| module_key(path))
         .collect::<Vec<_>>();
     let mut prelude = String::new();
+    if !names.iter().any(|name| name == "layout") {
+        prelude.push_str(kernel::LAYOUT);
+        prelude.push('\n');
+    }
     let mut aliases = HashMap::new();
     for name in names {
         let module = bundled_module_source(&name)
@@ -175,7 +179,9 @@ fn compiled_stdlib() -> &'static [(String, AssembledOutput)] {
                     panic!("kernel stdlib `{name}` compile failed: {diags:?}")
                 });
                 let mut rv = CompilerRv64::new();
-                let (_, tokens) = rv.compile_with_tokens(&out.ir);
+                let (_, tokens) = rv
+                    .compile_with_tokens(&out.ir)
+                    .expect("stdlib IR type layout");
                 let obj = Assembler::assemble(&tokens)
                     .unwrap_or_else(|e| panic!("stdlib `{name}` assemble failed: {e}"));
                 ((*name).to_owned(), obj)
@@ -202,7 +208,9 @@ fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
         .compile(user_src)
         .unwrap_or_else(|diags| panic!("user compile failed: {diags:?}"));
     let mut user_rv = CompilerRv64::new();
-    let (_, user_tokens) = user_rv.compile_with_tokens(&user_out.ir);
+    let (_, user_tokens) = user_rv
+        .compile_with_tokens(&user_out.ir)
+        .expect("user IR type layout");
 
     let mut user_obj =
         Assembler::assemble(&user_tokens).unwrap_or_else(|e| panic!("user assemble failed: {e}"));

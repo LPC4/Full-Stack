@@ -24,15 +24,15 @@ programs/lessons/08_hll/out/*
 .run
 .idea
 plugin
+.ai/
 
 # Python benchmark tooling caches
 __pycache__/
+.pytest_cache/
 *.py[cod]
 
-# Benchmark suite
-benches/
-src/bin/benchmark-runner.rs
-.github/workflows/benchmarks.yml
+# Benchmark results
+/benches/results/
 /teaching/
 
 # Guide generator output

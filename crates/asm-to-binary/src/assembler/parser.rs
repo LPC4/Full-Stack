@@ -1,21 +1,18 @@
 //! Pass 0: parse `Vec<RvInstruction>` (which carries untyped raw strings, e.g. from
 //! `emit_raw`) into fully-typed `AsmToken`s so later passes never touch raw strings.
 
-macro_rules! asm_warn {
-    ($out:expr, $($arg:tt)*) => {{
-        let msg = format!($($arg)*);
-        eprintln!("asm warning: {msg}");
-        $out.push(AsmToken::Comment);
+macro_rules! asm_error {
+    ($($arg:tt)*) => {{
+        return Err(format!($($arg)*));
     }};
 }
 
-// Try to parse `$expr`; on success push to `$out`, else warn with `$label`.
-macro_rules! try_parse_or_warn {
+macro_rules! try_parse_or_error {
     ($out:expr, $line:expr, $label:literal, $expr:expr) => {
         if let Some(tok) = $expr {
             $out.push(tok);
         } else {
-            asm_warn!($out, "unrecognised {}: {}", $label, $line);
+            asm_error!("malformed {}: {}", $label, $line);
         }
     };
 }
@@ -24,6 +21,7 @@ use super::directive::Directive;
 use super::reg_parse::parse_int_reg;
 use super::section::SectionKind;
 use super::token::{AsmToken, BranchKind};
+use crate::AssemblerError;
 use crate::pseudo::PseudoInstruction;
 use crate::real::RealInstruction;
 use crate::riscv::rv64i::Srai;
@@ -36,11 +34,12 @@ use crate::riscv::rv64m::{
 };
 use crate::riscv::rv64zicsr::{Csrrc, Csrrs, Csrrw};
 use crate::rv_instruction::RvInstruction;
+use std::collections::HashMap;
 
-/// Convert an `RvInstruction` stream to typed `AsmToken`s. Unparsable tokens become
-/// `AsmToken::Comment` carrying the raw text, so callers can choose to error on them.
-pub fn parse(tokens: &[RvInstruction]) -> Vec<AsmToken> {
+pub fn parse(tokens: &[RvInstruction]) -> Result<Vec<AsmToken>, AssemblerError> {
+    let constants = collect_constants(tokens)?;
     let mut out = Vec::with_capacity(tokens.len());
+    let mut location = None;
     for tok in tokens {
         match tok {
             RvInstruction::Real(inst) => out.push(AsmToken::Real(inst.clone())),
@@ -65,16 +64,59 @@ pub fn parse(tokens: &[RvInstruction]) -> Vec<AsmToken> {
             },
             RvInstruction::Label(name) => out.push(AsmToken::Label(name.clone())),
             RvInstruction::Comment(_) => out.push(AsmToken::Comment),
-            RvInstruction::SourceLoc { file, line } => out.push(AsmToken::Loc {
-                file: file.clone(),
-                line: *line,
-            }),
+            RvInstruction::SourceLoc { file, line } => {
+                location = Some((file.as_str(), *line));
+                out.push(AsmToken::Loc {
+                    file: file.clone(),
+                    line: *line,
+                });
+            }
             RvInstruction::Directive(raw) => {
-                parse_directive_or_instruction(raw, &mut out);
+                if let Err(message) = parse_directive_or_instruction(raw, &constants, &mut out) {
+                    return Err(error_at(message, location));
+                }
             }
         }
     }
-    out
+    Ok(out)
+}
+
+fn collect_constants(tokens: &[RvInstruction]) -> Result<HashMap<String, i64>, AssemblerError> {
+    let mut constants = HashMap::new();
+    let mut location = None;
+    for token in tokens {
+        match token {
+            RvInstruction::SourceLoc { file, line } => location = Some((file.as_str(), *line)),
+            RvInstruction::Directive(raw) => {
+                let trimmed = raw.split([';', '#']).next().unwrap_or_default().trim();
+                let mnemonic = trimmed.split_whitespace().next().unwrap_or("");
+                if !matches!(mnemonic, ".equ" | ".set") {
+                    continue;
+                }
+                let Some(Directive::Equ(name, value)) = Directive::parse(trimmed) else {
+                    return Err(error_at(
+                        format!("malformed constant directive: {trimmed}"),
+                        location,
+                    ));
+                };
+                if constants.insert(name.clone(), value).is_some() {
+                    return Err(error_at(
+                        format!("duplicate assembler constant `{name}`"),
+                        location,
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(constants)
+}
+
+fn error_at(message: String, location: Option<(&str, u32)>) -> AssemblerError {
+    match location {
+        Some((file, line)) => AssemblerError::new(format!("{message} at {file}:{line}")),
+        None => AssemblerError::new(message),
+    }
 }
 
 // --- Parsing `Directive` variants ---
@@ -88,7 +130,11 @@ fn is_string_directive(raw: &str) -> bool {
         .any(|d| head.starts_with(d))
 }
 
-fn parse_directive_or_instruction(raw: &str, out: &mut Vec<AsmToken>) {
+fn parse_directive_or_instruction(
+    raw: &str,
+    constants: &HashMap<String, i64>,
+    out: &mut Vec<AsmToken>,
+) -> Result<(), String> {
     // Strip trailing inline `;` or `#` comments before any classification.
     // String directives keep theirs: the directive parser stops at the quote.
     let raw = if is_string_directive(raw) {
@@ -103,7 +149,7 @@ fn parse_directive_or_instruction(raw: &str, out: &mut Vec<AsmToken>) {
     let trimmed = raw.trim();
 
     if trimmed.is_empty() {
-        return;
+        return Ok(());
     }
 
     // Label lines emitted by data section: `name:` (no spaces in name)
@@ -112,29 +158,23 @@ fn parse_directive_or_instruction(raw: &str, out: &mut Vec<AsmToken>) {
         && !label.contains(|c: char| c.is_whitespace())
     {
         out.push(AsmToken::Label(label.to_owned()));
-        return;
+        return Ok(());
     }
 
     // Assembler directives start with `.`
     if trimmed.starts_with('.') {
-        if let Some(dir) = Directive::parse(trimmed) {
-            push_directive(dir, out);
+        if let Some(dir) = Directive::parse_with_constants(trimmed, constants) {
+            push_directive(dir, out)?;
         } else {
-            asm_warn!(out, "unrecognised directive: {trimmed}");
+            asm_error!("malformed directive: {trimmed}");
         }
-        return;
+        return Ok(());
     }
 
-    // Instruction lines start with whitespace (tab or spaces) in our emitter.
-    if raw.starts_with('\t') || raw.starts_with(' ') {
-        parse_instruction_line(trimmed, out);
-        return;
-    }
-
-    out.push(AsmToken::Comment);
+    parse_instruction_line(trimmed, constants, out)
 }
 
-fn push_directive(dir: Directive, out: &mut Vec<AsmToken>) {
+fn push_directive(dir: Directive, out: &mut Vec<AsmToken>) -> Result<(), String> {
     match dir {
         Directive::Section(name) => {
             out.push(AsmToken::Section(SectionKind::from_str(&name)));
@@ -148,22 +188,28 @@ fn push_directive(dir: Directive, out: &mut Vec<AsmToken>) {
         Directive::Dword(d) => out.push(AsmToken::DataU64(d)),
         Directive::Asciz(s) => out.push(AsmToken::DataAsciz(s)),
         Directive::Space(n) => out.push(AsmToken::Space(n)),
-        Directive::Equ(_, _) | Directive::Unknown(_) => {}
+        Directive::Equ(_, _) => {}
+        Directive::Unknown(raw) => asm_error!("unknown directive: {raw}"),
     }
+    Ok(())
 }
 
 // --- Parsing raw instruction lines ---
 
 // May push more than one token (e.g. `li` expands to up to two real instructions).
-// Unrecognised mnemonics are emitted as `AsmToken::Comment` so nothing is silently lost.
-fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
+// Unrecognised mnemonics fail this pass.
+fn parse_instruction_line(
+    line: &str,
+    constants: &HashMap<String, i64>,
+    out: &mut Vec<AsmToken>,
+) -> Result<(), String> {
     // Strip inline `;` or `#` comments before any operand parsing.
     let line = match line.find([';', '#']) {
         Some(i) => line[..i].trim_end(),
         None => line,
     };
     if line.is_empty() {
-        return;
+        return Ok(());
     }
     let (mnemonic, rest) = split_mnemonic(line);
 
@@ -171,137 +217,148 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
 
     // Branch instructions (`bne`, `beq`, `blt`, `bge`, `bltu`, `bgeu`)
     if let Some(kind) = BranchKind::from_mnemonic(mnemonic) {
-        if let Some(tok) = parse_branch(kind, rest) {
-            out.push(tok);
-        }
-        return;
+        let Some(tok) = parse_branch(kind, rest) else {
+            asm_error!("malformed {mnemonic}: {line}");
+        };
+        out.push(tok);
+        return Ok(());
     }
 
     match mnemonic {
         // --- Symbol-bearing pseudos ---
         "call" => {
             let sym = rest.trim().to_owned();
-            if !sym.is_empty() {
-                out.push(AsmToken::Call { symbol: sym });
+            if sym.is_empty() {
+                asm_error!("malformed call: {line}");
             }
+            out.push(AsmToken::Call { symbol: sym });
         }
         "tail" => {
             let sym = rest.trim().to_owned();
-            if !sym.is_empty() {
-                out.push(AsmToken::Tail { symbol: sym });
+            if sym.is_empty() {
+                asm_error!("malformed tail: {line}");
             }
+            out.push(AsmToken::Tail { symbol: sym });
         }
         "j" => {
             let target = rest.trim().to_owned();
-            if !target.is_empty() {
-                out.push(AsmToken::Jal { rd: 0, target });
+            if target.is_empty() {
+                asm_error!("malformed j: {line}");
             }
+            out.push(AsmToken::Jal { rd: 0, target });
         }
-        "jal" => try_parse_or_warn!(out, line, "jal", parse_jal(rest)),
-        "la" => try_parse_or_warn!(out, line, "la", parse_la(rest)),
+        "jal" => try_parse_or_error!(out, line, "jal", parse_jal(rest)),
+        "la" => try_parse_or_error!(out, line, "la", parse_la(rest)),
         "jalr" => {
-            if let Some((rd, rs1, imm)) = parse_load_mem(rest) {
+            if let Some((rd, rs1, imm)) = parse_load_mem(rest, constants) {
                 out.push(AsmToken::Real(RealInstruction::Jalr(Jalr::new(
                     rd, rs1, imm,
                 ))));
             } else {
-                asm_warn!(out, "unrecognised jalr: {line}");
+                asm_error!("malformed jalr: {line}");
             }
         }
 
         // --- No-operand instructions ---
-        "ecall" => out.push(AsmToken::Real(RealInstruction::Ecall(Ecall))),
-        "wfi" => out.push(AsmToken::Real(RealInstruction::Wfi(Wfi::new()))),
-        "ret" => out.push(AsmToken::Real(RealInstruction::Jalr(Jalr::new(0, 1, 0)))),
-        "nop" => out.push(AsmToken::Real(RealInstruction::Addi(Addi::new(0, 0, 0)))),
-        "mret" => out.push(AsmToken::Real(RealInstruction::Mret(Mret::new()))),
-        "sret" => out.push(AsmToken::Real(RealInstruction::Sret(Sret::new()))),
+        "ecall" if rest.is_empty() => out.push(AsmToken::Real(RealInstruction::Ecall(Ecall))),
+        "wfi" if rest.is_empty() => out.push(AsmToken::Real(RealInstruction::Wfi(Wfi::new()))),
+        "ret" if rest.is_empty() => {
+            out.push(AsmToken::Real(RealInstruction::Jalr(Jalr::new(0, 1, 0))));
+        }
+        "nop" if rest.is_empty() => {
+            out.push(AsmToken::Real(RealInstruction::Addi(Addi::new(0, 0, 0))));
+        }
+        "mret" if rest.is_empty() => out.push(AsmToken::Real(RealInstruction::Mret(Mret::new()))),
+        "sret" if rest.is_empty() => out.push(AsmToken::Real(RealInstruction::Sret(Sret::new()))),
         "sfence.vma" => {
+            if !rest.is_empty() && parse_two_regs(rest) != Some((0, 0)) {
+                asm_error!("malformed sfence.vma: {line}");
+            }
             out.push(AsmToken::Real(RealInstruction::SfenceVma(SfenceVma::new())));
         }
 
         // --- Two-operand pseudos ---
         "li" => {
-            if let Some(tokens) = try_parse_li(rest) {
+            if let Some(tokens) = try_parse_li(rest, constants) {
                 out.extend(tokens);
             } else {
-                asm_warn!(out, "unrecognised li: {line}");
+                asm_error!("malformed li: {line}");
             }
         }
         "mv" => {
             if let Some((rd, rs)) = parse_two_regs(rest) {
                 out.push(AsmToken::Real(RealInstruction::Addi(Addi::new(rd, rs, 0))));
             } else {
-                asm_warn!(out, "unrecognised mv: {line}");
+                asm_error!("malformed mv: {line}");
             }
         }
 
         // --- Stores: `rs2, imm(rs1)` format ---
         "sb" | "sw" | "sd" => {
-            if let Some((rs2, rs1, imm)) = parse_store_mem(rest) {
+            if let Some((rs2, rs1, imm)) = parse_store_mem(rest, constants) {
                 let inst = store_inst(mnemonic, rs1, rs2, imm);
                 out.push(inst);
             } else {
-                asm_warn!(out, "unrecognised {mnemonic}: {line}");
+                asm_error!("malformed {mnemonic}: {line}");
             }
         }
 
         // --- Loads: `rd, imm(rs1)` format ---
         "lb" | "lbu" | "lw" | "ld" => {
-            if let Some((rd, rs1, imm)) = parse_load_mem(rest) {
+            if let Some((rd, rs1, imm)) = parse_load_mem(rest, constants) {
                 let inst = load_inst(mnemonic, rd, rs1, imm);
                 out.push(inst);
             } else {
-                asm_warn!(out, "unrecognised {mnemonic}: {line}");
+                asm_error!("malformed {mnemonic}: {line}");
             }
         }
 
         // --- I-type: `rd, rs1, imm` format ---
         "addi" | "addiw" | "andi" | "ori" => {
-            if let Some((rd, rs1, imm)) = parse_r_i_imm(rest) {
+            if let Some((rd, rs1, imm)) = parse_r_i_imm(rest, constants) {
                 let inst = i_imm_inst(mnemonic, rd, rs1, imm);
                 out.push(inst);
             } else {
-                asm_warn!(out, "unrecognised {mnemonic}: {line}");
+                asm_error!("malformed {mnemonic}: {line}");
             }
         }
 
         // --- I-type shifts: `rd, rs1, shamt` with range check ---
         "slli" | "srli" | "srai" => {
-            if let Some((rd, rs1, shamt)) = parse_r_i_imm(rest)
+            if let Some((rd, rs1, shamt)) = parse_r_i_imm(rest, constants)
                 && (0..=63).contains(&shamt)
             {
                 let inst = shift_inst(mnemonic, rd, rs1, shamt as u8);
                 out.push(inst);
             } else {
-                asm_warn!(out, "unrecognised {mnemonic}: {line}");
+                asm_error!("malformed {mnemonic}: {line}");
             }
         }
 
         // --- CSR read shorthand: `csrr rd, csr` -> `csrrs rd, csr, x0` ---
         "csrr" => {
-            if let Some(tok) = parse_csrr(rest) {
+            if let Some(tok) = parse_csrr(rest, constants) {
                 out.push(tok);
             } else {
-                asm_warn!(out, "unrecognised csrr: {line}");
+                asm_error!("malformed csrr: {line}");
             }
         }
 
         // --- CSR write shorthand: `csrw csr, rs` -> `csrrw x0, csr, rs` ---
         "csrw" => {
-            if let Some(tok) = parse_csrw(rest) {
+            if let Some(tok) = parse_csrw(rest, constants) {
                 out.push(tok);
             } else {
-                asm_warn!(out, "unrecognised csrw: {line}");
+                asm_error!("malformed csrw: {line}");
             }
         }
 
         // --- Full CSR RMW: `csrrw/csrrs/csrrc rd, csr, rs1` ---
         "csrrw" | "csrrs" | "csrrc" => {
-            if let Some(tok) = parse_csr_rmw(mnemonic, rest) {
+            if let Some(tok) = parse_csr_rmw(mnemonic, rest, constants) {
                 out.push(tok);
             } else {
-                asm_warn!(out, "unrecognised {mnemonic}: {line}");
+                asm_error!("malformed {mnemonic}: {line}");
             }
         }
 
@@ -326,7 +383,7 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
                     target,
                 });
             } else {
-                asm_warn!(out, "unrecognised {mnemonic}: {line}");
+                asm_error!("malformed {mnemonic}: {line}");
             }
         }
 
@@ -335,7 +392,7 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
             if let Some(tok) = parse_branch_vs_zero(mnemonic, rest) {
                 out.push(tok);
             } else {
-                asm_warn!(out, "unrecognised {mnemonic}: {line}");
+                asm_error!("malformed {mnemonic}: {line}");
             }
         }
 
@@ -344,14 +401,14 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
             if let Some(tok) = parse_branch_zero(BranchKind::Beq, rest) {
                 out.push(tok);
             } else {
-                asm_warn!(out, "unrecognised beqz: {line}");
+                asm_error!("malformed beqz: {line}");
             }
         }
         "bnez" => {
             if let Some(tok) = parse_branch_zero(BranchKind::Bne, rest) {
                 out.push(tok);
             } else {
-                asm_warn!(out, "unrecognised bnez: {line}");
+                asm_error!("malformed bnez: {line}");
             }
         }
 
@@ -360,10 +417,11 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
             if let Some(tok) = parse_r_type(mnemonic, rest) {
                 out.push(tok);
             } else {
-                asm_warn!(out, "unrecognised instruction: {line}");
+                asm_error!("unknown or malformed instruction: {line}");
             }
         }
     }
+    Ok(())
 }
 
 // --- Instruction constructors (per-format dispatch helpers) ---
@@ -412,10 +470,10 @@ fn shift_inst(mnemonic: &str, rd: u8, rs1: u8, shamt: u8) -> AsmToken {
 
 // --- `li` immediate expansion ---
 
-fn try_parse_li(rest: &str) -> Option<Vec<AsmToken>> {
+fn try_parse_li(rest: &str, constants: &HashMap<String, i64>) -> Option<Vec<AsmToken>> {
     let (rd_str, imm_str) = parse_two_fields(rest)?;
     let rd = parse_int_reg(rd_str)?;
-    let imm = parse_imm_i64(imm_str)?;
+    let imm = parse_imm_i64(imm_str, constants)?;
     Some(expand_li(rd, imm))
 }
 
@@ -477,8 +535,11 @@ fn expand_li(rd: u8, imm: i64) -> Vec<AsmToken> {
 // --- Operand parsers ---
 
 // Parse an integer immediate: decimal, or `0x`/`0X` hex prefix.
-fn parse_imm_i64(s: &str) -> Option<i64> {
+fn parse_imm_i64(s: &str, constants: &HashMap<String, i64>) -> Option<i64> {
     let s = s.trim();
+    if let Some(value) = constants.get(s) {
+        return Some(*value);
+    }
     if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
         i64::from_str_radix(hex, 16).ok()
     } else {
@@ -499,35 +560,40 @@ fn parse_two_regs(operands: &str) -> Option<(u8, u8)> {
 }
 
 // Parse `"rd, rs1, imm"` -> (rd_reg, rs1_reg, imm_i32).
-fn parse_r_i_imm(operands: &str) -> Option<(u8, u8, i32)> {
+fn parse_r_i_imm(operands: &str, constants: &HashMap<String, i64>) -> Option<(u8, u8, i32)> {
     let mut parts = operands.splitn(3, ',');
     let rd = parse_int_reg(parts.next()?.trim())?;
     let rs1 = parse_int_reg(parts.next()?.trim())?;
-    let imm = parse_imm_i64(parts.next()?.trim())? as i32;
+    let imm =
+        parse_imm_i64(parts.next()?.trim(), constants).and_then(|value| value.try_into().ok())?;
     Some((rd, rs1, imm))
 }
 
 // Parse `"rs2, imm(rs1)"` -> (rs2_reg, rs1_reg, imm_i32). Used by stores.
-fn parse_store_mem(operands: &str) -> Option<(u8, u8, i32)> {
+fn parse_store_mem(operands: &str, constants: &HashMap<String, i64>) -> Option<(u8, u8, i32)> {
     let comma = operands.find(',')?;
     let rs2 = parse_int_reg(operands[..comma].trim())?;
-    let (rs1, imm) = parse_mem_ref(operands[comma + 1..].trim())?;
+    let (rs1, imm) = parse_mem_ref(operands[comma + 1..].trim(), constants)?;
     Some((rs2, rs1, imm))
 }
 
 // Parse `"rd, imm(rs1)"` -> (rd_reg, rs1_reg, imm_i32). Used by loads.
-fn parse_load_mem(operands: &str) -> Option<(u8, u8, i32)> {
+fn parse_load_mem(operands: &str, constants: &HashMap<String, i64>) -> Option<(u8, u8, i32)> {
     let comma = operands.find(',')?;
     let rd = parse_int_reg(operands[..comma].trim())?;
-    let (rs1, imm) = parse_mem_ref(operands[comma + 1..].trim())?;
+    let (rs1, imm) = parse_mem_ref(operands[comma + 1..].trim(), constants)?;
     Some((rd, rs1, imm))
 }
 
 // Parse `"imm(rs1)"` -> (rs1_reg, imm_i32).
-fn parse_mem_ref(s: &str) -> Option<(u8, i32)> {
+fn parse_mem_ref(s: &str, constants: &HashMap<String, i64>) -> Option<(u8, i32)> {
     let lparen = s.find('(')?;
     let rparen = s.find(')')?;
-    let imm = parse_imm_i64(s[..lparen].trim())? as i32;
+    if rparen + 1 != s.len() {
+        return None;
+    }
+    let imm =
+        parse_imm_i64(s[..lparen].trim(), constants).and_then(|value| value.try_into().ok())?;
     let rs1 = parse_int_reg(s[lparen + 1..rparen].trim())?;
     Some((rs1, imm))
 }
@@ -635,7 +701,7 @@ fn parse_branch_zero(kind: BranchKind, operands: &str) -> Option<AsmToken> {
 }
 
 // Map a CSR name or numeric literal to its 12-bit address.
-fn parse_csr_name(name: &str) -> Option<u16> {
+fn parse_csr_name(name: &str, constants: &HashMap<String, i64>) -> Option<u16> {
     match name.trim() {
         // Machine-mode CSRs
         "mstatus" => Some(0x300),
@@ -663,24 +729,27 @@ fn parse_csr_name(name: &str) -> Option<u16> {
         "satp" => Some(0x180),
         // Hex / decimal fallback
         s if s.starts_with("0x") || s.starts_with("0X") => u16::from_str_radix(&s[2..], 16).ok(),
-        s => s.parse::<u16>().ok(),
+        s => constants
+            .get(s)
+            .and_then(|value| (*value).try_into().ok())
+            .or_else(|| s.parse::<u16>().ok()),
     }
 }
 
 // Parse `rd, csr` for `csrr` (pseudo: csrrs rd, csr, x0).
-fn parse_csrr(operands: &str) -> Option<AsmToken> {
+fn parse_csrr(operands: &str, constants: &HashMap<String, i64>) -> Option<AsmToken> {
     let comma = operands.find(',')?;
     let rd = parse_int_reg(operands[..comma].trim())?;
-    let csr = parse_csr_name(operands[comma + 1..].trim())?;
+    let csr = parse_csr_name(operands[comma + 1..].trim(), constants)?;
     Some(AsmToken::Real(RealInstruction::Csrrs(Csrrs::new(
         rd, csr, 0,
     ))))
 }
 
 // Parse `csr, rs` for `csrw` (pseudo: csrrw x0, csr, rs).
-fn parse_csrw(operands: &str) -> Option<AsmToken> {
+fn parse_csrw(operands: &str, constants: &HashMap<String, i64>) -> Option<AsmToken> {
     let comma = operands.find(',')?;
-    let csr = parse_csr_name(operands[..comma].trim())?;
+    let csr = parse_csr_name(operands[..comma].trim(), constants)?;
     let rs = parse_int_reg(operands[comma + 1..].trim())?;
     Some(AsmToken::Real(RealInstruction::Csrrw(Csrrw::new(
         0, csr, rs,
@@ -688,13 +757,17 @@ fn parse_csrw(operands: &str) -> Option<AsmToken> {
 }
 
 // Parse `rd, csr, rs1` for the full CSR read-modify-write instructions.
-fn parse_csr_rmw(mnemonic: &str, operands: &str) -> Option<AsmToken> {
+fn parse_csr_rmw(
+    mnemonic: &str,
+    operands: &str,
+    constants: &HashMap<String, i64>,
+) -> Option<AsmToken> {
     let parts: Vec<&str> = operands.splitn(3, ',').collect();
     if parts.len() != 3 {
         return None;
     }
     let rd = parse_int_reg(parts[0].trim())?;
-    let csr = parse_csr_name(parts[1].trim())?;
+    let csr = parse_csr_name(parts[1].trim(), constants)?;
     let rs1 = parse_int_reg(parts[2].trim())?;
     let inst = match mnemonic {
         "csrrw" => RealInstruction::Csrrw(Csrrw::new(rd, csr, rs1)),
@@ -746,7 +819,7 @@ mod tests {
     // Encode a single instruction line and return its 32-bit word.
     fn encode_line(line: &str) -> u32 {
         let mut out = Vec::new();
-        parse_instruction_line(line, &mut out);
+        parse_instruction_line(line, &HashMap::new(), &mut out).expect("valid instruction");
         assert_eq!(out.len(), 1, "expected exactly one token for `{line}`");
         match &out[0] {
             AsmToken::Real(inst) => inst.encode(),
@@ -828,7 +901,8 @@ mod tests {
     #[test]
     fn ble_expands_to_bge_with_swapped_operands() {
         let mut out = Vec::new();
-        parse_instruction_line("ble t1, t2, loop", &mut out);
+        parse_instruction_line("ble t1, t2, loop", &HashMap::new(), &mut out)
+            .expect("valid instruction");
         match out.as_slice() {
             [
                 AsmToken::Branch {
@@ -845,7 +919,8 @@ mod tests {
     #[test]
     fn bgtz_expands_to_blt_against_zero() {
         let mut out = Vec::new();
-        parse_instruction_line("bgtz a0, done", &mut out);
+        parse_instruction_line("bgtz a0, done", &HashMap::new(), &mut out)
+            .expect("valid instruction");
         match out.as_slice() {
             [
                 AsmToken::Branch {

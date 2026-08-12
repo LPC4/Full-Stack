@@ -112,6 +112,12 @@ type argument and no value arguments. Primitive, pointer, function-pointer, fixe
 anonymous-struct, named aggregate, dynamic-interface, and specialized generic aggregate types
 are sized. An unresolved type is rejected rather than assigned a placeholder layout.
 
+The IR layout contract uses one-byte alignment for `void`, sizes pointers and function pointers
+at 8 bytes, and sizes slices at 16 bytes with 8-byte alignment. Array multiplication, field
+placement, and final aggregate rounding are checked for `usize` overflow. Unresolved aliases,
+by-value alias cycles, and arithmetic overflow are layout errors. HLL reflection additionally
+rejects `void`, including an alias that resolves to `void`.
+
 Aggregate fields are aligned individually and the final size is rounded up to the aggregate's
 maximum field alignment. A slice and a dynamic-interface value are each a two-word wide value.
 There is no runtime reflection metadata or emitted call for either intrinsic.
@@ -219,6 +225,7 @@ view: i32[] = nums[1..4]     ; { &nums[1], 3 }, no copy
 mid: i32 = view[0]           ; bounds-checked element read
 mid_ptr: i32* = &view[0]     ; explicit element address
 length: u64 = view.len
+raw: i32[] = { .ptr = &nums[0], .len = 5 }
 ```
 
 - `arr[a..b]` and `slice[a..b]` produce a half-open sub-slice; `..=` is inclusive; open
@@ -226,6 +233,9 @@ length: u64 = view.len
 - Slice indexing is element-scaled and bounds-checked against `.len`. An out-of-bounds access
   traps with a stable diagnostic code (see 7.4). Raw-pointer indexing is unchecked.
 - A fixed array coerces to a slice via `arr[..]`, and implicitly where a `T[]` is expected.
+- A context-typed `{ .ptr = pointer, .len = length }` literal constructs a slice directly. The
+  pointer must be `T*` and the length must be `u64`; the compiler does not validate that the raw
+  memory actually contains that many elements.
 
 ### 5.4 Destructuring
 

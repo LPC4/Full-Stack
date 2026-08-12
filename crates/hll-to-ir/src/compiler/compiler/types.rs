@@ -43,6 +43,9 @@ impl HighLevelCompiler {
                 IrType::Named(format!("{}__dyn", interface.as_string().replace('.', "__")))
             }
             Type::Named { name, args } => {
+                if args.is_empty() && name.as_string() == "void" {
+                    return IrType::Void;
+                }
                 if !args.is_empty() {
                     let lowered_args: Vec<IrType> =
                         args.iter().map(|a| self.lower_type(a)).collect();
@@ -117,6 +120,9 @@ impl HighLevelCompiler {
                 interface.as_string().replace('.', "__")
             ))),
             Type::Named { name, args } => {
+                if args.is_empty() && name.as_string() == "void" {
+                    return Ok(IrType::Void);
+                }
                 if !args.is_empty() {
                     // Lower all type arguments first
                     let lowered_args: Vec<IrType> = args
@@ -185,6 +191,7 @@ impl HighLevelCompiler {
             "f32" => IrType::Float(FloatWidth::F32),
             "f64" => IrType::Float(FloatWidth::F64),
             "bool" => IrType::Integer(IntWidth::I1),
+            "void" => IrType::Void,
             other => IrType::Named(other.to_owned()),
         }
     }

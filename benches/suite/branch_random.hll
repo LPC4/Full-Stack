@@ -1,0 +1,22 @@
+; Data-dependent branch on the LCG's top bit (low bits of a power-of-two
+; modulus LCG are short-period and predictable): high mispredict, flush-heavy.
+console := import("console")
+
+main: () -> i32 {
+    n: i64 = {{N}}
+    acc: i64 = 0
+    seed: i64 = 12345
+    i: i64 = 0
+    while i < n {
+        seed = (seed * 25173 + 13849) & 65535
+        if ((seed >> 15) & 1) == 1 {
+            acc = acc + 1
+        } else {
+            acc = acc + 2
+        }
+        i = i + 1
+    }
+    console.print_int(acc)
+    if acc == 0 { return 1 }
+    return 0
+}

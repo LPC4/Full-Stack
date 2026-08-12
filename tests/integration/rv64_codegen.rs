@@ -13,13 +13,15 @@ fn int64() -> IrType {
 }
 
 fn compile(program: &IrProgram) -> String {
-    CompilerRv64::new().compile(program)
+    CompilerRv64::new()
+        .compile(program)
+        .expect("valid IR layout")
 }
 
 fn compile_omit_fp(program: &IrProgram) -> String {
     let mut compiler = CompilerRv64::new();
     compiler.set_omit_frame_pointer(true);
-    compiler.compile(program)
+    compiler.compile(program).expect("valid IR layout")
 }
 
 #[test]

@@ -1,0 +1,35 @@
+; Naive pattern count over LCG-generated text: element loads plus an
+; inner match with early-exit branches.
+console := import("console")
+
+main: () -> i32 {
+    text: i64[4096] = []
+    i: i64 = 0
+    seed: i64 = 777
+    while i < 4096 {
+        seed = (seed * 25173 + 13849) & 65535
+        text[i] = seed & 3     ; alphabet of 4 symbols -> plenty of matches
+        i = i + 1
+    }
+    passes: i64 = {{N}}
+    hits: i64 = 0
+    p: i64 = 0
+    while p < passes {
+        hits = 0
+        j: i64 = 0
+        while j < 4093 {
+            if text[j] == 1 {
+                if text[j + 1] == 2 {
+                    if text[j + 2] == 3 {
+                        hits = hits + 1
+                    }
+                }
+            }
+            j = j + 1
+        }
+        p = p + 1
+    }
+    console.print_int(hits)
+    if hits == 0 { return 1 }
+    return 0
+}

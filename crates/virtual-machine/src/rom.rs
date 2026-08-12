@@ -14,16 +14,6 @@ pub const M_TRAP_ADDR: u64 = ROM_BASE + 0x100;
 
 pub const TRAP_HANDLER_ENTRY: u64 = M_TRAP_ADDR;
 
-/// Syscall numbers (Linux RISC-V ABI + our custom extensions).
-pub mod syscall_numbers {
-    pub const SYS_WRITE: u64 = 64;
-    pub const SYS_EXIT: u64 = 93;
-    pub const SYS_EXIT_GROUP: u64 = 94;
-    pub const SYS_PUTCHAR: u64 = 1000;
-    pub const SYS_PUTS: u64 = 1001;
-    pub const SYS_PRINTF: u64 = 1002;
-}
-
 /// Assemble the ROM firmware and return the raw bytes; panics if the
 /// assembler rejects `os_runtime::ROM_SOURCE`.
 pub fn generate_rom_image() -> Vec<u8> {

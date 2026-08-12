@@ -367,12 +367,6 @@ fn push_u32(sec: &mut SectionData, word: u32, current_addr: &mut u64) {
 // --- Pseudo-instruction encoding with symbol relocation ---
 
 // Split a PC-relative byte offset into (hi20, lo12) for AUIPC+lo pairs.
-fn pcrel_split(offset: i64) -> (i32, i32) {
-    let lo12 = ((offset & 0xFFF) as i32).wrapping_sub(if offset & 0x800 != 0 { 0x1000 } else { 0 });
-    let hi20 = ((offset - lo12 as i64) >> 12) as i32;
-    (hi20, lo12)
-}
-
 fn resolve_absolute_symbol(
     symbol: &str,
     symbols: &super::symbol_table::SymbolTable,
@@ -392,7 +386,7 @@ fn resolve_absolute_symbol(
 
 // Compute PC-relative (hi20, lo12) for a target address relative to `current_addr`.
 fn pcrel_offsets(target_addr: u64, current_addr: u64) -> (i32, i32) {
-    pcrel_split((target_addr as i64) - (current_addr as i64))
+    crate::isa::pcrel_split((target_addr as i64) - (current_addr as i64))
 }
 
 // Encode `call symbol` -> `auipc ra, %pcrel_hi(symbol); jalr ra, ra, %pcrel_lo(symbol)`.

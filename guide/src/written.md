@@ -1150,9 +1150,7 @@ translates IR into x86.
 All right, let's make this pipeline more concrete. Here is about the smallest useful HLL program we can write:
 
 ```hll, runnable
-main: () -> i32 {
-	return 1 + 1
-}
+{{#include programs/lessons/08_hll/compiler_pipeline.hll}}
 ```
 
 [Open the complete compiler-pipeline lesson in the IDE](repo:programs/lessons/08_hll/compiler_pipeline.hll).
@@ -1167,11 +1165,7 @@ arguments, `i32` is its return type and the body returns the result of `1 + 1`.
 The first stage of the compiler translates that program into this IR:
 
 ```ir
-define main() -> i32 {
-entry:
-	$0 = add i32 1, 1
-	ret $0
-}
+{{#include programs/lessons/08_hll/compiler_pipeline.ir}}
 ```
 
 The expression is already broken into simpler steps. `add i32 1, 1` adds two 32-bit integers and stores the result
@@ -1276,17 +1270,7 @@ Our first program showed the pipeline, but it did not show what happens when one
 let's revisit the sum-of-squares program from the stack-frame lesson, this time written in HLL:
 
 ```hll,runnable registers=false
-square: (value: i32) -> i32 {
-	return value * value
-}
-
-sum_of_squares: (a: i32, b: i32) -> i32 {
-	return square(a) + square(b)
-}
-
-main: () -> i32 {
-	return sum_of_squares(3, 4)
-}
+{{#include programs/lessons/09_hll_functions/sum_of_squares.hll}}
 ```
 
 [Open the lesson 09 source in the IDE](repo:programs/lessons/09_hll_functions/sum_of_squares.hll).
@@ -1515,11 +1499,7 @@ arg_ptr: u8* = null
 arg_len: u64 = 0
 
 export runtime_arg: () -> u8[] {
-	empty: u8[1] = []
-	arg: u8[] = empty[0..0]
-	arg.ptr = arg_ptr
-	arg.len = arg_len
-	return arg
+	return { .ptr = arg_ptr, .len = arg_len }
 }
 
 export _start: (entry_arg_ptr: u8*, entry_arg_len: u64) {
@@ -1532,12 +1512,12 @@ export _start: (entry_arg_ptr: u8*, entry_arg_len: u64) {
 
 `external main` tells the compiler that somebody else will provide `main`. That somebody else is you! The runtime calls
 `main`, captures whatever it returns into `code`, and then calls `sys.exit(code)`. Under the kernel,
-the loader places the process argument pointer and length in `a0` and `a1`, `runtime.arg()` keeps
-that bounded slice for tools that consume an argument.
+the loader places the process argument pointer and length in `a0` and `a1`, these get saved in the globals by `_start`, 
+and then `runtime.arg()` lets you access the arguments as a slice.
 
 Continue stepping until `jal ra, main` is next. Step once more and the machine jumps into the small
 `main` function that does 1 + 1 and returns 2. Step through it and you're back in `_start`, about to
-call `sys.exit`. That is all the runtime does here: call main, collect its return value, and stop the machine.
+call `sys.exit`. That is all the runtime does here: handle args, call main, collect its return value, and stop the machine.
 
 
 ### Exit function
@@ -1559,7 +1539,7 @@ export sys_exit: (code: i64) {
 The exit code is stored in a global variable `_a0`. Inline assembly loads it into register `a0`, puts the number 93
 into `a7`, and then executes an instruction we haven't seen before: `ecall`.
 
-`ecall` is short for *environment call*. Think of it like a `jal` where you don't know the destination. Instead of jumping
+`ecall` is short for *environment call*. Think of it like a jump instruction, but instead of jumping
 to a label in your own code, the CPU pauses your program and jumps to a handler address that was configured during startup. 
 The number in `a7` tells that handler which service you want, in this case it's exiting with a specific code.
 
@@ -1728,32 +1708,7 @@ configuration `10: dynamic memory allocation`. It allocates an array in one func
 to `main`, and frees it when `main` exits:
 
 ```hll,runnable registers=false
-console := import("console")
-memory := import("memory_allocator")
-
-build_sequence: (size: u64) -> i32* {
-	bytes: u64 = size * size_of<i32>()
-	seq: i32* = memory.malloc(bytes) as i32*
-	if seq == null { return null }
-
-	i: u64 = 0
-	while i < size {
-		seq[i] = ((i + 1) * 10) as i32
-		i += 1
-	}
-	return seq
-}
-
-main: () -> i32 {
-	my_data: i32* = build_sequence(5)
-	if my_data == null { return 1 }
-	defer memory.free(my_data as u8*)
-
-	; The array still lives after build_sequence returned.
-	total: i32 = my_data[0] + my_data[1] + my_data[2] + my_data[3] + my_data[4]
-	console.print_int(total)  ; 150
-	return 0
-}
+{{#include programs/lessons/10_stdlib/build_sequence.hll}}
 ```
 
 `malloc` takes a size in bytes, so `build_sequence` multiplies the number of elements by

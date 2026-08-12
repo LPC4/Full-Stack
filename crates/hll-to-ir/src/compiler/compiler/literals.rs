@@ -705,12 +705,18 @@ impl HighLevelCompiler {
         rest: bool,
         target_ty: &IrType,
     ) -> Option<LoweredValue> {
-        let resolved = self.resolve_named_type(target_ty);
-        let IrType::Aggregate(declared_fields) = resolved else {
-            self.context.error(format!(
-                "contextual struct literal target `{target_ty}` is not a struct"
-            ));
-            return None;
+        let declared_fields = match self.resolve_named_type(target_ty) {
+            IrType::Aggregate(fields) => fields,
+            IrType::Slice(element) => vec![
+                ("ptr".to_owned(), IrType::Pointer(element)),
+                ("len".to_owned(), IrType::Integer(IntWidth::I64)),
+            ],
+            _ => {
+                self.context.error(format!(
+                    "contextual struct literal target `{target_ty}` is not a struct or slice"
+                ));
+                return None;
+            }
         };
 
         let mut values = std::collections::HashMap::new();

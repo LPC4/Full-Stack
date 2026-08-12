@@ -47,6 +47,15 @@ Use `repo:` links for files in the repository:
 Links to `.s`, `.ir`, and `.hll` files open in the IDE. Other repository files open on GitHub.
 The build rejects missing files, invalid paths, and invalid line fragments.
 
+Include a complete repository file without duplicating it in the Guide source:
+
+```text
+{{#include programs/lessons/01_sum/sum.s}}
+```
+
+The directive must occupy its own line. Paths are repository-relative, and absolute or traversing
+paths are rejected. Put the directive inside a code fence when the included file is source code.
+
 Code fences tagged `asm`, `hll`, `ir`, `ast`, `sh`, `ld`, or `x86` use the shared highlighter.
 Add `runnable` to run an assembly fragment or an HLL program with `main` on the page:
 
@@ -71,7 +80,7 @@ Image alt text becomes the visible caption. A matching `.dark.svg` file is selec
 ![Loads move data between RAM and registers.](figures/load_store_data_flow.svg)
 ```
 
-Regenerate committed figures after changing `teaching/written.tex`:
+Regenerate committed figures after changing `guide/figures/figures.tex`:
 
 ```sh
 python guide/tools/tikz_to_svg.py
@@ -87,6 +96,5 @@ generator/    Static-site generator and preview server
 wasm/         In-page assembly and HLL sandbox
 theme/        Guide styles and browser behavior
 figures/      Generated light and dark SVGs
-graph/        Experimental system-map data and renderer
 tools/        Figure-generation tools
 ```

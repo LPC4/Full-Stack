@@ -1,0 +1,20 @@
+; Constant-foldable expressions and a dead temp chain in a hot loop.
+; With IR const-fold + DCE the body collapses to a single accumulate.
+console := import("console")
+
+main: () -> i32 {
+    n: i64 = {{N}}
+    acc: i64 = 0
+    i: i64 = 0
+    while i < n {
+        a: i64 = 3 * 7 + 21            ; folds to 42
+        b: i64 = (100 / 4) - (5 * 5)   ; folds to 0
+        dead1: i64 = i * 17 + a        ; dead: only feeds dead2
+        dead2: i64 = dead1 ^ 255       ; dead: never read
+        acc = acc + a + b
+        i = i + 1
+    }
+    console.print_int(acc)
+    if acc != n * 42 { return 1 }
+    return 0
+}

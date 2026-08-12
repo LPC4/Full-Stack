@@ -21,13 +21,11 @@ jobs:
     runs-on: ${{ inputs.runner || vars.RUNNER_TYPE || 'ubuntu-latest' }}
 
     permissions:
-      contents: write
+      contents: read
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -38,29 +36,17 @@ jobs:
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
 
-      - name: Format code
-        run: cargo fmt --all
+      - name: Check formatting
+        run: cargo fmt --all -- --check
 
-      - name: Auto-fix Clippy warnings
-        run: cargo clippy --fix --allow-dirty --allow-no-vcs
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
-      - name: Commit and Push formatting fixes
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "github-actions[bot]"
-          git add .
-          if ! git diff --staged --quiet; then
-            git commit -m "Fix formatting and clippy lints (automated)"
-            git push
-          else
-            echo "No formatting changes detected."
-          fi
+      - name: Check Full-Stack WASM target
+        run: cargo check -p full_stack --all-features --lib --target wasm32-unknown-unknown
 
-      - name: Clippy (Check only)
-        run: cargo clippy --all-targets --all-features
+      - name: Check Guide WASM target
+        run: cargo check -p full_stack_guide_wasm --all-features --target wasm32-unknown-unknown
 
-      - name: Check WASM target
-        run: cargo check --all-features --lib --target wasm32-unknown-unknown
-
-      - name: Test
-        run: cargo test --lib
+      - name: Test workspace
+        run: cargo test --workspace

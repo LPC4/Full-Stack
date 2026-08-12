@@ -8,5 +8,8 @@ rust-version = "1.92"
 name = "fs_utils"
 path = "src/lib.rs"
 
+[dependencies]
+asm_to_binary = { path = "../asm-to-binary" }
+
 [lints]
 workspace = true

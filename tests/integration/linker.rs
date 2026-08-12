@@ -24,7 +24,7 @@ fn compile_object(source: &str) -> AssembledOutput {
     let result = pipeline
         .compile(source)
         .unwrap_or_else(|e| panic!("failed to compile sample source: {e}"));
-    let (_asm, tokens) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
+    let (_asm, tokens) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program).expect("valid IR layout");
     pipeline
         .assemble(&tokens)
         .unwrap_or_else(|e| panic!("failed to assemble sample source: {e}"))

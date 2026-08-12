@@ -68,7 +68,7 @@ const USER_ARG_FLAGS = VMM_R + VMM_W + VMM_U
 const USER_ARG_MAX   = 4095
 const USER_PATH_MAX  = 255
 
-struct ExecOptions {
+export struct ExecOptions {
     path: u8[],
     arg: u8*,
     arg_len: u64,

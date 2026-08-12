@@ -1442,6 +1442,54 @@ main: () -> i32 {
     }
 
     #[test]
+    fn contextual_slice_literal_constructs_fat_pointer() {
+        let output = compile_hll(
+            r#"
+make_slice: (ptr: u8*, len: u64) -> u8[] {
+    return { .ptr = ptr, .len = len }
+}
+
+main: () -> i32 {
+    bytes: u8[3] = [1, 2, 3]
+    view: u8[] = { .ptr = &bytes[0], .len = 3 }
+    return 0
+}
+"#,
+        )
+        .expect("contextual slice literals should compile");
+        let ir = output.ir.to_string();
+        assert!(
+            ir.contains("stack_alloc i8[]"),
+            "slice allocation missing: {ir}"
+        );
+        assert!(
+            ir.contains("store i8*"),
+            "slice pointer store missing: {ir}"
+        );
+        assert!(ir.contains("+ 8"), "slice length store missing: {ir}");
+    }
+
+    #[test]
+    fn contextual_slice_literal_validates_fields() {
+        let errors = match compile_hll(
+            r#"
+make_slice: (ptr: u8*) -> u8[] {
+    return { .data = ptr, .len = 1 }
+}
+"#,
+        ) {
+            Ok(_) => panic!("invalid slice literal unexpectedly compiled"),
+            Err(errors) => errors,
+        };
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("unknown field `data`")),
+            "expected an unknown-field diagnostic, got {errors:?}"
+        );
+    }
+
+    #[test]
     fn rejects_anonymous_literal_without_context() {
         let errors = match compile_hll(
             r#"

@@ -232,7 +232,7 @@ fn allows_array_literals_through_assembly() {
         .compile(source)
         .expect("array literal example should compile to IR");
 
-    let asm = pipeline.compile_ir_to_assembly(&result.ir_program);
+    let asm = pipeline.compile_ir_to_assembly(&result.ir_program).expect("valid IR layout");
     assert!(
         asm.contains("array_literals") || asm.contains("main"),
         "expected assembly output to be generated for the array literal example"
@@ -259,7 +259,7 @@ main: () -> i32 {
         .compile(source)
         .expect("named struct alias example should compile to IR");
 
-    let asm = pipeline.compile_ir_to_assembly(&result.ir_program);
+    let asm = pipeline.compile_ir_to_assembly(&result.ir_program).expect("valid IR layout");
     assert!(
         !asm.is_empty(),
         "expected assembly output to be generated for the named struct alias example"
@@ -285,7 +285,7 @@ main: () -> i32 {
         .compile(source)
         .expect("signed comparison example should compile to IR");
 
-    let asm = pipeline.compile_ir_to_assembly(&result.ir_program);
+    let asm = pipeline.compile_ir_to_assembly(&result.ir_program).expect("valid IR layout");
     assert!(
         !asm.is_empty(),
         "expected assembly output to be generated for the signed comparison example"

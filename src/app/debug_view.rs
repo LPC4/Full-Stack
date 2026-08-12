@@ -15,11 +15,6 @@ const MEM_ROW_BYTES: usize = 16;
 const MEM_ROWS: usize = 32;
 const MEM_WINDOW: u64 = (MEM_ROW_BYTES * MEM_ROWS) as u64;
 const DISASM_GUTTER: f32 = 24.0;
-const XREG_NAMES: [&str; 32] = [
-    "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2", "s0", "s1", "a0", "a1", "a2", "a3", "a4",
-    "a5", "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "t3", "t4",
-    "t5", "t6",
-];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DebugView {
@@ -814,7 +809,7 @@ fn format_target_operand(target: u64, symbol: Option<(&str, u64)>) -> String {
 }
 
 fn xreg_name(reg: usize) -> &'static str {
-    XREG_NAMES.get(reg).copied().unwrap_or("??")
+    asm_to_binary::integer_register_name(reg).unwrap_or("??")
 }
 
 fn source_loc_row(ui: &mut egui::Ui, file: &str, line: u32, text: Option<&str>) {

@@ -292,7 +292,7 @@ fn kernel_frames_stay_within_immediate_range() {
             .compile(source)
             .unwrap_or_else(|e| panic!("{name} failed to compile:\n{e}"))
             .ir_program;
-        let asm = p.compile_ir_to_assembly(&ir);
+        let asm = p.compile_ir_to_assembly(&ir).expect("valid IR layout");
         for (func, size) in frame_sizes(&asm) {
             parsed_any = true;
             if size > FRAME_WARN_BYTES {

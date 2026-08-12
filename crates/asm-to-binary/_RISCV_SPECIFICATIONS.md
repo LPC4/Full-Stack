@@ -532,6 +532,9 @@ between FP registers.
    namespace.
 
 2. **Two-Pass Assembly:**
+    - **Pass 0:** Parse every input line into a typed token. Unknown mnemonics and directives,
+      malformed operands, invalid registers, and malformed known directives stop assembly. When
+      a source-location marker has been seen, the error reports that latest location.
     - **Pass 1:** Scan all labels; record symbol -> address mapping. Record section sizes.
     - **Pass 2:** Resolve label references, compute PC-relative offsets, emit machine code and
       relocations.
@@ -591,6 +594,12 @@ directives behave as in GAS; several common aliases are accepted for the same op
 
 Numeric directive arguments are decimal. `.string` / `.asciz` take a quoted literal and
 understand the escapes `\n`, `\t`, `\r`, `\"` and `\\`.
+
+`.equ` and `.set` have identical immutable semantics. Their decimal definitions are collected
+before instruction parsing, so a constant may be used before its definition in any operand that
+otherwise accepts a number, including data, alignment, immediate, displacement, and numeric CSR
+operands. Defining the same constant more than once is an error, including one `.equ` and one
+`.set` definition.
 
 Output uses the canonical load order `.text`, `.rodata`, `.data`, custom sections, then `.bss`,
 regardless of the order in which section directives first appear. Custom sections retain their
