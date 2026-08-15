@@ -6,6 +6,7 @@ use hll_to_ir::TargetMode;
 use hll_to_ir::stdlib::{get_stdlib_modules_for_mode, get_stdlib_type_prelude};
 use std::fmt;
 use std::path::PathBuf;
+#[cfg(target_os = "windows")]
 use std::process::{Command, Stdio};
 use virtual_machine::bus::ELF_LOAD_BASE;
 
@@ -81,6 +82,7 @@ enum QemuSkipReason {
 
 // A broken or unstarted WSL can block `wsl.exe` forever, so the wait is bounded
 // and a timeout degrades to a skip.
+#[cfg(target_os = "windows")]
 const QEMU_WAIT_TIMEOUT_SECS: u64 = 60;
 
 impl fmt::Display for QemuSkipReason {
@@ -118,6 +120,7 @@ impl fmt::Display for QemuSkipReason {
     }
 }
 
+#[cfg(target_os = "windows")]
 fn qemu_skip_reason_from_output(combined: &str) -> Option<QemuSkipReason> {
     if combined.contains("TOOLCHAIN_UNAVAILABLE: qemu-riscv64 not found") {
         return Some(QemuSkipReason::MissingQemuRiscv64);
@@ -187,15 +190,18 @@ fn win_path_to_wsl(path: &std::path::Path) -> String {
 }
 
 // Run a pre-compiled ELF image through WSL -> qemu-riscv64.
-fn run_elf_via_qemu(elf: &[u8]) -> Result<QemuResult, QemuSkipReason> {
+fn run_elf_via_qemu(
+    #[cfg(target_os = "windows")] elf: &[u8],
+    #[cfg(not(target_os = "windows"))] _elf: &[u8],
+) -> Result<QemuResult, QemuSkipReason> {
     #[cfg(not(target_os = "windows"))]
     {
-        return Err(QemuSkipReason::NotWindows);
+        Err(QemuSkipReason::NotWindows)
     }
 
     #[cfg(target_os = "windows")]
     {
-        use std::os::windows::process::CommandExt;
+        use std::os::windows::process::CommandExt as _;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
 
         // Write ELF to a unique Windows temp file - avoids both binary-mode
@@ -244,7 +250,7 @@ echo "---EXIT:$?---"
         let pid = child.id();
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let _ = tx.send(child.wait_with_output());
+            drop(tx.send(child.wait_with_output()));
         });
         let output = match rx.recv_timeout(std::time::Duration::from_secs(QEMU_WAIT_TIMEOUT_SECS)) {
             Ok(Ok(o)) => o,
@@ -252,13 +258,15 @@ echo "---EXIT:$?---"
             Err(_) => {
                 // Best-effort, fire-and-forget: an unhealthy WSL can make `taskkill`
                 // itself block, so do not wait on it or the test would hang again.
-                let _ = Command::new("taskkill")
-                    .args(["/T", "/F", "/PID", &pid.to_string()])
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .creation_flags(CREATE_NO_WINDOW)
-                    .spawn();
+                drop(
+                    Command::new("taskkill")
+                        .args(["/T", "/F", "/PID", &pid.to_string()])
+                        .stdin(Stdio::null())
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .creation_flags(CREATE_NO_WINDOW)
+                        .spawn(),
+                );
                 return Err(QemuSkipReason::WslTimedOut(QEMU_WAIT_TIMEOUT_SECS));
             }
         };
@@ -300,7 +308,7 @@ echo "---EXIT:$?---"
             .join("\n");
         let stdout = stdout.trim_matches('\n').to_string();
 
-        let _ = std::fs::remove_file(&win_elf_path);
+        drop(std::fs::remove_file(&win_elf_path));
 
         Ok(QemuResult { exit_code, stdout })
     }
