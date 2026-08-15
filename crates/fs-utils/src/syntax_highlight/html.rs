@@ -15,6 +15,11 @@ pub fn class_name(class: Class) -> Option<&'static str> {
         Class::Bracket => Some("tk-brk"),
         Class::Directive => Some("tk-dir"),
         Class::Identifier => Some("tk-id"),
+        Class::BuiltinType => Some("tk-builtin"),
+        Class::Type => Some("tk-type"),
+        Class::Generic => Some("tk-gen"),
+        Class::Variant => Some("tk-variant"),
+        Class::Function => Some("tk-fn"),
     }
 }
 
@@ -172,6 +177,16 @@ mod tests {
         for class in ["tk-lbl", "tk-kw", "tk-reg", "tk-num", "tk-cmt"] {
             assert!(html.contains(class), "missing {class}");
         }
+    }
+
+    #[test]
+    fn hll_semantic_names_get_token_classes() {
+        let source = "enum Shape { Unit, Circle(i32) }\nmain: () { value := Shape.Circle(1) }\n";
+        let html = highlight_html("hll", source);
+        for class in ["tk-type", "tk-builtin", "tk-variant", "tk-fn"] {
+            assert!(html.contains(class), "missing {class}");
+        }
+        assert!(!html.contains("class=\"tk-id\">value"));
     }
 
     // Markup must never change what the reader sees as source.

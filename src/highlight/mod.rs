@@ -54,6 +54,11 @@ fn color_for(class: Class, palette: &SyntaxPalette, theme: &egui::Style) -> Opti
         Class::Bracket => Some(palette.bracket),
         Class::Directive => Some(palette.directive),
         Class::Identifier => Some(palette.identifier),
+        Class::BuiltinType => Some(palette.builtin_type),
+        Class::Type => Some(palette.ty),
+        Class::Generic => Some(palette.generic),
+        Class::Variant => Some(palette.variant),
+        Class::Function => Some(palette.function),
     }
 }
 
@@ -82,7 +87,6 @@ mod tests {
             "break",
             "continue",
             "not",
-            "Self",
         ];
         for keyword in hll2 {
             let job = highlight_code(&style, keyword);
@@ -111,31 +115,74 @@ mod tests {
     }
 
     fn word_color(job: &LayoutJob, word: &str) -> Option<egui::Color32> {
-        job.sections.iter().find_map(|section| {
-            (&job.text[section.byte_range.clone()] == word).then_some(section.format.color)
-        })
+        let identifier = word
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_');
+        let start = job.text.match_indices(word).find_map(|(start, _)| {
+            let bytes = job.text.as_bytes();
+            let end = start + word.len();
+            let left_boundary =
+                start == 0 || !bytes[start - 1].is_ascii_alphanumeric() && bytes[start - 1] != b'_';
+            let right_boundary =
+                end == bytes.len() || !bytes[end].is_ascii_alphanumeric() && bytes[end] != b'_';
+            (!identifier || left_boundary && right_boundary).then_some(start)
+        })?;
+        let end = start + word.len();
+        job.sections
+            .iter()
+            .find(|section| section.byte_range.start.0 <= start && section.byte_range.end.0 >= end)
+            .map(|section| section.format.color)
     }
 
     #[test]
-    fn declared_and_generic_types_use_the_identifier_color() {
+    fn hll_semantic_roles_use_distinct_colors() {
         let style = egui::Style::default();
         let palette = SyntaxPalette::dark();
         let source = r#"
+; semantic palette
 interface Measured { measure: (self: Self*) -> i32 }
 struct Box<T> { value: T }
+enum Shape { Unit, Circle(i32) }
 read: <U: Measured>(value: Box<U>*, erased: dyn Measured) -> U { return value.value }
-const OP_ADD = 1
+main: () -> i32 {
+    result: Box<i32> = factory.make<T>(value)
+    shape: Shape = Shape.Circle(7)
+    text := "sample"
+    return result.value
+}
 "#;
         let job = highlight_code(&style, source);
 
-        for ty in ["Measured", "Box", "T", "U"] {
+        assert_eq!(word_color(&job, "enum"), Some(palette.keyword));
+        assert_eq!(word_color(&job, "\"sample\""), Some(palette.string));
+        assert_eq!(word_color(&job, "7"), Some(palette.number));
+        assert_eq!(word_color(&job, "semantic palette"), Some(palette.comment));
+        for ty in ["Measured", "Box", "Shape"] {
+            assert_eq!(word_color(&job, ty), Some(palette.ty), "type `{ty}`");
+        }
+        for generic in ["Self", "T", "U"] {
             assert_eq!(
-                word_color(&job, ty),
-                Some(palette.identifier),
-                "type `{ty}`"
+                word_color(&job, generic),
+                Some(palette.generic),
+                "generic `{generic}`"
             );
         }
-        assert_ne!(word_color(&job, "OP_ADD"), Some(palette.identifier));
+        assert_eq!(word_color(&job, "i32"), Some(palette.builtin_type));
+        assert_eq!(word_color(&job, "Circle"), Some(palette.variant));
+        assert_eq!(word_color(&job, "main"), Some(palette.function));
+        assert_eq!(word_color(&job, "make"), Some(palette.function));
+        for variable in ["result", "factory", "value", "shape", "text"] {
+            assert_eq!(
+                word_color(&job, variable),
+                Some(style.visuals.text_color()),
+                "variable `{variable}`"
+            );
+        }
+        assert_ne!(palette.ty, palette.builtin_type);
+        assert_ne!(palette.generic, palette.ty);
+        assert_ne!(palette.variant, palette.function);
+        assert_ne!(palette.variant, palette.builtin_type);
+        assert_ne!(palette.function, palette.generic);
     }
 
     // The job must reproduce the input exactly, or the editor would show altered text.

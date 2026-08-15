@@ -98,7 +98,7 @@ pub(super) struct CodeViewConfig<'a, Id> {
 
 pub(super) fn code_view<Id>(ui: &mut egui::Ui, config: CodeViewConfig<'_, Id>) -> CodeViewOutput
 where
-    Id: std::hash::Hash + Clone,
+    Id: std::hash::Hash + Clone + std::fmt::Debug,
 {
     let CodeViewConfig {
         id_salt,
@@ -150,11 +150,12 @@ where
                     .filter_map(|mark| mark.range.map(|(start, end)| (start, end, mark.color())))
                     .collect();
                 let mut layouter = highlighted_layouter(highlighter, &font, find_marks, diag_spans);
+                let edit_id = ui.make_persistent_id(("code_edit", id_salt.clone()));
                 if interactive {
-                    handle_code_tab(ui, ("code_edit", id_salt.clone()), &mut buf, &mut out);
+                    handle_code_tab(ui, edit_id, &mut buf, &mut out);
                 }
                 let output = egui::TextEdit::multiline(&mut buf)
-                    .id_salt(("code_edit", id_salt.clone()))
+                    .id(edit_id)
                     .font(font.clone())
                     // A TextEdit drops Key::Tab by default (it is egui's focus key), so
                     // without this Tab never reaches the branch that indents.
@@ -208,7 +209,7 @@ where
                     });
                     out.cursor = output
                         .cursor_range
-                        .map(|range| line_col(&buf, range.primary.index));
+                        .map(|range| line_col(&buf, range.primary.index.into()));
                     if output.response.changed() {
                         out.edited = Some(buf.clone());
                     }
@@ -233,17 +234,12 @@ where
 
 // Consume Shift+Tab first because egui's plain Tab match also accepts held Shift.
 // Edits use spaces and preserve four-column tab stops.
-pub(super) fn handle_code_tab<Id>(
+pub(super) fn handle_code_tab(
     ui: &egui::Ui,
-    id_salt: Id,
+    edit_id: egui::Id,
     buf: &mut String,
     out: &mut CodeViewOutput,
-) where
-    Id: std::hash::Hash + Clone,
-{
-    // The TextEdit derives its id from `.id_salt(x)` as `Id::new(x)` hashed
-    // into the parent Ui, so mirror that exactly or focus/state lookups miss.
-    let edit_id = ui.make_persistent_id(egui::Id::new(id_salt));
+) {
     if ui.ctx().memory(|m| m.focused() != Some(edit_id)) {
         return;
     }
@@ -256,7 +252,7 @@ pub(super) fn handle_code_tab<Id>(
         return;
     };
     let (primary, secondary) = match state.cursor.char_range() {
-        Some(range) => (range.primary.index, range.secondary.index),
+        Some(range) => (range.primary.index.into(), range.secondary.index.into()),
         None => (0, 0),
     };
     let (primary, secondary) = apply_tab_edit(buf, primary, secondary, outdent);
@@ -645,7 +641,7 @@ pub(super) fn restyle_ranges(
     }
     let mut sections = Vec::with_capacity(job.sections.len() + ranges.len() * 2);
     for section in job.sections.drain(..) {
-        let (start, end) = (section.byte_range.start, section.byte_range.end);
+        let (start, end) = (section.byte_range.start.0, section.byte_range.end.0);
         let mut cuts = vec![start];
         for &(range_start, range_end) in ranges {
             if range_start > start && range_start < end {
@@ -673,7 +669,7 @@ pub(super) fn restyle_ranges(
             }
             sections.push(LayoutSection {
                 leading_space,
-                byte_range: a..b,
+                byte_range: a.into()..b.into(),
                 format,
             });
             leading_space = 0.0;

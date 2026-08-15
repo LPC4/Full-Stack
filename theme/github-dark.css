@@ -26,4 +26,9 @@
   --fs-syntax-bracket: #e8d278;
   --fs-syntax-directive: #ffa06e;
   --fs-syntax-identifier: #b4dcb4;
+  --fs-syntax-builtin-type: #ffa06e;
+  --fs-syntax-type: #e0ba64;
+  --fs-syntax-generic: #56d4c7;
+  --fs-syntax-variant: #f08fb2;
+  --fs-syntax-function: #70beff;
 }

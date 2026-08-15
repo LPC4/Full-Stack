@@ -52,6 +52,11 @@
   --tk-brk: var(--fs-syntax-bracket);
   --tk-dir: var(--fs-syntax-directive);
   --tk-id: var(--fs-syntax-identifier);
+  --tk-builtin: var(--fs-syntax-builtin-type);
+  --tk-type: var(--fs-syntax-type);
+  --tk-gen: var(--fs-syntax-generic);
+  --tk-variant: var(--fs-syntax-variant);
+  --tk-fn: var(--fs-syntax-function);
   --tk-plain: var(--fs-text-strong);
 }
 
@@ -91,6 +96,11 @@
   --tk-brk: #7d4e00;
   --tk-dir: #bc4c00;
   --tk-id: #116329;
+  --tk-builtin: #bc4c00;
+  --tk-type: #9a6700;
+  --tk-gen: #087f75;
+  --tk-variant: #a40e4c;
+  --tk-fn: #0969da;
   --tk-plain: #24292f;
 }
 
@@ -403,6 +413,11 @@ pre.code.wrapped .ln {
 .tk-brk { color: var(--tk-brk); }
 .tk-dir { color: var(--tk-dir); }
 .tk-id  { color: var(--tk-id); }
+.tk-builtin { color: var(--tk-builtin); }
+.tk-type { color: var(--tk-type); }
+.tk-gen { color: var(--tk-gen); }
+.tk-variant { color: var(--tk-variant); }
+.tk-fn { color: var(--tk-fn); }
 
 /* --- Figures ---
    Every figure sits on a plate the same width, so a run of diagrams lines up

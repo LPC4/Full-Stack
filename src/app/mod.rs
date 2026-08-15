@@ -497,19 +497,19 @@ impl eframe::App for FullStackApp {
             .resizable(false)
             .exact_size(metrics::STATUS_BAR_HEIGHT)
             .frame(chrome_band)
-            .show_inside(ui, |ui| self.status_bar(ui));
+            .show(ui, |ui| self.status_bar(ui));
 
         egui::Panel::top("top_bar")
             .resizable(false)
             .exact_size(metrics::TOP_BAR_HEIGHT)
             .frame(chrome_band)
-            .show_inside(ui, |ui| self.top_bar(ui, now));
+            .show(ui, |ui| self.top_bar(ui, now));
 
         egui::Panel::left("activity_rail")
             .resizable(false)
             .exact_size(metrics::ACTIVITY_RAIL_WIDTH)
             .frame(rail_band)
-            .show_inside(ui, |ui| self.activity_rail(ui));
+            .show(ui, |ui| self.activity_rail(ui));
 
         if self.debugger_dock_visible() {
             egui::Panel::right("machine_dock")
@@ -517,7 +517,7 @@ impl eframe::App for FullStackApp {
                 .default_size(metrics::MACHINE_DOCK_DEFAULT)
                 .size_range(metrics::MACHINE_DOCK_MIN..=metrics::MACHINE_DOCK_MAX)
                 .frame(well_band)
-                .show_inside(ui, |ui| self.machine_dock(ui));
+                .show(ui, |ui| self.machine_dock(ui));
         }
 
         if self.terminal_open {
@@ -527,12 +527,12 @@ impl eframe::App for FullStackApp {
                 .default_size(metrics::TERMINAL_DEFAULT_HEIGHT)
                 .size_range(metrics::TERMINAL_MIN_HEIGHT..=terminal_max)
                 .frame(terminal_band)
-                .show_inside(ui, |ui| self.terminal_panel(ui, now));
+                .show(ui, |ui| self.terminal_panel(ui, now));
         }
 
         egui::CentralPanel::default()
             .frame(canvas_band)
-            .show_inside(ui, |ui| self.body(ui, build_glow_t));
+            .show(ui, |ui| self.body(ui, build_glow_t));
 
         self.quick_open_overlay(ui.ctx());
         self.explorer_confirm_overlay(ui.ctx());

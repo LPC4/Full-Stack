@@ -1,6 +1,6 @@
 # HLL Language Specification
 
-HLL is a small systems language. Memory perations are explicit and deterministic: there 
+HLL is a small systems language. Memory operations are explicit and deterministic: there 
 are no hidden conversions, no hidden ownership, and no hidden dispatch. This document 
 is the normative specification of the language the `hll-to-ir` front end implements.
 

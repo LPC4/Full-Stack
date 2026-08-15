@@ -52,8 +52,18 @@ pub enum Class {
     Bracket,
     /// Assembler directive, such as `.text`.
     Directive,
-    /// A declared type name, or an identifier in an AST dump.
+    /// An identifier in an AST dump or linker script.
     Identifier,
+    /// A primitive type built into the language.
+    BuiltinType,
+    /// A named struct, enum, interface, or type alias.
+    Type,
+    /// A generic type parameter.
+    Generic,
+    /// An enum variant, including a payload constructor.
+    Variant,
+    /// A function or method at a call site.
+    Function,
 }
 
 /// A classified, half-open byte range of the source that was highlighted.

@@ -10,7 +10,7 @@ members = [
     "guide/wasm",
     "benches/runner",
 ]
-resolver = "2"
+resolver = "3"
 
 [package]
 name = "full_stack"
@@ -34,17 +34,17 @@ hll_to_ir       = { path = "crates/hll-to-ir" }
 ir_to_asm       = { path = "crates/ir-to-asm" }
 asm_to_binary   = { path = "crates/asm-to-binary" }
 virtual_machine = { path = "crates/virtual-machine" }
-egui            = "0.34.1"
-eframe          = { version = "0.34.1", features = ["persistence"] }
-egui_dock       = "0.19.1"
+egui            = "0.35.0"
+eframe          = { version = "0.35.0", features = ["persistence"] }
+egui_dock       = "0.20.1"
 serde           = { version = "1.0.219", features = ["derive"] }
 serde_json      = "1.0"
 log             = "0.4.27"
 web-time        = "1.1.0"
-egui-phosphor = { version = "0.12.0", default-features = false, features = ["light"] }
+egui-phosphor = { version = "0.13.0", default-features = false, features = ["light"] }
 
 [dev-dependencies]
-egui_kittest   = { version = "0.34.0", features = ["eframe"] }
+egui_kittest   = { version = "0.35.0", features = ["eframe"] }
 os_runtime      = { path = "crates/os-runtime" }
 hll_to_ir       = { path = "crates/hll-to-ir" }
 ir_to_asm       = { path = "crates/ir-to-asm" }
@@ -60,7 +60,7 @@ rfd        = "0.17.2"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = "0.4.50"
-gloo-net = "0.6"
+gloo-net = "0.7"
 web-sys = { version = "0.3.70", features = [
     "History",
     "HtmlCanvasElement",

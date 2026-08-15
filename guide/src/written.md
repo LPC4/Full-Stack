@@ -135,8 +135,8 @@ Every allocation pushes the end of the heap towards higher addresses.
 
 ![The stack at high addresses and the heap growing toward it](figures/the_stack_and_the_heap.svg)
 
-You can probably see the danger: if the stack uses more memory than was reserved for it, that is a *stack overflow*.
-In this simple layout, the stack and heap might meet and start overwriting each other.
+You can probably see the danger: if the stack uses more memory than available, or starts overwriting the heap, 
+that is the *stack overflow error* you've probably heard of.
 
 Let's use the stack in a small example. We reserve some stack space, store two numbers in it, load them
 back, and add them:
@@ -205,7 +205,7 @@ So the basic loop your CPU keeps executing is:
 
 ### Endianness
 
-Because RISC-V is a *little-endian* architecture, the bytes are ordered in memory with the lowest byte first:
+Because RISC-V is by default a *little-endian* architecture, the bytes are ordered in memory with the lowest byte first:
 byte 0 goes at the lowest address, byte 3 at the highest. In a big-endian architecture the bytes would be the
 other way around. So if our `add` is stored at address 00, memory looks like this:
 
@@ -213,7 +213,7 @@ other way around. So if our `add` is stored at address 00, memory looks like thi
 
 This is the same reason the number 0x1234 would be stored as 34 12 in memory.
 
-You'll never have to do this by hand, though. It's the assembler's task to parse the instructions as text and
+You'll never have to do this by hand, though. It's the *assembler's* task to parse the instructions as text and
 give them back as encoded bytes.
 
 ### Labels and branches
@@ -298,9 +298,10 @@ close, but not the same thing. The disassembly always shows you exactly what the
 
 Okay, so now we've made a sum from 1 to 10, but what if you want to sum up a random array? An array can be any
 size, so we can't just put it all in registers, or use math tricks to sum them all (which is what you would try
-to do if writing really optimized assembly). So we'll have to put the array into memory, which for our purposes
-is basically unlimited: all 32 registers together hold just 256 bytes, while the VM in this project has 128 MiB
-of RAM, and your own PC has gigabytes of it.
+to do if writing really optimized assembly).
+
+So we'll have to put the array into memory, which for our purposes is basically unlimited: all 32 registers together 
+hold just 256 bytes, while the VM in this project has 128 MiB of RAM, and your own PC has gigabytes of it.
 
 We can do this through *sections*: `.text` and `.data`. These are directives that tell the *assembler* what the
 following lines are: everything after `.text` is code, and everything after `.data` is data that gets placed
@@ -451,8 +452,8 @@ register, but the `s` registers are "saved" registers that must come out of a ca
 so if you want to use one, you have to save its old value first, because it belongs to your caller. At the end of the
 function, the *epilogue* undoes all of it in reverse: `ld` the saved registers back, move `sp` up, `ret`.
 
-Here's a function that needs all of it, `max3`, which finds the largest of three numbers by calling `max`
-twice:
+This is all a bit abstract, so let's have a look at an example. Here's a function that needs all of it, `max3`, which 
+finds the largest of three numbers by calling `max` twice:
 
 ```asm
 max3:                 # max3(a, b, c): the largest of three, via two calls to max
@@ -491,10 +492,9 @@ which is just another name for `s0`), to hold the base of the frame: the value `
 was entered. The point is that offsets from `fp` stay fixed for the whole function, while `sp` can change in
 the middle of one, for example when you push extra arguments for a call. Without `fp`, finding your locals
 after `sp` moved means recalculating every offset from wherever `sp` happens to be now; with it, a local is
-just always at, say, `-24(fp)`. So for manual assembly programming the frame pointer is a nice tool to keep
-around.
+just always at, say, `-24(fp)`. So for manual assembly programming the frame pointer is a nice tool to have.
 
-This is a lot of theory, so here's what a frame with locals and a frame pointer looks like, to really make it clear:
+Here's what a function frame with locals and a frame pointer looks like:
 
 ```asm
 example:
@@ -518,8 +518,8 @@ example:
 ![A stack frame addressed from the frame pointer](figures/the_frame_pointer.svg)
 
 Most compilers drop `fp` and track the offsets themselves to be more efficient: no need to burn a register and two
-extra instructions per function keeping it up to date. Our examples from before do the compiler thing, pure `sp` offsets,
-which is also why `max3` was free to use `s0` as an ordinary saved register.
+extra instructions per function. Our examples from before do the compiler thing, pure `sp` offsets, which is also why 
+`max3` was free to use `s0` (alias `fp`) as an ordinary saved register.
 
 Now let's tie the whole thing together with one last example: factorial. It's a good fit, because
 `fact(n) = n * fact(n - 1)` makes a call, and it has to carry something across it: the original `n`, so it can
@@ -615,9 +615,8 @@ block, and the stack looks like this:
 ![Five live `fact` frames on the stack](figures/the_frame_pointer_3.svg)
 
 The innermost `fact(1)` took the base-case branch before storing anything, so its local slot is still
-`(unused)`; every frame above it has its `n` saved and is parked on its `jal`, waiting for the call below to
-return. As those returns come in, `ret` and the epilogue pop the frames off one at a time, and the answers
-multiply their way back up to `fact(5) = 120`.
+`(unused)`; every frame above it has its `n` saved and is waiting for the call below to return. `ret` and the epilogue 
+pop the frames off one at a time, and the answers multiply their way back up to `fact(5) = 120`.
 
 Now we can see how recursion can cause a *stack overflow*. Each call pushes the stack a little further down, and a
 long enough chain eventually uses more memory than was reserved for the stack. In this layout, it can then
@@ -637,10 +636,8 @@ opposite: it calls `square` twice, and every call is free to clobber `a0` and `a
 need after a call has to live in the frame. Both `b` and the result of the first `square` have to survive a
 call, so both get a slot.
 
-The template is
-[`05_stack_frames/sum_of_squares_template.s`](repo:programs/lessons/05_stack_frames/sum_of_squares_template.s),
-run configuration
-`05.2 (template): sum of squares`, again in the [browser IDE](https://lpc4.github.io/Full-Stack/). It gives
+The template is [`05_stack_frames/sum_of_squares_template.s`](repo:programs/lessons/05_stack_frames/sum_of_squares_template.s),
+run configuration `05.2 (template): sum of squares`, again in the [browser IDE](https://lpc4.github.io/Full-Stack/). It gives
 you `_start`, `square`, and a `sos` split into four commented steps to fill in, with the frame plan written
 out in the comments above it:
 
@@ -855,7 +852,7 @@ exit:                  # exit(code): halt the machine with the code in a0
 There's no `ret` at the end, and that isn't an oversight. `exit` never returns: the store is the last instruction the
 machine ever executes, so there's nothing to return to.
 
-So `_start` no longer needs anywhere to park the machine. The spin loop goes, and a call to `exit` takes its place:
+So the spin loop goes, and a call to `exit` takes its place:
 
 ```asm
 _start:
@@ -1082,8 +1079,8 @@ And now we see that the machine prints, powers off and puts us back into the she
 
 ### How real is real enough
 
-The QEMU virt machine still isn't real hardware. It's a well-behaved RV64 machine that doesn't exist in silicon, and
-a fair objection is that I've swapped one emulator for another.
+The QEMU virt machine still isn't real hardware. It's another RV64 machine that doesn't exist in silicon, and
+a fair objection is that I've only swapped one emulator for another.
 
 QEMU does have machines that model chips you could actually buy. `sifive_u` emulates the FU540-C000, the chip on the
 HiFive Unleashed board. It's still RV64, and its RAM still starts at `0x80000000`, so the assembly in this chapter is
@@ -1261,8 +1258,7 @@ spine on the left lights up, and its buttons let you inspect the HLL, IR, assemb
 Then click `debug`, switch to `disasm`, select `instr` and keep the step count at `1`. Execution begins in `_start`,
 which belongs to the standard library. Keep stepping and you will see it call `main`, where the instructions from our
 HLL file calculate `1 + 1`. When `main` returns, `a0` contains `2` and execution moves back into the standard library,
-which uses that value to stop the machine with exit code `2`. This is the boundary the linker normally hides: in the
-disassembly, you can walk across it one instruction at a time.
+which uses that value to stop the machine with exit code `2`.
 
 ### Another example
 

@@ -11,8 +11,9 @@ mod palette {
 }
 
 use palette::{
-    SYNTAX_BRACKET, SYNTAX_COMMENT, SYNTAX_DIRECTIVE, SYNTAX_IDENTIFIER, SYNTAX_KEYWORD,
-    SYNTAX_LABEL, SYNTAX_NUMBER, SYNTAX_REGISTER, SYNTAX_STRING,
+    SYNTAX_BRACKET, SYNTAX_BUILTIN_TYPE, SYNTAX_COMMENT, SYNTAX_DIRECTIVE, SYNTAX_FUNCTION,
+    SYNTAX_GENERIC, SYNTAX_IDENTIFIER, SYNTAX_KEYWORD, SYNTAX_LABEL, SYNTAX_NUMBER,
+    SYNTAX_REGISTER, SYNTAX_STRING, SYNTAX_TYPE, SYNTAX_VARIANT,
 };
 
 /// Token colors used by the syntax highlighters. A future editor can swap this
@@ -28,6 +29,11 @@ pub struct SyntaxPalette {
     pub bracket: Color32,
     pub directive: Color32,
     pub identifier: Color32,
+    pub builtin_type: Color32,
+    pub ty: Color32,
+    pub generic: Color32,
+    pub variant: Color32,
+    pub function: Color32,
 }
 
 impl SyntaxPalette {
@@ -42,6 +48,11 @@ impl SyntaxPalette {
             bracket: SYNTAX_BRACKET,
             directive: SYNTAX_DIRECTIVE,
             identifier: SYNTAX_IDENTIFIER,
+            builtin_type: SYNTAX_BUILTIN_TYPE,
+            ty: SYNTAX_TYPE,
+            generic: SYNTAX_GENERIC,
+            variant: SYNTAX_VARIANT,
+            function: SYNTAX_FUNCTION,
         }
     }
 }

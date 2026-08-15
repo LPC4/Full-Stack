@@ -1,4 +1,5 @@
 use full_stack::highlight::highlight_assembly;
+use egui::epaint::text::ByteRangeExt as _;
 
 fn style() -> egui::Style {
     egui::Style::default()
@@ -58,8 +59,8 @@ fn highlight_assembly_inline_comment_is_all_comment_color() {
         let job = highlight_assembly(&style(), asm);
         let comment_start = asm.find(['#', ';']).expect("comment marker");
         for section in &job.sections {
-            let text = &asm[section.byte_range.clone()];
-            if section.byte_range.start >= comment_start && text != "\n" {
+            let text = section.byte_range.slice(asm);
+            if section.byte_range.start.0 >= comment_start && text != "\n" {
                 assert_eq!(
                     section.format.color, comment_color,
                     "non-comment color inside comment: {text:?} in {asm:?}"
@@ -79,8 +80,8 @@ fn highlight_assembly_hash_inside_string_is_not_a_comment() {
     let quoted = job
         .sections
         .iter()
-        .find(|s| asm[s.byte_range.clone()].starts_with('"'))
+        .find(|s| s.byte_range.slice(asm).starts_with('"'))
         .expect("string section");
     assert_eq!(quoted.format.color, string_color);
-    assert_eq!(&asm[quoted.byte_range.clone()], "\"a # b\"");
+    assert_eq!(quoted.byte_range.slice(asm), "\"a # b\"");
 }
