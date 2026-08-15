@@ -377,7 +377,10 @@ impl<'a> Lexer<'a> {
                     None => return Token::Error("unterminated char literal".to_owned()),
                 }
             }
-            Some('\'') => return Token::Error("empty char literal".to_owned()),
+            Some('\'') => {
+                self.pos += 1;
+                return Token::Error("empty char literal".to_owned());
+            }
             Some(c) if c.is_ascii() => {
                 self.pos += c.len_utf8();
                 c as u8
@@ -393,7 +396,11 @@ impl<'a> Lexer<'a> {
                 self.pos += 1;
                 Token::Char(value)
             }
-            _ => Token::Error("unterminated or multi-character char literal".to_owned()),
+            Some(c) => {
+                self.pos += c.len_utf8();
+                Token::Error("unterminated or multi-character char literal".to_owned())
+            }
+            None => Token::Error("unterminated or multi-character char literal".to_owned()),
         }
     }
 
