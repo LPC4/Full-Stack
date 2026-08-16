@@ -1,0 +1,170 @@
+type FormatError = { tag: i64, payload: i8[8] }
+type Result__u64__FormatError = { tag: i64, payload: i8[16] }
+extern console_putchar(i32) -> i32
+extern console_write(i8*) -> void
+extern console_writeln(i8*) -> void
+extern print(i8[]) -> i32
+extern println(i8[]) -> i32
+extern console_print_int_rec(i64) -> void
+extern console_print_int(i64) -> void
+extern print_int(i64) -> i32
+extern console_print_hex(i64) -> void
+extern puts(i8*) -> i32
+extern printf(i8*, i32) -> i32
+extern string_len(i8[]) -> i64
+extern string_is_empty(i8[]) -> i1
+extern string_equals(i8[], i8[]) -> i1
+extern string_copy(i8[]) -> i8[]
+extern string_concat(i8[], i8[]) -> i8[]
+extern fmt_result_ok(i64) -> Result__u64__FormatError
+extern fmt_result_too_small(i64) -> Result__u64__FormatError
+extern fmt_result_overflow() -> Result__u64__FormatError
+extern fmt_len_add(i64, i64) -> i64
+extern fmt_is_len_overflow(i64) -> i1
+extern fmt_len_u64(i64) -> i64
+extern fmt_len_i64(i64) -> i64
+extern fmt_len_bool(i1) -> i64
+extern fmt_len_str(i8[]) -> i64
+extern fmt_write_bytes(i8[], i64, i8[]) -> i64
+extern fmt_write_u64(i8[], i64, i64) -> i64
+extern fmt_write_i64(i8[], i64, i64) -> i64
+extern fmt_write_bool(i8[], i64, i1) -> i64
+extern fmt_subslice(i8[], i64, i64) -> i8[]
+extern fmt_exact_check(i64, i64) -> void
+extern fmt_f64_render(f64, i8[]) -> i64
+extern fmt_len_f64(f64) -> i64
+extern fmt_write_f64(i8[], i64, f64) -> i64
+
+const str_0 = c"value="
+const str_1 = c""
+
+define main() -> i32 {
+entry:
+    ; local var: buffer
+    $buffer = stack_alloc i8[32]
+    $0 = stack_alloc i8[32]
+    store i8 0, $0 + 0
+    store i8 0, $0 + 1
+    store i8 0, $0 + 2
+    store i8 0, $0 + 3
+    store i8 0, $0 + 4
+    store i8 0, $0 + 5
+    store i8 0, $0 + 6
+    store i8 0, $0 + 7
+    store i8 0, $0 + 8
+    store i8 0, $0 + 9
+    store i8 0, $0 + 10
+    store i8 0, $0 + 11
+    store i8 0, $0 + 12
+    store i8 0, $0 + 13
+    store i8 0, $0 + 14
+    store i8 0, $0 + 15
+    store i8 0, $0 + 16
+    store i8 0, $0 + 17
+    store i8 0, $0 + 18
+    store i8 0, $0 + 19
+    store i8 0, $0 + 20
+    store i8 0, $0 + 21
+    store i8 0, $0 + 22
+    store i8 0, $0 + 23
+    store i8 0, $0 + 24
+    store i8 0, $0 + 25
+    store i8 0, $0 + 26
+    store i8 0, $0 + 27
+    store i8 0, $0 + 28
+    store i8 0, $0 + 29
+    store i8 0, $0 + 30
+    store i8 0, $0 + 31
+    store i8[32] $0, $buffer
+    ; local var: value
+    $value = stack_alloc i64
+    store i64 42, $value
+    $1 = cmp ugt i64 32, 32
+    branch $1 ? trap_0 : trap_ok_1
+trap_0:
+    trap 134
+trap_ok_1:
+    $2 = cmp ugt i64 0, 32
+    branch $2 ? trap_2 : trap_ok_3
+trap_2:
+    trap 134
+trap_ok_3:
+    $3 = sub i64 32, 0
+    $4 = index i8 $buffer, 0
+    $5 = stack_alloc i8[]
+    store i8* $4, $5 + 0
+    store i64 $3, $5 + 8
+    $6 = stack_alloc i8[]
+    store i8[] $5, $6
+    $7 = stack_alloc { tag: i64, payload: i8[16] }
+    $8 = load i64, $value
+    $9 = call fmt_len_i64($8)
+    $10 = call fmt_len_add(6, $9)
+    $11 = call fmt_is_len_overflow($10)
+    branch $11 ? format_overflow_5 : format_size_ok_6
+format_overflow_5:
+    $12 = call fmt_result_overflow()
+    store Result__u64__FormatError $12, $7
+    jump format_done_4
+format_size_ok_6:
+    $13 = load i64, $6 + 8
+    $14 = cmp ugt i64 $10, $13
+    branch $14 ? format_too_small_7 : format_write_8
+format_too_small_7:
+    $15 = call fmt_result_too_small($10)
+    store Result__u64__FormatError $15, $7
+    jump format_done_4
+format_write_8:
+    $16 = stack_alloc i8[]
+    store i8* str_0, $16 + 0
+    store i64 6, $16 + 8
+    $17 = call fmt_write_bytes($5, 0, $16)
+    $18 = call fmt_write_i64($5, $17, $8)
+    $19 = call fmt_result_ok($10)
+    store Result__u64__FormatError $19, $7
+    jump format_done_4
+format_done_4:
+    $20 = load { tag: i64, payload: i8[16] }, $7
+    ; inferred local var: written
+    $written = stack_alloc Result__u64__FormatError
+    store Result__u64__FormatError $20, $written
+    $21 = load i64, $written + 0
+    $22 = cmp eq i64 $21, 0
+    branch $22 ? match_arm_10 : match_next_11
+match_arm_10:
+    $23 = load i64, $written + 8
+    $__m0_length = stack_alloc i64
+    store i64 $23, $__m0_length
+    $24 = cmp ugt i64 32, 32
+    branch $24 ? trap_12 : trap_ok_13
+trap_12:
+    trap 134
+trap_ok_13:
+    $25 = cmp ugt i64 0, 32
+    branch $25 ? trap_14 : trap_ok_15
+trap_14:
+    trap 134
+trap_ok_15:
+    $26 = sub i64 32, 0
+    $27 = index i8 $buffer, 0
+    $28 = stack_alloc i8[]
+    store i8* $27, $28 + 0
+    store i64 $26, $28 + 8
+    $29 = load i64, $__m0_length
+    $30 = call fmt_subslice($28, 0, $29)
+    $31 = call print($30)
+    $32 = stack_alloc i8[]
+    store i8* str_1, $32 + 0
+    store i64 0, $32 + 8
+    $33 = call println($32)
+    ret 42
+match_next_11:
+    $34 = cmp eq i64 $21, 1
+    branch $34 ? match_arm_16 : match_next_17
+match_arm_16:
+    ret 1
+match_next_17:
+    trap 134
+match_merge_9:
+    ret 2
+}

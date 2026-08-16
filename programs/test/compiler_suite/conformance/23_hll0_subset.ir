@@ -1,0 +1,47 @@
+define multiply($left: i32, $right: i32) -> i32 {
+entry:
+    $left_ptr = stack_alloc i32
+    store i32 $left, $left_ptr
+    $right_ptr = stack_alloc i32
+    store i32 $right, $right_ptr
+    ; local var: result
+    $result = stack_alloc i32
+    store i32 0, $result
+    ; local var: count
+    $count = stack_alloc i32
+    store i32 0, $count
+    jump while_cond_0
+while_cond_0:
+    $0 = load i32, $count
+    $1 = load i32, $right_ptr
+    $2 = cmp slt i32 $0, $1
+    branch $2 ? while_body_1 : while_exit_2
+while_body_1:
+    $3 = load i32, $result
+    $4 = load i32, $left_ptr
+    $5 = add i32 $3, $4
+    store i32 $5, $result
+    $6 = load i32, $count
+    $7 = add i32 $6, 1
+    store i32 $7, $count
+    jump while_cond_0
+while_exit_2:
+    $8 = load i32, $result
+    ret $8
+}
+
+define main() -> i32 {
+entry:
+    ; local var: answer
+    $answer = stack_alloc i32
+    $0 = call multiply(6, 7)
+    store i32 $0, $answer
+    $1 = load i32, $answer
+    $2 = cmp ne i32 $1, 42
+    branch $2 ? if_then_3 : if_merge_5
+if_then_3:
+    ret 1
+if_merge_5:
+    $3 = load i32, $answer
+    ret $3
+}

@@ -1,0 +1,17 @@
+multiply: (left: i32, right: i32) -> i32 {
+    result: i32 = 0
+    count: i32 = 0
+    while count < right {
+        result = result + left
+        count = count + 1
+    }
+    return result
+}
+
+main: () -> i32 {
+    answer: i32 = multiply(6, 7)
+    if answer != 42 {
+        return 1
+    }
+    return answer
+}

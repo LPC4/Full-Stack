@@ -1,0 +1,19 @@
+console := import("console")
+string := import("string")
+
+main: () -> i32 {
+    buffer: u8[32] = []
+    value: i64 = 42
+    written := string.format_into(buffer[..], "value={value}")
+    match written {
+        Ok(length) -> {
+            console.print(string.fmt_subslice(buffer[..], 0, length))
+            console.println("")
+            return 42
+        }
+        Err(_) -> {
+            return 1
+        }
+    }
+    return 2
+}

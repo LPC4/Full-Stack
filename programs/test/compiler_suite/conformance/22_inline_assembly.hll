@@ -1,0 +1,10 @@
+main: () -> i32 {
+    before: i64 = asm_reg(sp)
+    asm {
+        addi sp, sp, 0
+    }
+    after: i64 = asm_reg(sp)
+    if before <= 0 { return 1 }
+    if after != before { return 2 }
+    return 42
+}

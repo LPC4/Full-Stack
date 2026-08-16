@@ -19,4 +19,11 @@
     reason = "integration harnesses prioritize fixture clarity and diagnostic output"
 )]
 
+#[path = "common/conformance_support.rs"]
+mod conformance_support;
+#[path = "common/generated_conformance_support.rs"]
+mod generated_conformance_support;
+#[path = "common/qemu_support.rs"]
+mod qemu_support;
+
 include!(concat!(env!("OUT_DIR"), "/generated_tests.rs"));

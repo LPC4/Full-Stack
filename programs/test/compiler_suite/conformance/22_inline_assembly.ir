@@ -1,0 +1,26 @@
+define main() -> i32 {
+entry:
+    ; local var: before
+    $before = stack_alloc i64
+    $0 = read_reg sp
+    store i64 $0, $before
+    inline_asm { "addi sp, sp, 0"; }
+    ; local var: after
+    $after = stack_alloc i64
+    $1 = read_reg sp
+    store i64 $1, $after
+    $2 = load i64, $before
+    $3 = cmp sle i64 $2, 0
+    branch $3 ? if_then_0 : if_merge_2
+if_then_0:
+    ret 1
+if_merge_2:
+    $4 = load i64, $after
+    $5 = load i64, $before
+    $6 = cmp ne i64 $4, $5
+    branch $6 ? if_then_3 : if_merge_5
+if_then_3:
+    ret 2
+if_merge_5:
+    ret 42
+}

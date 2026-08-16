@@ -1,0 +1,258 @@
+define main() -> i32 {
+entry:
+    ; local var: buf
+    $buf = stack_alloc i8[8]
+    $0 = stack_alloc i8[8]
+    store i8 1, $0 + 0
+    store i8 2, $0 + 1
+    store i8 3, $0 + 2
+    store i8 4, $0 + 3
+    store i8 5, $0 + 4
+    store i8 6, $0 + 5
+    store i8 7, $0 + 6
+    store i8 8, $0 + 7
+    store i8[8] $0, $buf
+    ; local var: s
+    $s = stack_alloc i8[]
+    $1 = cmp ugt i64 8, 8
+    branch $1 ? trap_0 : trap_ok_1
+trap_0:
+    trap 134
+trap_ok_1:
+    $2 = cmp ugt i64 0, 8
+    branch $2 ? trap_2 : trap_ok_3
+trap_2:
+    trap 134
+trap_ok_3:
+    $3 = sub i64 8, 0
+    $4 = index i8 $buf, 0
+    $5 = stack_alloc i8[]
+    store i8* $4, $5 + 0
+    store i64 $3, $5 + 8
+    store i8[] $5, $s
+    ; Access field 'len' at offset 8
+    $6 = load i64, $s + 8
+    $7 = cmp ne i64 $6, 8
+    branch $7 ? if_then_4 : if_merge_6
+if_then_4:
+    ret 1
+if_merge_6:
+    $8 = load i8*, $s + 0
+    $9 = load i64, $s + 8
+    $10 = cmp uge i64 0, $9
+    branch $10 ? trap_7 : trap_ok_8
+trap_7:
+    trap 134
+trap_ok_8:
+    $11 = index i8 $8, 0
+    $12 = load i8, $11
+    $13 = cmp ne i8 $12, 1
+    branch $13 ? if_then_9 : if_merge_11
+if_then_9:
+    ret 2
+if_merge_11:
+    $14 = load i8*, $s + 0
+    $15 = load i64, $s + 8
+    $16 = cmp uge i64 7, $15
+    branch $16 ? trap_12 : trap_ok_13
+trap_12:
+    trap 134
+trap_ok_13:
+    $17 = index i8 $14, 7
+    $18 = load i8, $17
+    $19 = cmp ne i8 $18, 8
+    branch $19 ? if_then_14 : if_merge_16
+if_then_14:
+    ret 3
+if_merge_16:
+    ; local var: head
+    $head = stack_alloc i8[]
+    $20 = load i8*, $s + 0
+    $21 = load i64, $s + 8
+    $22 = cmp ugt i64 5, $21
+    branch $22 ? trap_17 : trap_ok_18
+trap_17:
+    trap 134
+trap_ok_18:
+    $23 = cmp ugt i64 2, 5
+    branch $23 ? trap_19 : trap_ok_20
+trap_19:
+    trap 134
+trap_ok_20:
+    $24 = sub i64 5, 2
+    $25 = index i8 $20, 2
+    $26 = stack_alloc i8[]
+    store i8* $25, $26 + 0
+    store i64 $24, $26 + 8
+    store i8[] $26, $head
+    ; Access field 'len' at offset 8
+    $27 = load i64, $head + 8
+    $28 = cmp ne i64 $27, 3
+    branch $28 ? if_then_21 : if_merge_23
+if_then_21:
+    ret 4
+if_merge_23:
+    $29 = load i8*, $head + 0
+    $30 = load i64, $head + 8
+    $31 = cmp uge i64 0, $30
+    branch $31 ? trap_24 : trap_ok_25
+trap_24:
+    trap 134
+trap_ok_25:
+    $32 = index i8 $29, 0
+    $33 = load i8, $32
+    $34 = cmp ne i8 $33, 3
+    branch $34 ? if_then_26 : if_merge_28
+if_then_26:
+    ret 5
+if_merge_28:
+    ; local var: total
+    $total = stack_alloc i32
+    store i32 0, $total
+    ; inferred local var: i
+    $i = stack_alloc i32
+    store i32 0, $i
+    ; Access field 'len' at offset 8
+    $35 = load i64, $s + 8
+    ; inferred local var: __for_end_0
+    $__for_end_0 = stack_alloc i64
+    store i64 $35, $__for_end_0
+    jump while_cond_29
+while_cond_29:
+    $36 = load i32, $i
+    $37 = load i64, $__for_end_0
+    $38 = cmp slt i32 $36, $37
+    branch $38 ? while_body_30 : while_exit_31
+while_body_30:
+    $39 = load i32, $total
+    $40 = load i32, $i
+    $41 = load i8*, $s + 0
+    $42 = load i64, $s + 8
+    $43 = cmp uge i64 $40, $42
+    branch $43 ? trap_32 : trap_ok_33
+trap_32:
+    trap 134
+trap_ok_33:
+    $44 = index i8 $41, $40
+    $45 = load i8, $44
+    $46 = sext $45 to i32
+    $47 = add i32 $39, $46
+    store i32 $47, $total
+    $48 = load i32, $i
+    $49 = add i32 $48, 1
+    store i32 $49, $i
+    jump while_cond_29
+while_exit_31:
+    $50 = load i32, $total
+    $51 = cmp ne i32 $50, 36
+    branch $51 ? if_then_34 : if_merge_36
+if_then_34:
+    ret 6
+if_merge_36:
+    ; local var: sub
+    $sub = stack_alloc i8[]
+    $52 = load i8*, $s + 0
+    $53 = load i64, $s + 8
+    $54 = cmp ugt i64 4, $53
+    branch $54 ? trap_37 : trap_ok_38
+trap_37:
+    trap 134
+trap_ok_38:
+    $55 = cmp ugt i64 1, 4
+    branch $55 ? trap_39 : trap_ok_40
+trap_39:
+    trap 134
+trap_ok_40:
+    $56 = sub i64 4, 1
+    $57 = index i8 $52, 1
+    $58 = stack_alloc i8[]
+    store i8* $57, $58 + 0
+    store i64 $56, $58 + 8
+    store i8[] $58, $sub
+    $59 = load i8*, $sub + 0
+    $60 = load i64, $sub + 8
+    $61 = cmp uge i64 0, $60
+    branch $61 ? trap_41 : trap_ok_42
+trap_41:
+    trap 134
+trap_ok_42:
+    $62 = index i8 $59, 0
+    $63 = load i8, $62
+    $64 = cmp ne i8 $63, 2
+    $65 = load i8*, $sub + 0
+    $66 = load i64, $sub + 8
+    $67 = cmp uge i64 2, $66
+    branch $67 ? trap_43 : trap_ok_44
+trap_43:
+    trap 134
+trap_ok_44:
+    $68 = index i8 $65, 2
+    $69 = load i8, $68
+    $70 = cmp ne i8 $69, 4
+    $71 = or i1 $64, $70
+    branch $71 ? if_then_45 : if_merge_47
+if_then_45:
+    ret 7
+if_merge_47:
+    ; local var: tail
+    $tail = stack_alloc i8[]
+    $72 = load i8*, $s + 0
+    $73 = load i64, $s + 8
+    $74 = add i64 7, 1
+    $75 = cmp ugt i64 $74, $73
+    branch $75 ? trap_48 : trap_ok_49
+trap_48:
+    trap 134
+trap_ok_49:
+    $76 = cmp ugt i64 6, $74
+    branch $76 ? trap_50 : trap_ok_51
+trap_50:
+    trap 134
+trap_ok_51:
+    $77 = sub i64 $74, 6
+    $78 = index i8 $72, 6
+    $79 = stack_alloc i8[]
+    store i8* $78, $79 + 0
+    store i64 $77, $79 + 8
+    store i8[] $79, $tail
+    ; Access field 'len' at offset 8
+    $80 = load i64, $tail + 8
+    $81 = cmp ne i64 $80, 2
+    branch $81 ? if_then_52 : if_merge_54
+if_then_52:
+    ret 8
+if_merge_54:
+    $82 = load i8*, $tail + 0
+    $83 = load i64, $tail + 8
+    $84 = cmp uge i64 1, $83
+    branch $84 ? trap_55 : trap_ok_56
+trap_55:
+    trap 134
+trap_ok_56:
+    $85 = index i8 $82, 1
+    $86 = load i8, $85
+    $87 = cmp ne i8 $86, 8
+    branch $87 ? if_then_57 : if_merge_59
+if_then_57:
+    ret 9
+if_merge_59:
+    ; local var: idx
+    $idx = stack_alloc i64
+    store i64 99, $idx
+    ; local var: oob
+    $oob = stack_alloc i8
+    $88 = load i64, $idx
+    $89 = load i8*, $s + 0
+    $90 = load i64, $s + 8
+    $91 = cmp uge i64 $88, $90
+    branch $91 ? trap_60 : trap_ok_61
+trap_60:
+    trap 134
+trap_ok_61:
+    $92 = index i8 $89, $88
+    $93 = load i8, $92
+    store i8 $93, $oob
+    $94 = load i8, $oob
+    $95 = zext $94 to i32
+    ret $95
+}

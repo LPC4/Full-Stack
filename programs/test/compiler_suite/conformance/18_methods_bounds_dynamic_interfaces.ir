@@ -1,0 +1,218 @@
+type Rect = { width: i32, height: i32 }
+type Disc = { radius: i32 }
+type Measurable__dyn = { __data: i8*, __fn_area: fn(i8*) -> i32 }
+
+define Rect_make($width: i32, $height: i32) -> Rect {
+entry:
+    $width_ptr = stack_alloc i32
+    store i32 $width, $width_ptr
+    $height_ptr = stack_alloc i32
+    store i32 $height, $height_ptr
+    $0 = stack_alloc Rect
+    $1 = load i32, $width_ptr
+    store i32 $1, $0 + 0
+    $2 = load i32, $height_ptr
+    store i32 $2, $0 + 4
+    ret $0
+}
+
+define Rect_area($self: Rect*) -> i32 {
+entry:
+    $self_ptr = stack_alloc Rect*
+    store Rect* $self, $self_ptr
+    $0 = load { width: i32, height: i32 }*, $self_ptr
+    ; Access field 'width' at offset 0
+    $1 = load i32, $0 + 0
+    $2 = load { width: i32, height: i32 }*, $self_ptr
+    ; Access field 'height' at offset 4
+    $3 = load i32, $2 + 4
+    $4 = mul i32 $1, $3
+    ret $4
+}
+
+define Rect_scaled($self: Rect*, $k: i32) -> i32 {
+entry:
+    $self_ptr = stack_alloc Rect*
+    store Rect* $self, $self_ptr
+    $k_ptr = stack_alloc i32
+    store i32 $k, $k_ptr
+    $0 = load Rect*, $self_ptr
+    $1 = call Rect_area($0)
+    $2 = load i32, $k_ptr
+    $3 = mul i32 $1, $2
+    ret $3
+}
+
+define Disc_area($self: Disc*) -> i32 {
+entry:
+    $self_ptr = stack_alloc Disc*
+    store Disc* $self, $self_ptr
+    $0 = load { radius: i32 }*, $self_ptr
+    ; Access field 'radius' at offset 0
+    $1 = load i32, $0 + 0
+    $2 = mul i32 3, $1
+    $3 = load { radius: i32 }*, $self_ptr
+    ; Access field 'radius' at offset 0
+    $4 = load i32, $3 + 0
+    $5 = mul i32 $2, $4
+    ret $5
+}
+
+define main() -> i32 {
+entry:
+    ; local var: r
+    $r = stack_alloc Rect
+    $0 = call Rect_make(6, 7)
+    store Rect $0, $r
+    $1 = call Rect_area($r)
+    $2 = cmp ne i32 $1, 42
+    branch $2 ? if_then_0 : if_merge_2
+if_then_0:
+    ret 1
+if_merge_2:
+    $3 = call Rect_scaled($r, 2)
+    $4 = cmp ne i32 $3, 84
+    branch $4 ? if_then_3 : if_merge_5
+if_then_3:
+    ret 2
+if_merge_5:
+    $5 = call double_area__Rect($r)
+    $6 = cmp ne i32 $5, 84
+    branch $6 ? if_then_6 : if_merge_8
+if_then_6:
+    ret 3
+if_merge_8:
+    ; local var: d
+    $d = stack_alloc Disc
+    $7 = stack_alloc Disc
+    store i32 3, $7 + 0
+    store Disc $7, $d
+    $8 = call double_area__Disc($d)
+    $9 = cmp ne i32 $8, 54
+    branch $9 ? if_then_9 : if_merge_11
+if_then_9:
+    ret 4
+if_merge_11:
+    ; local var: mixed
+    $mixed = stack_alloc Measurable__dyn[2]
+    $10 = stack_alloc Measurable__dyn
+    $11 = bitcast $r to i8*
+    store i8* $11, $10 + 0
+    $12 = function_addr Measurable__dyn__Rect__area
+    store fn(i8*) -> i32 $12, $10 + 8
+    $13 = stack_alloc Measurable__dyn
+    $14 = bitcast $d to i8*
+    store i8* $14, $13 + 0
+    $15 = function_addr Measurable__dyn__Disc__area
+    store fn(i8*) -> i32 $15, $13 + 8
+    $16 = stack_alloc { __data: i8*, __fn_area: fn(i8*) -> i32 }[2]
+    store { __data: i8*, __fn_area: fn(i8*) -> i32 } $10, $16 + 0
+    store { __data: i8*, __fn_area: fn(i8*) -> i32 } $13, $16 + 16
+    store Measurable__dyn[2] $16, $mixed
+    $17 = index { __data: i8*, __fn_area: fn(i8*) -> i32 } $mixed, 0
+    $18 = call Measurable__dyn_area($17)
+    $19 = cmp ne i32 $18, 42
+    branch $19 ? if_then_12 : if_merge_14
+if_then_12:
+    ret 5
+if_merge_14:
+    $20 = index { __data: i8*, __fn_area: fn(i8*) -> i32 } $mixed, 1
+    $21 = call Measurable__dyn_area($20)
+    $22 = cmp ne i32 $21, 27
+    branch $22 ? if_then_15 : if_merge_17
+if_then_15:
+    ret 6
+if_merge_17:
+    ; local var: total
+    $total = stack_alloc i32
+    store i32 0, $total
+    ; inferred local var: i
+    $i = stack_alloc i32
+    store i32 0, $i
+    ; inferred local var: __for_end_0
+    $__for_end_0 = stack_alloc i32
+    store i32 2, $__for_end_0
+    jump while_cond_18
+while_cond_18:
+    $23 = load i32, $i
+    $24 = load i32, $__for_end_0
+    $25 = cmp slt i32 $23, $24
+    branch $25 ? while_body_19 : while_exit_20
+while_body_19:
+    $26 = load i32, $total
+    $27 = load i32, $i
+    $28 = index { __data: i8*, __fn_area: fn(i8*) -> i32 } $mixed, $27
+    $29 = call Measurable__dyn_area($28)
+    $30 = add i32 $26, $29
+    store i32 $30, $total
+    $31 = load i32, $i
+    $32 = add i32 $31, 1
+    store i32 $32, $i
+    jump while_cond_18
+while_exit_20:
+    $33 = load i32, $total
+    $34 = cmp ne i32 $33, 69
+    branch $34 ? if_then_21 : if_merge_23
+if_then_21:
+    ret 7
+if_merge_23:
+    ret 42
+}
+
+define double_area__Rect($v: Rect*) -> i32 {
+entry:
+    $v_ptr = stack_alloc Rect*
+    store Rect* $v, $v_ptr
+    $0 = load Rect*, $v_ptr
+    $1 = call Rect_area($0)
+    $2 = load Rect*, $v_ptr
+    $3 = call Rect_area($2)
+    $4 = add i32 $1, $3
+    ret $4
+}
+
+define double_area__Disc($v: Disc*) -> i32 {
+entry:
+    $v_ptr = stack_alloc Disc*
+    store Disc* $v, $v_ptr
+    $0 = load Disc*, $v_ptr
+    $1 = call Disc_area($0)
+    $2 = load Disc*, $v_ptr
+    $3 = call Disc_area($2)
+    $4 = add i32 $1, $3
+    ret $4
+}
+
+define Measurable__dyn_area($self: Measurable__dyn*) -> i32 {
+entry:
+    $self_ptr = stack_alloc Measurable__dyn*
+    store Measurable__dyn* $self, $self_ptr
+    $0 = load { __data: i8*, __fn_area: fn(i8*) -> i32 }*, $self_ptr
+    ; Access field '__fn_area' at offset 8
+    $1 = load fn(i8*) -> i32, $0 + 8
+    $2 = load { __data: i8*, __fn_area: fn(i8*) -> i32 }*, $self_ptr
+    ; Access field '__data' at offset 0
+    $3 = load i8*, $2 + 0
+    $4 = indirect_call $1($3) : fn(i8*) -> i32
+    ret $4
+}
+
+define Measurable__dyn__Disc__area($__obj: i8*) -> i32 {
+entry:
+    $__obj_ptr = stack_alloc i8*
+    store i8* $__obj, $__obj_ptr
+    $0 = load i8*, $__obj_ptr
+    $1 = bitcast $0 to Disc*
+    $2 = call Disc_area($1)
+    ret $2
+}
+
+define Measurable__dyn__Rect__area($__obj: i8*) -> i32 {
+entry:
+    $__obj_ptr = stack_alloc i8*
+    store i8* $__obj, $__obj_ptr
+    $0 = load i8*, $__obj_ptr
+    $1 = bitcast $0 to Rect*
+    $2 = call Rect_area($1)
+    ret $2
+}

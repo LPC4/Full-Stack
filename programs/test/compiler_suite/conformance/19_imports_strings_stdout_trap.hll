@@ -1,0 +1,13 @@
+console := import("console")
+
+main: () -> i32 {
+    greeting: u8[] = "hello"
+    if greeting.len != 5 { return 1 }
+    if greeting[0] != 'h' { return 2 }
+    if greeting[4] != 'o' { return 3 }
+
+    console.println(greeting)
+
+    assert(false)
+    return 0
+}

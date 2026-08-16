@@ -1,0 +1,48 @@
+type Word = i32
+
+const ANSWER = 0x2a
+
+struct Pair {
+    left: i32
+    right: i32
+}
+
+enum Choice {
+    Value(i32)
+    Empty
+}
+
+select: (choice: Choice) -> i32 {
+    return match choice {
+        Value(value) -> value
+        Empty -> 0
+    }
+}
+
+main: () -> i32 {
+    alias_value: Word = ANSWER
+    binary_value: i32 = 0b0010_1010
+    decimal_value: i32 = 4_2
+    escaped: i32 = '\n'
+    text: u8[] = "ok\n"
+    ratio: f64 = 1.5
+
+    if binary_value != ANSWER { return 1 }
+    if decimal_value != ANSWER { return 2 }
+    if escaped != 10 { return 3 }
+    if text.len != 3 { return 4 }
+
+    pair: Pair = Pair { .left = binary_value, .right = decimal_value }
+    values: i32[2] = [pair.left, pair.right]
+    total: i32 = 0
+    for value in values {
+        total += value
+    }
+    while total > ANSWER {
+        total -= ANSWER
+    }
+
+    choice: Choice = Value(total)
+    if select(choice) != ANSWER { return 6 }
+    return ANSWER
+}

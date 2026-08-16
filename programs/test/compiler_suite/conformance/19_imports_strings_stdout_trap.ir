@@ -1,0 +1,65 @@
+extern console_putchar(i32) -> i32
+extern console_write(i8*) -> void
+extern console_writeln(i8*) -> void
+extern print(i8[]) -> i32
+extern println(i8[]) -> i32
+extern console_print_int_rec(i64) -> void
+extern console_print_int(i64) -> void
+extern print_int(i64) -> i32
+extern console_print_hex(i64) -> void
+extern puts(i8*) -> i32
+extern printf(i8*, i32) -> i32
+
+const str_0 = c"hello"
+
+define main() -> i32 {
+entry:
+    ; local var: greeting
+    $greeting = stack_alloc i8[]
+    $0 = stack_alloc i8[]
+    store i8* str_0, $0 + 0
+    store i64 5, $0 + 8
+    store i8[] $0, $greeting
+    ; Access field 'len' at offset 8
+    $1 = load i64, $greeting + 8
+    $2 = cmp ne i64 $1, 5
+    branch $2 ? if_then_0 : if_merge_2
+if_then_0:
+    ret 1
+if_merge_2:
+    $3 = load i8*, $greeting + 0
+    $4 = load i64, $greeting + 8
+    $5 = cmp uge i64 0, $4
+    branch $5 ? trap_3 : trap_ok_4
+trap_3:
+    trap 134
+trap_ok_4:
+    $6 = index i8 $3, 0
+    $7 = load i8, $6
+    $8 = cmp ne i8 $7, 104
+    branch $8 ? if_then_5 : if_merge_7
+if_then_5:
+    ret 2
+if_merge_7:
+    $9 = load i8*, $greeting + 0
+    $10 = load i64, $greeting + 8
+    $11 = cmp uge i64 4, $10
+    branch $11 ? trap_8 : trap_ok_9
+trap_8:
+    trap 134
+trap_ok_9:
+    $12 = index i8 $9, 4
+    $13 = load i8, $12
+    $14 = cmp ne i8 $13, 111
+    branch $14 ? if_then_10 : if_merge_12
+if_then_10:
+    ret 3
+if_merge_12:
+    $15 = call println($greeting)
+    $16 = not i1 false
+    branch $16 ? trap_13 : trap_ok_14
+trap_13:
+    trap 101
+trap_ok_14:
+    ret 0
+}

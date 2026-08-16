@@ -1,0 +1,28 @@
+main: () -> i32 {
+    buf: u8[8] = [1, 2, 3, 4, 5, 6, 7, 8]
+    s: u8[] = buf[..]
+    if s.len != 8 { return 1 }
+    if s[0] != 1 { return 2 }
+    if s[7] != 8 { return 3 }
+
+    head: u8[] = s[2..5]
+    if head.len != 3 { return 4 }
+    if head[0] != 3 { return 5 }
+
+    total: i32 = 0
+    for i in 0..s.len {
+        total = total + (s[i] as i32)
+    }
+    if total != 36 { return 6 }
+
+    sub: u8[] = s[1..4]
+    if sub[0] != 2 or sub[2] != 4 { return 7 }
+
+    tail: u8[] = s[6..=7]
+    if tail.len != 2 { return 8 }
+    if tail[1] != 8 { return 9 }
+
+    idx: u64 = 99
+    oob: u8 = s[idx]
+    return oob as i32
+}

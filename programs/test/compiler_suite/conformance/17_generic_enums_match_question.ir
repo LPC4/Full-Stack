@@ -1,0 +1,207 @@
+type Result__i32__i32 = { tag: i64, payload: i8[8] }
+type Tree__i32 = { tag: i64, payload: i8[8] }
+type Option__i32 = { tag: i64, payload: i8[8] }
+
+define halve($n: i32) -> Result__i32__i32 {
+entry:
+    $n_ptr = stack_alloc i32
+    store i32 $n, $n_ptr
+    $0 = load i32, $n_ptr
+    $1 = mod i32 $0, 2
+    $2 = cmp ne i32 $1, 0
+    branch $2 ? if_then_0 : if_merge_2
+if_then_0:
+    $3 = stack_alloc { tag: i64, payload: i8[8] }
+    store i64 1, $3 + 0
+    $4 = load i32, $n_ptr
+    store i32 $4, $3 + 8
+    ret $3
+if_merge_2:
+    $5 = stack_alloc { tag: i64, payload: i8[8] }
+    store i64 0, $5 + 0
+    $6 = load i32, $n_ptr
+    $7 = sdiv i32 $6, 2
+    store i32 $7, $5 + 8
+    ret $5
+}
+
+define quarter($n: i32) -> Result__i32__i32 {
+entry:
+    $n_ptr = stack_alloc i32
+    store i32 $n, $n_ptr
+    $0 = load i32, $n_ptr
+    $1 = call halve($0)
+    $2 = stack_alloc Result__i32__i32
+    store Result__i32__i32 $1, $2
+    $3 = load i64, $2 + 0
+    $4 = cmp eq i64 $3, 0
+    branch $4 ? try_success_3 : try_failure_4
+try_failure_4:
+    $5 = stack_alloc { tag: i64, payload: i8[8] }
+    store i64 1, $5 + 0
+    $6 = load i32, $2 + 8
+    store i32 $6, $5 + 8
+    ret $5
+try_success_3:
+    $7 = load i32, $2 + 8
+    ; inferred local var: h
+    $h = stack_alloc i32
+    store i32 $7, $h
+    $8 = load i32, $h
+    $9 = call halve($8)
+    ret $9
+}
+
+define main() -> i32 {
+entry:
+    ; local var: t
+    $t = stack_alloc Tree__i32
+    $0 = stack_alloc { tag: i64, payload: i8[8] }
+    store i64 1, $0 + 0
+    store i32 15, $0 + 8
+    store i32 27, $0 + 12
+    store Tree__i32 $0, $t
+    $__match_res0 = stack_alloc i32
+    $1 = load i64, $t + 0
+    $2 = cmp eq i64 $1, 0
+    branch $2 ? match_arm_6 : match_next_7
+match_arm_6:
+    $3 = load i32, $t + 8
+    $__m0_a = stack_alloc i32
+    store i32 $3, $__m0_a
+    $4 = load i32, $__m0_a
+    store i32 $4, $__match_res0
+    jump match_merge_5
+match_next_7:
+    $5 = cmp eq i64 $1, 1
+    branch $5 ? match_arm_8 : match_next_9
+match_arm_8:
+    $6 = load i32, $t + 8
+    $__m0_a = stack_alloc i32
+    store i32 $6, $__m0_a
+    $7 = load i32, $t + 12
+    $__m0_b = stack_alloc i32
+    store i32 $7, $__m0_b
+    $8 = load i32, $__m0_a
+    $9 = load i32, $__m0_b
+    $10 = add i32 $8, $9
+    store i32 $10, $__match_res0
+    jump match_merge_5
+match_next_9:
+    trap 134
+match_merge_5:
+    $11 = load i32, $__match_res0
+    ; inferred local var: sum
+    $sum = stack_alloc i32
+    store i32 $11, $sum
+    $12 = load i32, $sum
+    $13 = cmp ne i32 $12, 42
+    branch $13 ? if_then_10 : if_merge_12
+if_then_10:
+    ret 1
+if_merge_12:
+    ; local var: opt
+    $opt = stack_alloc Option__i32
+    $14 = stack_alloc { tag: i64, payload: i8[8] }
+    store i64 0, $14 + 0
+    store i32 41, $14 + 8
+    store Option__i32 $14, $opt
+    $__match_res1 = stack_alloc i32
+    $15 = load i64, $opt + 0
+    $16 = cmp eq i64 $15, 0
+    branch $16 ? match_arm_14 : match_next_15
+match_arm_14:
+    $17 = load i32, $opt + 8
+    $__m1_x = stack_alloc i32
+    store i32 $17, $__m1_x
+    $18 = load i32, $__m1_x
+    $19 = add i32 $18, 1
+    store i32 $19, $__match_res1
+    jump match_merge_13
+match_next_15:
+    $20 = cmp eq i64 $15, 1
+    branch $20 ? match_arm_16 : match_next_17
+match_arm_16:
+    store i32 0, $__match_res1
+    jump match_merge_13
+match_next_17:
+    trap 134
+match_merge_13:
+    $21 = load i32, $__match_res1
+    ; inferred local var: got
+    $got = stack_alloc i32
+    store i32 $21, $got
+    $22 = load i32, $got
+    $23 = cmp ne i32 $22, 42
+    branch $23 ? if_then_18 : if_merge_20
+if_then_18:
+    ret 2
+if_merge_20:
+    $__match_res2 = stack_alloc i32
+    $24 = call quarter(100)
+    $25 = stack_alloc Result__i32__i32
+    store Result__i32__i32 $24, $25
+    $26 = load i64, $25 + 0
+    $27 = cmp eq i64 $26, 0
+    branch $27 ? match_arm_22 : match_next_23
+match_arm_22:
+    $28 = load i32, $25 + 8
+    $__m2_v = stack_alloc i32
+    store i32 $28, $__m2_v
+    $29 = load i32, $__m2_v
+    store i32 $29, $__match_res2
+    jump match_merge_21
+match_next_23:
+    $30 = cmp eq i64 $26, 1
+    branch $30 ? match_arm_24 : match_next_25
+match_arm_24:
+    store i32 0, $__match_res2
+    jump match_merge_21
+match_next_25:
+    trap 134
+match_merge_21:
+    $31 = load i32, $__match_res2
+    ; inferred local var: ok
+    $ok = stack_alloc i32
+    store i32 $31, $ok
+    $32 = load i32, $ok
+    $33 = cmp ne i32 $32, 25
+    branch $33 ? if_then_26 : if_merge_28
+if_then_26:
+    ret 3
+if_merge_28:
+    $__match_res3 = stack_alloc i32
+    $34 = call quarter(10)
+    $35 = stack_alloc Result__i32__i32
+    store Result__i32__i32 $34, $35
+    $36 = load i64, $35 + 0
+    $37 = cmp eq i64 $36, 0
+    branch $37 ? match_arm_30 : match_next_31
+match_arm_30:
+    $38 = load i32, $35 + 8
+    $__m3_v = stack_alloc i32
+    store i32 $38, $__m3_v
+    $39 = load i32, $__m3_v
+    store i32 $39, $__match_res3
+    jump match_merge_29
+match_next_31:
+    $40 = cmp eq i64 $36, 1
+    branch $40 ? match_arm_32 : match_next_33
+match_arm_32:
+    store i32 7, $__match_res3
+    jump match_merge_29
+match_next_33:
+    trap 134
+match_merge_29:
+    $41 = load i32, $__match_res3
+    ; inferred local var: err
+    $err = stack_alloc i32
+    store i32 $41, $err
+    $42 = load i32, $err
+    $43 = cmp ne i32 $42, 7
+    branch $43 ? if_then_34 : if_merge_36
+if_then_34:
+    ret 4
+if_merge_36:
+    ret 42
+}

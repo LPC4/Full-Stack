@@ -1,0 +1,56 @@
+interface Measurable {
+    area: (self: Self*) -> i32
+}
+
+struct Rect {
+    width: i32
+    height: i32
+}
+
+impl Rect {
+    make: (width: i32, height: i32) -> Rect {
+        return Rect { .width = width, .height = height }
+    }
+    area: (self: Rect*) -> i32 {
+        return self.width * self.height
+    }
+    scaled: (self: Rect*, k: i32) -> i32 {
+        return self.area() * k
+    }
+}
+
+struct Disc {
+    radius: i32
+}
+
+impl Disc {
+    area: (self: Disc*) -> i32 {
+        return 3 * self.radius * self.radius
+    }
+}
+
+double_area: <T: Measurable>(v: T*) -> i32 {
+    return v.area() + v.area()
+}
+
+main: () -> i32 {
+    r: Rect = Rect.make(6, 7)
+    if r.area() != 42 { return 1 }
+    if r.scaled(2) != 84 { return 2 }
+    if double_area<Rect>(&r) != 84 { return 3 }
+
+    d: Disc = Disc { .radius = 3 }
+    if double_area<Disc>(&d) != 54 { return 4 }
+
+    mixed: dyn Measurable[2] = [(&r) as dyn Measurable, (&d) as dyn Measurable]
+    if mixed[0].area() != 42 { return 5 }
+    if mixed[1].area() != 27 { return 6 }
+
+    total: i32 = 0
+    for i in 0..2 {
+        total = total + mixed[i].area()
+    }
+    if total != 69 { return 7 }
+
+    return 42
+}

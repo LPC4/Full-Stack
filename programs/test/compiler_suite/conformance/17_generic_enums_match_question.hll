@@ -1,0 +1,44 @@
+enum Tree<T> {
+    Leaf(T)
+    Branch(T, T)
+}
+
+halve: (n: i32) -> Result<i32, i32> {
+    if n % 2 != 0 { return Err(n) }
+    return Ok(n / 2)
+}
+
+quarter: (n: i32) -> Result<i32, i32> {
+    h := halve(n)?
+    return halve(h)
+}
+
+main: () -> i32 {
+    t: Tree<i32> = Branch(15, 27)
+    sum := match t {
+        Leaf(a) -> a
+        Branch(a, b) -> a + b
+    }
+    if sum != 42 { return 1 }
+
+    opt: Option<i32> = Some(41)
+    got := match opt {
+        Some(x) -> x + 1
+        None -> 0
+    }
+    if got != 42 { return 2 }
+
+    ok := match quarter(100) {
+        Ok(v) -> v
+        Err(_) -> 0
+    }
+    if ok != 25 { return 3 }
+
+    err := match quarter(10) {
+        Ok(v) -> v
+        Err(_) -> 7
+    }
+    if err != 7 { return 4 }
+
+    return 42
+}

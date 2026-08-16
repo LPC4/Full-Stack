@@ -36,6 +36,9 @@ jobs:
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
 
+      - name: Install qemu-user
+        run: sudo apt-get update && sudo apt-get install -y qemu-user
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 
@@ -50,3 +53,5 @@ jobs:
 
       - name: Test workspace
         run: cargo test --workspace
+        env:
+          FULL_STACK_REQUIRE_QEMU: "1"

@@ -1,0 +1,159 @@
+type Choice = { tag: i64, payload: i8[8] }
+type Word = i32
+type Pair = { left: i32, right: i32 }
+
+const str_0 = c"ok\n"
+
+define select($choice: Choice) -> i32 {
+entry:
+    $choice_ptr = stack_alloc Choice
+    store Choice $choice, $choice_ptr
+    $__match_res0 = stack_alloc i32
+    $0 = load i64, $choice_ptr + 0
+    $1 = cmp eq i64 $0, 0
+    branch $1 ? match_arm_1 : match_next_2
+match_arm_1:
+    $2 = load i32, $choice_ptr + 8
+    $__m0_value = stack_alloc i32
+    store i32 $2, $__m0_value
+    $3 = load i32, $__m0_value
+    store i32 $3, $__match_res0
+    jump match_merge_0
+match_next_2:
+    $4 = cmp eq i64 $0, 1
+    branch $4 ? match_arm_3 : match_next_4
+match_arm_3:
+    store i32 0, $__match_res0
+    jump match_merge_0
+match_next_4:
+    trap 134
+match_merge_0:
+    $5 = load i32, $__match_res0
+    ret $5
+}
+
+define main() -> i32 {
+entry:
+    ; local var: alias_value
+    $alias_value = stack_alloc Word
+    store Word 42, $alias_value
+    ; local var: binary_value
+    $binary_value = stack_alloc i32
+    store i32 42, $binary_value
+    ; local var: decimal_value
+    $decimal_value = stack_alloc i32
+    store i32 42, $decimal_value
+    ; local var: escaped
+    $escaped = stack_alloc i32
+    store i32 10, $escaped
+    ; local var: text
+    $text = stack_alloc i8[]
+    $0 = stack_alloc i8[]
+    store i8* str_0, $0 + 0
+    store i64 3, $0 + 8
+    store i8[] $0, $text
+    ; local var: ratio
+    $ratio = stack_alloc f64
+    store f64 1.5, $ratio
+    $1 = load i32, $binary_value
+    $2 = cmp ne i32 $1, 42
+    branch $2 ? if_then_5 : if_merge_7
+if_then_5:
+    ret 1
+if_merge_7:
+    $3 = load i32, $decimal_value
+    $4 = cmp ne i32 $3, 42
+    branch $4 ? if_then_8 : if_merge_10
+if_then_8:
+    ret 2
+if_merge_10:
+    $5 = load i32, $escaped
+    $6 = cmp ne i32 $5, 10
+    branch $6 ? if_then_11 : if_merge_13
+if_then_11:
+    ret 3
+if_merge_13:
+    ; Access field 'len' at offset 8
+    $7 = load i64, $text + 8
+    $8 = cmp ne i64 $7, 3
+    branch $8 ? if_then_14 : if_merge_16
+if_then_14:
+    ret 4
+if_merge_16:
+    ; local var: pair
+    $pair = stack_alloc Pair
+    $9 = stack_alloc Pair
+    $10 = load i32, $binary_value
+    store i32 $10, $9 + 0
+    $11 = load i32, $decimal_value
+    store i32 $11, $9 + 4
+    store Pair $9, $pair
+    ; local var: values
+    $values = stack_alloc i32[2]
+    ; Access field 'left' at offset 0
+    $12 = load i32, $pair + 0
+    ; Access field 'right' at offset 4
+    $13 = load i32, $pair + 4
+    $14 = stack_alloc i32[2]
+    store i32 $12, $14 + 0
+    store i32 $13, $14 + 4
+    store i32[2] $14, $values
+    ; local var: total
+    $total = stack_alloc i32
+    store i32 0, $total
+    $15 = index i32 $values, 0
+    ; inferred local var: __for_ptr_0
+    $__for_ptr_0 = stack_alloc i32*
+    store i32* $15, $__for_ptr_0
+    ; inferred local var: __for_i_0
+    $__for_i_0 = stack_alloc i32
+    store i32 0, $__for_i_0
+    jump while_cond_17
+while_cond_17:
+    $16 = load i32, $__for_i_0
+    $17 = cmp slt i32 $16, 2
+    branch $17 ? while_body_18 : while_exit_19
+while_body_18:
+    $18 = load i32, $__for_i_0
+    $19 = load i32*, $__for_ptr_0
+    $20 = index i32 $19, $18
+    $21 = load i32, $20
+    ; inferred local var: value
+    $value = stack_alloc i32
+    store i32 $21, $value
+    $22 = load i32, $total
+    $23 = load i32, $value
+    $24 = add i32 $22, $23
+    store i32 $24, $total
+    $25 = load i32, $__for_i_0
+    $26 = add i32 $25, 1
+    store i32 $26, $__for_i_0
+    jump while_cond_17
+while_exit_19:
+    jump while_cond_20
+while_cond_20:
+    $27 = load i32, $total
+    $28 = cmp sgt i32 $27, 42
+    branch $28 ? while_body_21 : while_exit_22
+while_body_21:
+    $29 = load i32, $total
+    $30 = sub i32 $29, 42
+    store i32 $30, $total
+    jump while_cond_20
+while_exit_22:
+    ; local var: choice
+    $choice = stack_alloc Choice
+    $31 = stack_alloc { tag: i64, payload: i8[8] }
+    store i64 0, $31 + 0
+    $32 = load i32, $total
+    store i32 $32, $31 + 8
+    store Choice $31, $choice
+    $33 = load Choice, $choice
+    $34 = call select($33)
+    $35 = cmp ne i32 $34, 42
+    branch $35 ? if_then_23 : if_merge_25
+if_then_23:
+    ret 6
+if_merge_25:
+    ret 42
+}
