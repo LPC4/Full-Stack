@@ -1,0 +1,16 @@
+; Direct NS16550A UART output shared by freestanding and kernel targets.
+
+export console_backend_write_byte: (c: u8) {
+	asm {
+		li t0, 0x10000000
+		sb a0, 0(t0)
+	}
+}
+
+export console_backend_write_range: (data: u8*, len: u64) {
+	i: u64 = 0
+	while i < len {
+		console_backend_write_byte(data[i])
+		i += 1
+	}
+}

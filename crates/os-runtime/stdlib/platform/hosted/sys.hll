@@ -1,7 +1,7 @@
 ; Userspace syscall wrappers. Args go through globals because inline asm cannot reach locals.
 ; Numbers and semantics: OS spec ch.7.
 
-; --- Syscall argument marshalling ---
+; --- Syscall arguments ---
 
 _a0: u64 = 0
 _a1: u64 = 0
@@ -392,41 +392,3 @@ export sys_kill: (pid: i64, sig: i64) -> i64 {
 	}
 	return _ret
 }
-
-; Legacy flat ABI entry points. Source should import `sys` and call short members
-; such as `sys.open`; these wrappers keep older standalone snippets linkable.
-export sc_readchar: () -> i64 { return sys_readchar() }
-export sc_yield: () { sys_yield() }
-export sc_exit: (code: i64) { sys_exit(code) }
-export sc_open: (path: u8[], flags: u64) -> i64 { return sys_open(path, flags) }
-export sc_read: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
-	return sys_read(fd, buf, offset, len)
-}
-export sc_write: (fd: i64, buf: u8*, len: u64) -> i64 { return sys_write(fd, buf, len) }
-export sc_close: (fd: i64) { sys_close(fd) }
-export sc_ftruncate: (fd: i64, len: u64) -> i64 { return sys_ftruncate(fd, len) }
-export sc_lseek: (fd: i64, offset: i64, whence: u64) -> i64 {
-	return sys_lseek(fd, offset, whence)
-}
-export sc_stat: (path: u8[]) -> i64 { return sys_stat(path) }
-export sc_readdir: (path: u8[], index: u64, name_buf: u8[]) -> i64 {
-	return sys_readdir(path, index, name_buf)
-}
-export sc_exec_arg: (path: u8[], arg: u8[]) -> i64 { return sys_exec_arg(path, arg) }
-export sc_exec: (path: u8[]) -> i64 { return sys_exec(path) }
-export sc_exec_redir: (path: u8[], arg: u8[], out_fd: i64, in_fd: i64) -> i64 {
-	return sys_exec_redir(path, arg, out_fd, in_fd)
-}
-export sc_mkdir: (path: u8[]) -> i64 { return sys_mkdir(path) }
-export sc_rename: (old_path: u8[], new_path: u8[]) -> i64 {
-	return sys_rename(old_path, new_path)
-}
-export sc_unlink: (path: u8[]) -> i64 { return sys_unlink(path) }
-export sc_rmdir: (path: u8[]) -> i64 { return sys_rmdir(path) }
-export sc_pidalive: (pid: u64) -> i64 { return sys_pidalive(pid) }
-export sc_map_fb: () -> u64 { return sys_map_fb() }
-export sc_poll_key: () -> i64 { return sys_poll_key() }
-export sc_fork: () -> i64 { return sys_fork() }
-export sc_wait: () -> i64 { return sys_wait() }
-export sc_waitpid: (pid: i64) -> i64 { return sys_waitpid(pid) }
-export sc_kill: (pid: i64, sig: i64) -> i64 { return sys_kill(pid, sig) }

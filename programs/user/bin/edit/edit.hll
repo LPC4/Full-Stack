@@ -2,7 +2,8 @@
 console := import("console")
 sys := import("sys")
 cstr := import("cstr")
-text := import("text")
+text := import("../../lib/text.hll")
+ascii := import("ascii")
 runtime := import("runtime")
 
 const MAXLINES = 200
@@ -278,13 +279,13 @@ parse_num: (p: u8*) -> i64 {
     while @(p + i) == ' ' {
         i = i + 1
     }
-    if text.is_digit(@(p + i)) == false {
+    if ascii.is_digit(@(p + i)) == false {
         return -1
     }
     v: i64 = 0
     while @(p + i) != 0 {
         c: u8 = @(p + i)
-        if text.is_digit(c) == false {
+        if ascii.is_digit(c) == false {
             break
         }
         v = v * 10 + (c as i64 - 48)
@@ -445,7 +446,7 @@ main: () -> i32 {
         ed_read_line(line_p)
         c: u8 = @line_p
         if c != 0 {
-            if text.is_digit(c) {
+            if ascii.is_digit(c) {
                 ed_goto(line_p)
                 continue
             }

@@ -1,65 +1,38 @@
-; Byte-wise memory primitives (memset/memcpy/memmove/memcmp), plus snake_case aliases.
+; Canonical byte-wise memory operations.
 
-export memset: (dst: u8*, value: u8, n: u64) -> u8* {
+export mem_set: (dst: u8*, value: u8, n: u64) -> u8* {
 	for i in 0..n {
 		dst[i] = value
 	}
 	return dst
 }
 
-export mem_set: (dst: u8*, value: u8, n: u64) -> u8* {
-	return memset(dst, value, n)
-}
-
-export memcpy: (dst: u8*, src: u8*, n: u64) -> u8* {
-	for i in 0..n {
-		dst[i] = @(src + i)
-	}
-	return dst
-}
-
 export mem_copy: (dst: u8*, src: u8*, n: u64) -> u8* {
-	return memcpy(dst, src, n)
-}
-
-; Backward copy (high->low): safe when dst >= src; use memcpy when dst < src with overlap.
-export memmove: (dst: u8*, src: u8*, n: u64) -> u8* {
-	if n == 0 {
-		return dst
-	}
-	i: u64 = n
-	while i > 0 {
-		i = i - 1
-		dst[i] = @(src + i)
+	for i in 0..n {
+		dst[i] = src[i]
 	}
 	return dst
 }
 
 export mem_move: (dst: u8*, src: u8*, n: u64) -> u8* {
-	return memmove(dst, src, n)
-}
-
-; Bytes >= 128 are negative as i32; sign-mismatch cases handled for correct unsigned ordering.
-export memcmp: (a: u8*, b: u8*, n: u64) -> i32 {
-	for i in 0..n {
-		ai: i32 = (@(a + i)) as i32
-		bi: i32 = (@(b + i)) as i32
-		if ai < 0 and bi >= 0 {
-			return 1
-		}
-		if ai >= 0 and bi < 0 {
-			return -1
-		}
-		if ai < bi {
-			return -1
-		}
-		if ai > bi {
-			return 1
-		}
+	if n == 0 { return dst }
+	if dst < src {
+		return mem_copy(dst, src, n)
 	}
-	return 0
+	i: u64 = n
+	while i > 0 {
+		i -= 1
+		dst[i] = src[i]
+	}
+	return dst
 }
 
 export mem_cmp: (a: u8*, b: u8*, n: u64) -> i32 {
-	return memcmp(a, b, n)
+	for i in 0..n {
+		ai: u64 = a[i] as u64
+		bi: u64 = b[i] as u64
+		if ai < bi { return -1 }
+		if ai > bi { return 1 }
+	}
+	return 0
 }

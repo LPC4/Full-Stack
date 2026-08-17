@@ -14,62 +14,57 @@ include!(concat!(env!("OUT_DIR"), "/sources.rs"));
 
 /// HLL standard library source fragments; `hll_to_ir::stdlib` owns link order.
 pub mod stdlib {
-    pub const TYPES: &str = include_str!(concat!(
+    pub const ALLOC: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/stdlib/core/types.hll"
-    ));
-
-    pub const MEMORY_ALLOCATOR: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/stdlib/core/memory_allocator.hll"
+        "/stdlib/core/alloc.hll"
     ));
 
     pub const HEAP_SOURCE: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/stdlib/core/heap_source.hll"
+        "/stdlib/platform/baremetal/heap.hll"
     ));
 
     pub const HEAP_SOURCE_HOSTED: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/stdlib/hosted/heap_source.hll"
+        "/stdlib/platform/hosted/heap.hll"
     ));
 
-    pub const STRING_UTILS: &str = include_str!(concat!(
+    pub const STRING: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/stdlib/core/string_utils.hll"
+        "/stdlib/core/string.hll"
     ));
 
     pub const MEM: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/stdlib/core/mem.hll"));
 
     pub const KLOG: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/stdlib/kernel/klog.hll"
+        "/stdlib/platform/kernel/klog.hll"
     ));
 
     pub const HOSTED_RUNTIME: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/stdlib/hosted/runtime.hll"
+        "/stdlib/platform/hosted/runtime.hll"
     ));
 
     pub const HOSTED_SYS: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/stdlib/hosted/sys.hll"
+        "/stdlib/platform/hosted/sys.hll"
     ));
 
     pub const FREESTANDING_RUNTIME: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/stdlib/free/runtime.hll"
+        "/stdlib/platform/baremetal/runtime.hll"
     ));
 
     pub const FREESTANDING_CONSOLE: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/stdlib/free/console.hll"
+        "/stdlib/platform/baremetal/console.hll"
     ));
 
     /// Only included in pure freestanding mode; kernel has its own `_kernel_start`.
     pub const FREESTANDING_ENTRY: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/stdlib/free/entry.hll"
+        "/stdlib/platform/freestanding/entry.hll"
     ));
 }
 
@@ -83,7 +78,7 @@ pub mod kernel {
 
     pub const ENTRY: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/kernel/core/entry.hll"
+        "/stdlib/platform/kernel/entry.hll"
     ));
 
     pub const TRAP_ENTRY: &str = include_str!(concat!(

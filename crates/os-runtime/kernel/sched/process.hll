@@ -32,7 +32,7 @@ export process_peek_pid: () -> u64 {
 ; Returns a typed PCB pointer, the caller passes it to scheduler.add().
 export process_create_at: (entry_pc: u64, stack_top: u64) -> layout.Pcb* {
     pcb: layout.Pcb* = utilities.malloc(size_of<layout.Pcb>()) as layout.Pcb*
-    mem.memset(pcb as u8*, 0, size_of<layout.Pcb>())
+    mem.set(pcb as u8*, 0, size_of<layout.Pcb>())
 
     pcb.pid = next_pid
     next_pid = next_pid + 1
@@ -77,7 +77,7 @@ export process_create: (entry_pc: u64) -> layout.Pcb* {
 ; Used by fork, which supplies the child's root and copies memory itself.
 export process_alloc: () -> layout.Pcb* {
     pcb: layout.Pcb* = utilities.malloc(size_of<layout.Pcb>()) as layout.Pcb*
-    mem.memset(pcb as u8*, 0, size_of<layout.Pcb>())
+    mem.set(pcb as u8*, 0, size_of<layout.Pcb>())
     pcb.pid = next_pid
     next_pid = next_pid + 1
     pcb.state = PROC_READY

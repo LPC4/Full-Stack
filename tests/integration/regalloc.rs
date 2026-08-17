@@ -7,7 +7,7 @@
 use asm_to_binary::AssembledOutput;
 use full_stack::compilation_pipeline::CompilationPipeline;
 use hll_to_ir::TargetMode;
-use hll_to_ir::stdlib::{get_stdlib_modules_for_mode, get_stdlib_type_prelude};
+use hll_to_ir::stdlib::get_stdlib_modules_for_mode;
 use std::sync::OnceLock;
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
@@ -21,17 +21,14 @@ fn cached_stdlib_objs(regalloc: bool) -> &'static [(String, AssembledOutput)] {
         let mut pipeline = CompilationPipeline::new();
         pipeline.set_write_artifacts(false);
         pipeline.set_register_allocation(regalloc);
-        pipeline.set_type_prelude(get_stdlib_type_prelude());
-        get_stdlib_modules_for_mode(TargetMode::Hosted)
-            .iter()
-            .map(|(name, src)| {
-                let r = pipeline.compile(src).expect("stdlib compile failed");
-                let (_, tokens) = pipeline.compile_ir_to_assembly_with_tokens(&r.ir_program).expect("valid IR layout");
-                let obj = pipeline
-                    .assemble_named(name, &tokens)
-                    .expect("stdlib assemble failed");
-                ((*name).to_owned(), obj)
-            })
+        let modules = get_stdlib_modules_for_mode(TargetMode::Hosted);
+        let objects = pipeline
+            .compile_modules(&modules)
+            .expect("stdlib compile failed");
+        modules
+            .into_iter()
+            .map(|(name, _)| name.to_owned())
+            .zip(objects)
             .collect()
     })
 }

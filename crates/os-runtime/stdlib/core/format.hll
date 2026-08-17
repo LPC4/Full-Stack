@@ -1,0 +1,123 @@
+; Buffer-based formatting runtime.
+
+float := import("format_float")
+
+export enum FormatError {
+	BufferTooSmall(u64),
+	SizeOverflow
+}
+
+export interface Format {
+	formatted_len: (self: Self*) -> Result<u64, FormatError>
+	format_exact_into: (self: Self*, destination: u8[]) -> u64
+}
+
+export fmt_result_ok: (written: u64) -> Result<u64, FormatError> {
+	return Ok(written)
+}
+
+export fmt_result_too_small: (required: u64) -> Result<u64, FormatError> {
+	return Err(FormatError.BufferTooSmall(required))
+}
+
+export fmt_result_overflow: () -> Result<u64, FormatError> {
+	return Err(FormatError.SizeOverflow)
+}
+
+export fmt_len_add: (acc: u64, extra: u64) -> u64 {
+	sum: u64 = acc + extra
+	if sum < acc { return 0 - 1 }
+	return sum
+}
+
+export fmt_is_len_overflow: (acc: u64) -> bool {
+	return acc == 0 - 1
+}
+
+export fmt_len_u64: (value: u64) -> u64 {
+	n: u64 = 1
+	v: u64 = value / 10
+	while v > 0 {
+		n += 1
+		v = v / 10
+	}
+	return n
+}
+
+export fmt_len_i64: (value: i64) -> u64 {
+	if value < 0 {
+		magnitude: u64 = 0 - (value as u64)
+		return 1 + fmt_len_u64(magnitude)
+	}
+	return fmt_len_u64(value as u64)
+}
+
+export fmt_len_bool: (value: bool) -> u64 {
+	if value { return 4 }
+	return 5
+}
+
+export fmt_len_str: (value: u8[]) -> u64 {
+	return value.len
+}
+
+export fmt_write_bytes: (dest: u8[], at: u64, data: u8[]) -> u64 {
+	for i in 0..data.len {
+		dest[at + i] = data[i]
+	}
+	return at + data.len
+}
+
+export fmt_write_u64: (dest: u8[], at: u64, value: u64) -> u64 {
+	n: u64 = fmt_len_u64(value)
+	v: u64 = value
+	i: u64 = n
+	while i > 0 {
+		i -= 1
+		dest[at + i] = ((v % 10) as i32 + '0') as u8
+		v = v / 10
+	}
+	return at + n
+}
+
+export fmt_write_i64: (dest: u8[], at: u64, value: i64) -> u64 {
+	if value < 0 {
+		dest[at] = '-' as u8
+		magnitude: u64 = 0 - (value as u64)
+		return fmt_write_u64(dest, at + 1, magnitude)
+	}
+	return fmt_write_u64(dest, at, value as u64)
+}
+
+export fmt_write_bool: (dest: u8[], at: u64, value: bool) -> u64 {
+	if value { return fmt_write_bytes(dest, at, "true") }
+	return fmt_write_bytes(dest, at, "false")
+}
+
+export fmt_subslice: (data: u8[], at: u64, len: u64) -> u8[] {
+	return data[at..at + len]
+}
+
+export fmt_exact_check: (expected: u64, actual: u64) {
+	if actual != expected {
+		empty: u8[1] = []
+		bad: u8[] = empty[0..0]
+		bad[0] = 1
+	}
+}
+
+export fmt_len_f64: (value: f64) -> u64 {
+	tmp: u8[32] = []
+	return float.fmt_f64_render(value, tmp[..])
+}
+
+export fmt_write_f64: (dest: u8[], at: u64, value: f64) -> u64 {
+	tmp: u8[32] = []
+	n: u64 = float.fmt_f64_render(value, tmp[..])
+	i: u64 = 0
+	while i < n {
+		dest[at + i] = tmp[i]
+		i += 1
+	}
+	return at + n
+}

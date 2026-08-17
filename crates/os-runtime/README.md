@@ -13,7 +13,7 @@ only exposes each source file as a compile-time string constant so `hll-to-ir` a
 ```
 boot/       M-mode ROM firmware (assembly): reset stub and hosted trap handler
 kernel/     S-mode kernel sources (HLL): traps, memory, processes, syscalls, fs
-stdlib/     shared HLL stdlib: core / hosted / kernel / free bundles
+stdlib/     focused core modules and target-specific platform providers
 src/        thin Rust crate exposing every source file as a string constant
 tests/      Rust tests over ROM, boot sequence, allocator, PMM, and subsystems
 ```
@@ -39,14 +39,23 @@ Power-on / VM reset
   boot/trap.s      _m_trap (ROM 0x100): M-mode ecall dispatch for hosted programs
                    (sys_write -> UART, sys_exit -> SYSCON halt)
 
-  kernel/core/entry.hll      _kernel_start: calls kmain(), panics if it returns
-  kernel/core/my_kernel.hll  kmain(): console, traps, timer, PLIC, memory diagnostics,
-                             heap, PMM, Sv39 VMM, process_init, scheduler_init,
-                             spawn pid 1, mount filesystem, enable interrupts, idle WFI
+  stdlib/platform/kernel/entry.hll  _kernel_start: calls kmain(), panics if it returns
+  kernel/core/my_kernel.hll         kmain(): console, traps, timer, PLIC, diagnostics,
+                                    heap, PMM, Sv39 VMM, process_init, scheduler_init,
+                                    spawn pid 1, mount filesystem, enable interrupts
 ```
 
 After `kmain` enters the idle loop the scheduler takes over: the CLINT timer preempts the
 running process every tick, and `sret` resumes whichever process is next in the ready queue.
+
+## Standard-library environments
+
+`stdlib/stdlib.build` maps logical import names to canonical repository-relative module IDs.
+All modes include the focused modules in `stdlib/core/`. Freestanding and kernel modes add
+the shared bare-metal heap, UART, and panic providers. Freestanding then adds its `_start`
+and SYSCON shutdown entry; kernel adds `_kernel_start` and `klog`. Hosted mode instead adds
+the `brk` heap and syscall-backed console providers plus its process runtime and C-string
+boundary helpers.
 
 ## Kernel subsystems
 

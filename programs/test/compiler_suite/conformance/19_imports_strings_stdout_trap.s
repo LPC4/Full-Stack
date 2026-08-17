@@ -152,13 +152,13 @@ main__if_then_10:
 ; --- End Epilogue ---
 ; Basic Block: if_merge_12
 main__if_merge_12:
-; --- Function Call: println ---
+; --- Function Call: console_println ---
 ; Passing 1 arguments
 	addi   t0, sp, 0
 	addi   a0, t0, 0
-	jal ra, println
+	jal ra, console_println
 	addiw  s2, a0, 0
-; --- End Function Call: println ---
+; --- End Function Call: console_println ---
 	addi   t0, zero, 0
 	sltiu  s2, t0, 1
 	slli  s2, s2, 56

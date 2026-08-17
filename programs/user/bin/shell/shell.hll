@@ -2,7 +2,7 @@
 console := import("console")
 sys := import("sys")
 cstr := import("cstr")
-text := import("text")
+ascii := import("ascii")
 fileops := import("./shell_fileops.hll")
 enum ShellCommand {
     Exit
@@ -413,7 +413,7 @@ sh_parse_int: (s: u8*) -> i64 {
     i: u64 = 0
     while @(s + i) != 0 {
         c: u8 = @(s + i)
-        if text.is_digit(c) == false {
+        if ascii.is_digit(c) == false {
             return n
         }
         n = n * 10 + (c - 48) as i64

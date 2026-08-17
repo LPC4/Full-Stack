@@ -575,7 +575,6 @@ impl BuildExecutor {
         if let Some(root) = &manifest.artifact_root {
             pipeline.set_artifact_root(root.clone());
         }
-        pipeline.set_type_prelude(hll_to_ir::stdlib::get_stdlib_type_prelude());
         if let Some(prefix) = &manifest.string_prefix {
             pipeline.set_string_prefix(Some(prefix.clone()));
         }

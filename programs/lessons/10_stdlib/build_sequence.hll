@@ -1,5 +1,5 @@
 console := import("console")
-memory := import("memory_allocator")
+memory := import("alloc")
 
 build_sequence: (size: u64) -> i32* {
 	bytes: u64 = size * size_of<i32>()

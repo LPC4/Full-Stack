@@ -216,6 +216,11 @@ slug = "standard-library/malloc"
 title = "Malloc"
 
 [[page]]
+kind = "section"
+slug = "standard-library/different-targets"
+title = "Different targets"
+
+[[page]]
 kind = "chapter"
 slug = "glossary"
 title = "Glossary"

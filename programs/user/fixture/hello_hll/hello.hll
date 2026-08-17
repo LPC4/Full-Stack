@@ -1,18 +1,10 @@
-; HLL-0 cc reference. The body is pure HLL-0; putc is the I/O intrinsic, written
-; out here so the file also host-compiles. Prints "HLL0\nY", exits sum_to(8)=36.
+; HLL-0 cc reference. The host comparison supplies putc through the console module.
+; Prints "HLL0\nY", exits sum_to(8)=36.
+
+console := import("console")
 
 putc: (ch: i32) -> i32 {
-    ; write(1, &ch, 1). ch is in a0; the ecall is the intrinsic cc emits inline.
-    asm {
-        addi sp, sp, -16
-        sb   a0, 7(sp)
-        li   a0, 1
-        addi a1, sp, 7
-        li   a2, 1
-        li   a7, 64
-        ecall
-        addi sp, sp, 16
-    }
+    console.putchar(ch)
     return 0
 }
 

@@ -1,14 +1,10 @@
-extern console_putchar(i32) -> i32
+extern console_putchar(i32) -> void
 extern console_write(i8*) -> void
 extern console_writeln(i8*) -> void
-extern print(i8[]) -> i32
-extern println(i8[]) -> i32
-extern console_print_int_rec(i64) -> void
+extern console_print(i8[]) -> i32
+extern console_println(i8[]) -> i32
 extern console_print_int(i64) -> void
-extern print_int(i64) -> i32
 extern console_print_hex(i64) -> void
-extern puts(i8*) -> i32
-extern printf(i8*, i32) -> i32
 
 const str_0 = c"hello"
 
@@ -55,7 +51,7 @@ trap_ok_9:
 if_then_10:
     ret 3
 if_merge_12:
-    $15 = call println($greeting)
+    $15 = call console_println($greeting)
     $16 = not i1 false
     branch $16 ? trap_13 : trap_ok_14
 trap_13:

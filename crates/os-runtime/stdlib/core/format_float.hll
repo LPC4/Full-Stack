@@ -1,0 +1,252 @@
+; Internal deterministic floating-point renderer.
+
+fmt_f64_limbs: u64[128] = []
+fmt_f64_digit_buf: u8[800] = []
+
+float_write_bytes: (out: u8[], data: u8[]) -> u64 {
+	for i in 0..data.len {
+		out[i] = data[i]
+	}
+	return data.len
+}
+
+float_write_i64: (out: u8[], at: u64, value: i64) -> u64 {
+	pos: u64 = at
+	magnitude: u64 = value as u64
+	if value < 0 {
+		out[pos] = '-' as u8
+		pos += 1
+		magnitude = 0 - magnitude
+	}
+	n: u64 = 1
+	v: u64 = magnitude / 10
+	while v > 0 {
+		n += 1
+		v = v / 10
+	}
+	i: u64 = n
+	v = magnitude
+	while i > 0 {
+		i -= 1
+		out[pos + i] = ((v % 10) as i32 + '0') as u8
+		v = v / 10
+	}
+	return pos + n
+}
+
+fmt_f64_bits: (value: f64) -> u64 {
+	tmp: f64[1] = []
+	tmp[0] = value
+	words: u64* = (&tmp[0]) as u64*
+	return @words
+}
+
+fmt_big_mul: (limbs: u64*, count: u64, k: u64) -> u64 {
+	carry: u64 = 0
+	n: u64 = count
+	i: u64 = 0
+	while i < n {
+		x: u64 = limbs[i] * k + carry
+		limbs[i] = x % 1000000000
+		carry = x / 1000000000
+		i += 1
+	}
+	while carry > 0 {
+		limbs[n] = carry % 1000000000
+		carry = carry / 1000000000
+		n += 1
+	}
+	return n
+}
+
+fmt_big_digits: (limbs: u64*, count: u64, digits: u8*) -> u64 {
+	top: u64 = limbs[count - 1]
+	tmp: u8[9] = []
+	tn: u64 = 0
+	while top > 0 {
+		tmp[tn] = ((top % 10) as i32 + '0') as u8
+		top = top / 10
+		tn += 1
+	}
+	n: u64 = 0
+	while tn > 0 {
+		tn -= 1
+		digits[n] = tmp[tn]
+		n += 1
+	}
+	li: u64 = count - 1
+	while li > 0 {
+		li -= 1
+		limb: u64 = limbs[li]
+		k: u64 = 9
+		while k > 0 {
+			k -= 1
+			digits[n + k] = ((limb % 10) as i32 + '0') as u8
+			limb = limb / 10
+		}
+		n += 9
+	}
+	return n
+}
+
+export fmt_f64_render: (value: f64, out: u8[]) -> u64 {
+	bits: u64 = fmt_f64_bits(value)
+	sign: u64 = bits >> 63
+	exp_bits: u64 = (bits >> 52) & 2047
+	frac: u64 = bits & 4503599627370495
+	if exp_bits == 2047 {
+		if frac != 0 { return float_write_bytes(out, "nan") }
+		if sign == 1 { return float_write_bytes(out, "-inf") }
+		return float_write_bytes(out, "inf")
+	}
+	if exp_bits == 0 and frac == 0 {
+		if sign == 1 { return float_write_bytes(out, "-0") }
+		return float_write_bytes(out, "0")
+	}
+	m: u64 = frac
+	e: i64 = -1074
+	if exp_bits > 0 {
+		m = frac | 4503599627370496
+		e = (exp_bits as i64) - 1075
+	}
+	while (m & 1) == 0 {
+		m = m >> 1
+		e += 1
+	}
+	limbs: u64* = &fmt_f64_limbs[0]
+	z: u64 = 0
+	while z < 128 {
+		limbs[z] = 0
+		z += 1
+	}
+	limbs[0] = m % 1000000000
+	limbs[1] = (m / 1000000000) % 1000000000
+	limbs[2] = m / 1000000000000000000
+	count: u64 = 3
+	while count > 1 {
+		if limbs[count - 1] != 0 { break }
+		count -= 1
+	}
+	dec_shift: i64 = 0
+	if e >= 0 {
+		k: i64 = 0
+		while k < e {
+			count = fmt_big_mul(limbs, count, 2)
+			k += 1
+		}
+	} else {
+		k2: i64 = e
+		while k2 < 0 {
+			count = fmt_big_mul(limbs, count, 5)
+			k2 += 1
+		}
+		dec_shift = e
+	}
+	digits: u8* = &fmt_f64_digit_buf[0]
+	ndig: u64 = fmt_big_digits(limbs, count, digits)
+	dec_exp: i64 = (ndig as i64) - 1 + dec_shift
+	keep: u64 = ndig
+	if keep > 17 {
+		keep = 17
+		round_up: bool = false
+		head: u8 = digits[17]
+		if head > '5' as u8 { round_up = true }
+		if head == '5' as u8 {
+			more: bool = false
+			j: u64 = 18
+			while j < ndig {
+				if digits[j] != '0' as u8 {
+					more = true
+					break
+				}
+				j += 1
+			}
+			if more or ((digits[16] - '0' as u8) & 1) == 1 {
+				round_up = true
+			}
+		}
+		if round_up {
+			idx: i64 = 16
+			while idx >= 0 {
+				if digits[idx] == '9' as u8 {
+					digits[idx] = '0' as u8
+					idx -= 1
+				} else {
+					digits[idx] += 1
+					break
+				}
+			}
+			if idx < 0 {
+				digits[0] = '1' as u8
+				keep = 1
+				dec_exp += 1
+			}
+		}
+	}
+	while keep > 1 {
+		if digits[keep - 1] != '0' as u8 { break }
+		keep -= 1
+	}
+	pos: u64 = 0
+	if sign == 1 {
+		out[0] = '-' as u8
+		pos = 1
+	}
+	if dec_exp >= -4 and dec_exp < 17 {
+		if dec_exp >= 0 {
+			int_digits: u64 = (dec_exp as u64) + 1
+			i2: u64 = 0
+			while i2 < int_digits {
+				if i2 < keep {
+					out[pos] = digits[i2]
+				} else {
+					out[pos] = '0' as u8
+				}
+				pos += 1
+				i2 += 1
+			}
+			if keep > int_digits {
+				out[pos] = '.' as u8
+				pos += 1
+				j2: u64 = int_digits
+				while j2 < keep {
+					out[pos] = digits[j2]
+					pos += 1
+					j2 += 1
+				}
+			}
+		} else {
+			out[pos] = '0' as u8
+			out[pos + 1] = '.' as u8
+			pos += 2
+			zeros: i64 = dec_exp + 1
+			while zeros < 0 {
+				out[pos] = '0' as u8
+				pos += 1
+				zeros += 1
+			}
+			j3: u64 = 0
+			while j3 < keep {
+				out[pos] = digits[j3]
+				pos += 1
+				j3 += 1
+			}
+		}
+		return pos
+	}
+	out[pos] = digits[0]
+	pos += 1
+	if keep > 1 {
+		out[pos] = '.' as u8
+		pos += 1
+		j4: u64 = 1
+		while j4 < keep {
+			out[pos] = digits[j4]
+			pos += 1
+			j4 += 1
+		}
+	}
+	out[pos] = 'e' as u8
+	pos += 1
+	return float_write_i64(out, pos, dec_exp)
+}

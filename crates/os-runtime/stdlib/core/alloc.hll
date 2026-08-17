@@ -1,0 +1,138 @@
+; Aligned, fallible allocation over the target-selected raw heap provider.
+
+heap_backend := import("heap_backend")
+
+struct HeapBlock {
+	next: HeapBlock*,
+	ptr: u8*,
+	size: u64,
+	is_free: u64,
+}
+
+heap_list: HeapBlock* = null
+
+export enum AllocError {
+	OutOfMemory
+	InvalidAlignment
+	SizeOverflow
+}
+
+export checked_mul: (a: u64, b: u64) -> Result<u64, AllocError> {
+	if a == 0 or b == 0 { return Ok(0) }
+	max: u64 = 0
+	max -= 1
+	if a > max / b { return Err(AllocError.SizeOverflow) }
+	return Ok(a * b)
+}
+
+export checked_add: (a: u64, b: u64) -> Result<u64, AllocError> {
+	total: u64 = a + b
+	if total < a { return Err(AllocError.SizeOverflow) }
+	return Ok(total)
+}
+
+export array_bytes: (count: u64, element_size: u64) -> Result<u64, AllocError> {
+	return checked_mul(count, element_size)
+}
+
+heap_alloc_aligned: (size: u64, align: u64) -> u8* {
+	requested: u64 = size
+	if requested == 0 {
+		return align as u8*
+	}
+
+	current: HeapBlock* = heap_list
+	while current != null {
+		address: u64 = current.ptr as u64
+		if current.is_free != 0 and current.size >= requested and address % align == 0 {
+			current.is_free = 0
+			return current.ptr
+		}
+		current = current.next
+	}
+
+	block: HeapBlock* = heap_backend.heap_raw_alloc(32) as HeapBlock*
+	if block == null {
+		return null
+	}
+	padded: u64 = requested + align - 1
+	if padded < requested {
+		return null
+	}
+	raw: u8* = heap_backend.heap_raw_alloc(padded)
+	if raw == null { return null }
+	raw_address: u64 = raw as u64
+	payload_address: u64 = ((raw_address + align - 1) / align) * align
+	payload: u8* = payload_address as u8*
+	@block = {
+		.next    = heap_list,
+		.ptr     = payload,
+		.size    = requested,
+		.is_free = 0,
+	}
+	heap_list = block
+	return payload
+}
+
+heap_release: (ptr: u8*) {
+	if ptr == null {
+		return
+	}
+	current: HeapBlock* = heap_list
+	while current != null {
+		if current.ptr == ptr {
+			current.is_free = 1
+			return
+		}
+		current = current.next
+	}
+}
+
+export allocate: (size: u64, align: u64) -> Result<u8*, AllocError> {
+	if align == 0 or (align & (align - 1)) != 0 {
+		return Err(InvalidAlignment)
+	}
+	if size + align - 1 < size {
+		return Err(AllocError.SizeOverflow)
+	}
+	ptr: u8* = heap_alloc_aligned(size, align)
+	if ptr == null { return Err(OutOfMemory) }
+	return Ok(ptr)
+}
+
+export reallocate: (ptr: u8*, old_size: u64, new_size: u64, align: u64) -> Result<u8*, AllocError> {
+	if align == 0 or (align & (align - 1)) != 0 {
+		return Err(InvalidAlignment)
+	}
+	if new_size + align - 1 < new_size {
+		return Err(AllocError.SizeOverflow)
+	}
+	if new_size == 0 {
+		heap_release(ptr)
+		return Ok(align as u8*)
+	}
+	replacement: u8* = heap_alloc_aligned(new_size, align)
+	if replacement == null { return Err(OutOfMemory) }
+	copy_size: u64 = old_size
+	if new_size < copy_size { copy_size = new_size }
+	i: u64 = 0
+	while i < copy_size {
+		replacement[i] = ptr[i]
+		i += 1
+	}
+	heap_release(ptr)
+	return Ok(replacement)
+}
+
+export deallocate: (ptr: u8*, size: u64, align: u64) {
+	if size == 0 { return }
+	heap_release(ptr)
+}
+
+export malloc: (size: u64) -> u8* {
+	return heap_alloc_aligned(size, 8)
+}
+
+export free: (ptr: u8*) {
+	heap_release(ptr)
+}

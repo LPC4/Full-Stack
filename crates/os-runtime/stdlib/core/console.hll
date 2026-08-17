@@ -1,0 +1,69 @@
+; Target-independent console API and numeric rendering.
+
+backend := import("console_backend")
+
+export console_putchar: (c: i32) {
+	backend.write_byte(c as u8)
+}
+
+export console_write: (text: u8*) {
+	len: u64 = 0
+	while text[len] != 0 {
+		len += 1
+	}
+	backend.write_range(text, len)
+}
+
+export console_writeln: (text: u8*) {
+	console_write(text)
+	console_putchar('\n')
+}
+
+export console_print: (text: u8[]) -> i32 {
+	backend.write_range(text.ptr, text.len)
+	return 0
+}
+
+export console_println: (text: u8[]) -> i32 {
+	console_print(text)
+	console_putchar('\n')
+	return 0
+}
+
+console_print_int_rec: (n: i64) {
+	if n == 0 { return }
+	console_print_int_rec(n / 10)
+	console_putchar((n % 10) as i32 + '0')
+}
+
+export console_print_int: (n: i64) {
+	if n == 0 {
+		console_putchar('0')
+		return
+	}
+	if n < 0 {
+		console_putchar('-')
+		console_print_int_rec(-n)
+	} else {
+		console_print_int_rec(n)
+	}
+}
+
+export console_print_hex: (n: u64) {
+	buf: u8[16] = []
+	i: u64 = 16
+	v: u64 = n
+	while i > 0 {
+		i -= 1
+		nibble: u64 = v % 16
+		v = v / 16
+		if nibble < 10 {
+			buf[i] = (nibble as i32 + '0') as u8
+		} else {
+			buf[i] = (nibble as i32 - 10 + 'a') as u8
+		}
+	}
+	console_putchar('0')
+	console_putchar('x')
+	backend.write_range(&buf[0], 16)
+}

@@ -116,7 +116,8 @@ HLL is a small systems language built around explicit, predictable memory access
 - Methods and associated constants/types via `impl` blocks, plus non-capturing lambdas
   and function pointers.
 - Destructuring bindings and buffer-based string interpolation
-  (`string.format_into(buf[..], "user={name}")`), extensible through a `Format` interface.
+  (`fmt := import("format")`, then `fmt.format_into(buf[..], "user={name}")`),
+  extensible through a `Format` interface.
 - `defer` for deterministic cleanup, and `new` / `free` for manual memory management.
 - Compile-time evaluation of pure functions, loops, and recursion, plus compile-time
   layout reflection over types.

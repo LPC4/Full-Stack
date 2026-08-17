@@ -1,0 +1,124 @@
+; Owned, growable UTF-8 strings.
+
+alloc := import("alloc")
+vec := import("vec")
+
+export utf8_valid: (data: u8*, len: u64) -> bool {
+	i: u64 = 0
+	while i < len {
+		b0: u64 = data[i] as u64
+		if b0 < 0x80 {
+			i += 1
+		} else if b0 >= 0xC2 and b0 <= 0xDF {
+			if i + 1 >= len { return false }
+			b1: u64 = data[i + 1] as u64
+			if (b1 & 0xC0) != 0x80 { return false }
+			i += 2
+		} else if b0 >= 0xE0 and b0 <= 0xEF {
+			if i + 2 >= len { return false }
+			b1: u64 = data[i + 1] as u64
+			b2: u64 = data[i + 2] as u64
+			lo: u64 = 0x80
+			hi: u64 = 0xBF
+			if b0 == 0xE0 { lo = 0xA0 }
+			if b0 == 0xED { hi = 0x9F }
+			if b1 < lo or b1 > hi { return false }
+			if (b2 & 0xC0) != 0x80 { return false }
+			i += 3
+		} else if b0 >= 0xF0 and b0 <= 0xF4 {
+			if i + 3 >= len { return false }
+			b1: u64 = data[i + 1] as u64
+			b2: u64 = data[i + 2] as u64
+			b3: u64 = data[i + 3] as u64
+			lo: u64 = 0x80
+			hi: u64 = 0xBF
+			if b0 == 0xF0 { lo = 0x90 }
+			if b0 == 0xF4 { hi = 0x8F }
+			if b1 < lo or b1 > hi { return false }
+			if (b2 & 0xC0) != 0x80 { return false }
+			if (b3 & 0xC0) != 0x80 { return false }
+			i += 4
+		} else {
+			return false
+		}
+	}
+	return true
+}
+
+export enum StringError {
+	Alloc(alloc.AllocError)
+	InvalidUtf8
+}
+
+export struct OwnedString {
+	bytes: vec.Vec<u8>,
+}
+
+export impl OwnedString {
+	init: (self: OwnedString*) {
+		vec.Vec_init<u8>(&self.bytes)
+	}
+
+	from_slice: (self: OwnedString*, data: u8[]) -> Result<u64, StringError> {
+		if utf8_valid(data.ptr, data.len) == false {
+			return Err(InvalidUtf8)
+		}
+		reserved := vec.Vec_reserve<u8>(&self.bytes, data.len)
+		match reserved {
+			Ok(capacity) -> {}
+			Err(error) -> { return Err(Alloc(error)) }
+		}
+		i: u64 = 0
+		while i < data.len {
+			self.bytes.ptr[i] = data[i]
+			i += 1
+		}
+		self.bytes.len = data.len
+		return Ok(data.len)
+	}
+
+	append: (self: OwnedString*, data: u8[]) -> Result<u64, StringError> {
+		if utf8_valid(data.ptr, data.len) == false {
+			return Err(InvalidUtf8)
+		}
+		return OwnedString_append_raw(self, data)
+	}
+
+	append_raw: (self: OwnedString*, data: u8[]) -> Result<u64, StringError> {
+		needed: u64 = 0
+		total := alloc.checked_add(self.bytes.len, data.len)
+		match total {
+			Ok(count) -> { needed = count }
+			Err(error) -> { return Err(Alloc(error)) }
+		}
+		reserved := vec.Vec_reserve<u8>(&self.bytes, needed)
+		match reserved {
+			Ok(capacity) -> {}
+			Err(error) -> { return Err(Alloc(error)) }
+		}
+		i: u64 = 0
+		while i < data.len {
+			self.bytes.ptr[self.bytes.len + i] = data[i]
+			i += 1
+		}
+		self.bytes.len = needed
+		return Ok(needed)
+	}
+
+	as_slice: (self: OwnedString*) -> u8[] {
+		view: u8[]* = self as u8[]*
+		return @view
+	}
+
+	length: (self: OwnedString*) -> u64 {
+		return self.bytes.len
+	}
+
+	clear: (self: OwnedString*) {
+		self.bytes.len = 0
+	}
+
+	deinit: (self: OwnedString*) {
+		vec.Vec_deinit<u8>(&self.bytes)
+	}
+}

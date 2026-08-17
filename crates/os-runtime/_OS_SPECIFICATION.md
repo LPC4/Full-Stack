@@ -16,11 +16,11 @@ specified elsewhere and are only referenced here:
 
 1. Overview
 2. Boot firmware (`boot/`)
-3. Kernel initialization (`kernel/core/entry.hll`, `my_kernel.hll`)
+3. Kernel initialization (`stdlib/platform/kernel/entry.hll`, `my_kernel.hll`)
 4. Memory management (`vmm.hll`, `pmm.hll`, allocator)
 5. Processes and scheduling (`process.hll`, `scheduler.hll`)
 6. Traps and interrupts (`trap_entry.hll`, `trap_handler.hll`)
-7. Syscall interface (`syscall.hll`, `stdlib/hosted/sys.hll`)
+7. Syscall interface (`syscall.hll`, `stdlib/platform/hosted/sys.hll`)
 8. Filesystem (`fs.hll`)
 9. Standard library (`stdlib/`)
 10. Userspace programs (`programs/user/`)
@@ -38,14 +38,14 @@ comments cite the chapter rather than repeating its content.
 | Path | Component | Chapter |
 |------|-----------|---------|
 | `boot/startup.s`, `boot/trap.s` | M-mode ROM firmware and trap vectors | 2 |
-| `kernel/core/entry.hll`, `my_kernel.hll` | S-mode entry and `kmain` boot sequence | 3 |
+| `stdlib/platform/kernel/entry.hll`, `my_kernel.hll` | S-mode entry and `kmain` boot sequence | 3 |
 | `kernel/mm/vmm.hll`, `pmm.hll` | Sv39 paging and physical page allocator | 4 |
 | `kernel/sched/process.hll`, `scheduler.hll` | PCB, scheduler, fork/exec | 5 |
 | `kernel/trap/trap_entry.hll`, `trap_handler.hll` | Trap entry and dispatch | 6 |
-| `kernel/core/syscall.hll`, `stdlib/hosted/sys.hll` | Syscall ABI, table, wrappers | 7 |
+| `kernel/core/syscall.hll`, `stdlib/platform/hosted/sys.hll` | Syscall ABI, table, wrappers | 7 |
 | `kernel/fs/fs.hll` | Inode filesystem | 8 |
 | `kernel/core/utilities.hll`, `checks.hll` | HAL primitives, boot diagnostics | 3, 9 |
-| `stdlib/core/`, `hosted/`, `kernel/`, `free/` | Standard-library bundles | 9 |
+| `stdlib/core/`, `stdlib/platform/` | Standard-library modules and providers | 9 |
 | `programs/user/bin/`, `programs/user/demo/`, `programs/user/sample/`, `programs/user/fixture/` | Userspace programs and boot-FS samples | 10 |
 
 ### 1.2 Layered model
@@ -98,7 +98,7 @@ traps here and is treated as exit -- see the assembler NOP-padding note in 10.3.
 The **S-mode** entry path is in `trap_entry.hll` (chapter 6).
 
 
-## 3. Kernel initialization (`kernel/core/entry.hll`, `my_kernel.hll`)
+## 3. Kernel initialization (`stdlib/platform/kernel/entry.hll`, `my_kernel.hll`)
 
 ### 3.1 Entry stub
 
@@ -152,13 +152,14 @@ page that is still mapped: pages are only reused after an explicit `pmm_free`.
 
 `kmalloc` (`utilities.hll`) wraps the stdlib `malloc` and panics on OOM; `kfree`
 returns temporary kernel allocations to the stdlib free list. The
-allocator (`stdlib/core/memory_allocator.hll`) is bump-plus-free-list over the
-raw source in `stdlib/core/heap_source.hll`: a 64 KiB bootstrap `heap_buffer` in
+allocator (`stdlib/core/alloc.hll`) is bump-plus-free-list over the raw provider
+in `stdlib/platform/baremetal/heap.hll`: a 64 KiB bootstrap `heap_buffer` in
 kernel BSS, plus the `KHEAP_BASE .. KHEAP_END` region `boot_heap` registers via
-`heap_set_region` -- distinct from `pmm` memory and from user pages, so heap
+`heap_set_region`. This is distinct from `pmm` memory and from user pages, so heap
 allocations never alias process address spaces. The module also exports the
-aligned, fallible `allocate`/`reallocate`/`deallocate` ABI and the `Vec` /
-`OwnedString` / `Arena` / `Pool` containers (see the language spec 11.4-11.5).
+aligned, fallible `allocate`/`reallocate`/`deallocate` ABI. The `vec`,
+`owned_string`, `arena`, and `pool` modules provide the containers described in
+the language specification sections 11.4-11.5.
 
 ### 4.3 Sv39 paging and per-process roots
 
@@ -215,7 +216,7 @@ Offset  Size  Field
 ```
 
 The `trap_frame` layout matches the on-stack frame built by the trap entry (6.1),
-so `schedule` saves/restores context with a single `memcpy` of those 288 bytes.
+so `schedule` saves/restores context with a single `mem.copy` of those 288 bytes.
 A host-side layout assertion checks the typed views against the offsets above,
 and `process_init` checks the compiler-computed sizes before scheduling starts.
 
@@ -313,7 +314,7 @@ compute-bound children and best-effort for input readers (their `readchar` races
 the wait peek).
 
 
-## 7. Syscall interface (`syscall.hll`, `stdlib/hosted/sys.hll`)
+## 7. Syscall interface (`syscall.hll`, `stdlib/platform/hosted/sys.hll`)
 
 ### 7.1 Calling convention
 
@@ -324,9 +325,9 @@ hosted wrapper always marshals those words explicitly and does not expose the
 compiler's aggregate calling convention as an ecall ABI. The S-mode handler
 catches cause 8, dispatches via `syscall_dispatch`, and advances `sepc` by 4.
 Standard numbers follow the Linux RISC-V ABI; the 100-range is project-specific.
-`stdlib/hosted/sys.hll` provides the userspace `sys.*` wrappers and
-`stdlib/hosted/cstr.hll` provides `cstr.*` helpers. Userspace programs import those modules;
-hand-written `external` declarations are reserved for ABI/runtime edges.
+`stdlib/platform/hosted/sys.hll` provides the userspace `sys.*` wrappers and
+`stdlib/platform/hosted/cstr.hll` provides `cstr.*` helpers. Userspace programs
+import those modules. Hand-written `external` declarations are reserved for ABI/runtime edges.
 
 ### 7.2 Syscall table
 
@@ -503,7 +504,7 @@ stages), runs each stage via `sh_run_stage` with the connecting temp paths (an
 explicit `<`/`>`/`>>` on the end stages overrides the pipe default), waits between
 stages, then unlinks the temps. Builtin producers (`ls`/`cat`/`echo`/...) write
 through the sink to the temp file; the consumer is either an external filter reading
-`sc_readchar` (EOF at the file's end) or builtin `cat`, which reads the temp as its
+`sys.readchar` (EOF at the file's end) or builtin `cat`, which reads the temp as its
 input source. So `echo hi | cat` and `ls | cat` work. A trailing `&` is accepted and ignored
 (pipelines run foreground). **Restriction:** because stages are sequential a
 producer fully finishes before its consumer runs -- correct for finite output (all
@@ -539,13 +540,13 @@ the result to its request. `fork` copies the break onto the child (the heap page
 themselves are duplicated by the per-process address-space copy, 4.3); `exec`
 starts from a fresh zeroed PCB, so a new image gets an empty heap.
 
-The hosted userspace raw source (`stdlib/hosted/heap_source.hll`) is a bump
+The hosted userspace raw provider (`stdlib/platform/hosted/heap.hll`) is a bump
 allocator over the break: it queries the initial break with `brk(0)` and raises it
 with `brk(page_up(new_top))` whenever an allocation would cross the current
 ceiling, returning null only when `brk` fails to grow. This replaces the old fixed
 64 KB `.bss` buffer, so `malloc`/`new` can now grow past 64 KB. The kernel and
 freestanding builds bump the bootstrap buffer plus any registered heap region
-(`stdlib/core/heap_source.hll`), since they have no syscalls. The bare-VM hosted
+(`stdlib/platform/baremetal/heap.hll`), since they have no syscalls. The bare-VM hosted
 path (no kernel) services the same `brk` in the M-mode firmware (`boot/trap.s`)
 against a flat break pointer at `RAM_BASE + 32 MiB - 8` (`HEAP_PTR_ADDR`,
 `0x81FF_FFF8`), with no paging. A request at or above that word would overwrite the
@@ -598,41 +599,44 @@ Addresses are in Appendix A.
 
 ## 9. Standard library (`stdlib/`)
 
-Three bundles share `stdlib/core/` and are selected by the compiler's target mode
-from the explicit ordered lists in `stdlib/stdlib.build` (see
-`_LANG_SPECIFICATIONS.md` / `_IR_SPECIFICATIONS.md` for mode selection; this
-chapter documents only what the bundles provide). The directory names are
-organizational; the manifest order is authoritative.
+Three bundles combine focused modules under `stdlib/core/` with target providers
+under `stdlib/platform/`. The compiler selects explicit ordered groups from
+`stdlib/stdlib.build`. Target-facing logical import names remain stable inside the
+manifest, while the source registry uses canonical repository-relative module IDs.
+The manifest composition and order are authoritative.
 
 ### 9.1 `core/`
 
-`types` (width aliases), `mem` (`set`/`copy`/`move`/`cmp`, with legacy ABI symbols
-`memset`/`memcpy`/`memmove`/`memcmp` retained), `memory_allocator` (`malloc`/`free` over the
-static heap, 4.2), and `string` (`len`/`is_empty`/`equals`/`copy`/`concat`).
+`alloc` provides checked arithmetic, aligned allocation, `malloc`, and `free` over
+the selected heap provider. `vec`, `owned_string`, `arena`, and `pool` provide the
+generic containers. `string` holds slice helpers, `ascii` holds character
+classification, `format` owns formatting, and `mem` exports only the canonical
+`set`/`copy`/`move`/`cmp` operations. Shared `console` owns target-independent
+printing and numeric rendering, delegating byte output to `console_backend`.
 
-### 9.2 `free/`
+### 9.2 `platform/baremetal/` and `platform/freestanding/`
 
-`entry` (`_start` -> `main` -> SYSCON halt), `console` (direct NS16550A MMIO:
-`putchar`/`write`/`writeln`/`print_int`/`print_hex`), and `runtime`
-(`kpanic` = UART message + WFI loop). For bare-metal programs without a kernel.
+The bare-metal providers supply heap growth, direct NS16550A output, and panic
+behavior shared by freestanding and kernel targets. The freestanding overlay owns
+`_start`, calls `main`, and halts through SYSCON.
 
-### 9.3 `hosted/`
+### 9.3 `platform/hosted/`
 
-`runtime` (bounded entry argument, `_start` -> `main` -> `sys.exit`), `sys` (the slice-first userspace
-wrappers for the syscalls in 7.2), `cstr` (bounded conversions at sentinel-format
-boundaries), and hosted `console` (stdout through `sys.write`, so redirection works).
-Linked by U-mode programs that run under the kernel.
+The hosted providers grow the heap through `brk` and write console output through
+`sys.write`, so redirection works. The overlay also owns the bounded process entry,
+`_start`, syscall wrappers, and C-string boundary helpers. U-mode programs running
+under the kernel link this environment.
 
-### 9.4 `kernel/`
+### 9.4 `platform/kernel/`
 
-`klog` (`klog.ok`/`warn`/`error`/`int`/`hex` -- formatted UART log, lowered to the
-stable `klog_*` link symbols). It imports `console` through a qualified module
-record, so stdlib internals do not use the legacy whole-module import form.
+The kernel overlay owns `_kernel_start` and `klog` (`klog.ok`/`warn`/`error`/`int`/
+`hex`, lowered to stable `klog_*` link symbols). It reuses the bare-metal heap,
+console backend, and panic provider.
 
 ### 9.5 HAL primitives
 
 The kernel bundle calls these directly (no syscall layer); implementations are in
-`utilities.hll` and `free/console.hll`. Source uses `console.putchar`/`write`/
+`utilities.hll` and `platform/baremetal/console.hll`. Source uses `console.putchar`/`write`/
 `writeln`/`print_int`/`print_hex`; the underlying flat link symbols keep the
 `console_` prefix. Halt/panic: `kshutdown` (write exit code to
 SYSCON `0x1001_0000`), `kpanic`. Timer/IRQ: `timer_get` (CLINT MTIME `0x0200_BFF8`),

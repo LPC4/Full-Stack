@@ -2,9 +2,7 @@
 
 use asm_to_binary::AssembledOutput;
 use full_stack::compilation_pipeline::CompilationPipeline;
-use hll_to_ir::stdlib::{
-    get_stdlib_modules_for_mode, get_stdlib_type_prelude, stdlib_module_source_path,
-};
+use hll_to_ir::stdlib::{get_stdlib_modules_for_mode, stdlib_module_source_path};
 use hll_to_ir::{OptOptions, TargetMode};
 use std::fmt::Write as _;
 use std::sync::OnceLock;
@@ -579,7 +577,6 @@ pub fn stdlib_for_variant(idx: usize) -> &'static [(String, AssembledOutput)] {
     STDLIB_BY_VARIANT[idx].get_or_init(|| {
         let mut pipeline = pipeline_for_variant(idx);
         pipeline.set_target_mode(TargetMode::Hosted);
-        pipeline.set_type_prelude(get_stdlib_type_prelude());
         let modules = get_stdlib_modules_for_mode(TargetMode::Hosted);
         let mut objects = Vec::new();
         for (name, source) in &modules {

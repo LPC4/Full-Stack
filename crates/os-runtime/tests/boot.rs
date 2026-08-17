@@ -1,6 +1,6 @@
 use asm_to_binary::assembler::link_layout::LinkLayout;
 use asm_to_binary::{AssembledOutput, Assembler, ObjectLinker};
-use hll_to_ir::stdlib::{get_stdlib_modules_for_mode, get_stdlib_type_prelude};
+use hll_to_ir::stdlib::get_stdlib_modules_for_mode;
 use hll_to_ir::{CompileConfig, HllCompiler, TargetMode};
 use ir_to_asm::CompilerRv64;
 use os_runtime::kernel;
@@ -13,52 +13,93 @@ use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 static STDLIB_OBJS: OnceLock<Vec<(String, AssembledOutput)>> = OnceLock::new();
 
 fn bundled_module_source(name: &str) -> Option<&'static str> {
-    os_runtime::module_source(name)
+    os_runtime::module_source(name).or_else(|| {
+        get_stdlib_modules_for_mode(TargetMode::Kernel)
+            .into_iter()
+            .find_map(|(module_name, source)| (module_name == name).then_some(source))
+    })
 }
 
 fn direct_imports(source: &str) -> (String, HashMap<String, hll_to_ir::imports::ModuleAlias>) {
     let module_imports =
         hll_to_ir::imports::collect_module_imports(source).expect("module imports");
-    // Qualified imports contribute their target's interface; the kernel links flat,
-    // so literal asm references and prefixed HLL calls stay unmangled.
-    let names = module_imports
-        .iter()
-        .map(|(_alias, path)| module_key(path))
-        .collect::<Vec<_>>();
     let mut prelude = String::new();
-    if !names.iter().any(|name| name == "layout") {
-        prelude.push_str(kernel::LAYOUT);
-        prelude.push('\n');
-    }
     let mut aliases = HashMap::new();
-    for name in names {
-        let module = bundled_module_source(&name)
-            .unwrap_or_else(|| panic!("missing bundled module `{name}`"));
-        let interface =
-            hll_to_ir::imports::extract_interface(module).expect("extract import interface");
-        prelude.push_str(&interface);
-        prelude.push('\n');
-    }
+    let mut emitted = HashSet::new();
+    let mut visiting = Vec::new();
+    append_import(
+        "layout",
+        "layout",
+        &mut prelude,
+        &mut aliases,
+        &mut emitted,
+        &mut visiting,
+    );
     for (alias, path) in module_imports {
-        let key = module_key(&path);
-        let module =
-            bundled_module_source(&key).unwrap_or_else(|| panic!("missing bundled module `{key}`"));
-        let exports = hll_to_ir::imports::collect_exports(module).expect("collect exports");
-        let declared =
-            hll_to_ir::imports::collect_declaration_names(module).expect("collect declarations");
-        aliases.insert(
-            alias.clone(),
-            hll_to_ir::imports::ModuleAlias {
-                prefix: String::new(),
-                exports: exports.clone(),
-                mangled: HashSet::new(),
-                namespaced: HashSet::new(),
-                member_aliases: module_member_aliases(&alias, &key, &exports),
-                declared,
-            },
+        append_import(
+            &alias,
+            &path,
+            &mut prelude,
+            &mut aliases,
+            &mut emitted,
+            &mut visiting,
         );
     }
     (prelude, aliases)
+}
+
+fn append_import(
+    alias: &str,
+    path: &str,
+    prelude: &mut String,
+    aliases: &mut HashMap<String, hll_to_ir::imports::ModuleAlias>,
+    emitted: &mut HashSet<String>,
+    visiting: &mut Vec<String>,
+) {
+    let key = module_key(path);
+    let module =
+        bundled_module_source(&key).unwrap_or_else(|| panic!("missing bundled module `{key}`"));
+    if visiting.contains(&key) {
+        panic!("cyclic bundled import through `{key}`");
+    }
+    if !emitted.contains(&key) {
+        visiting.push(key.clone());
+        for (dependency_alias, dependency_path) in
+            hll_to_ir::imports::collect_interface_imports(module).expect("interface imports")
+        {
+            append_import(
+                &dependency_alias,
+                &dependency_path,
+                prelude,
+                aliases,
+                emitted,
+                visiting,
+            );
+        }
+        visiting.pop();
+        prelude.push_str(
+            &hll_to_ir::imports::extract_interface(module).expect("extract import interface"),
+        );
+        prelude.push('\n');
+        emitted.insert(key.clone());
+    }
+
+    let exports = hll_to_ir::imports::collect_exports(module).expect("collect exports");
+    let declared =
+        hll_to_ir::imports::collect_declaration_names(module).expect("collect declarations");
+    let namespaced =
+        hll_to_ir::imports::collect_exported_interfaces(module).expect("collect interfaces");
+    aliases.insert(
+        alias.to_owned(),
+        hll_to_ir::imports::ModuleAlias {
+            prefix: String::new(),
+            exports: exports.clone(),
+            mangled: HashSet::new(),
+            namespaced,
+            member_aliases: module_member_aliases(alias, &key, &exports),
+            declared,
+        },
+    );
 }
 
 fn module_key(path: &str) -> String {
@@ -169,7 +210,7 @@ fn compiled_stdlib() -> &'static [(String, AssembledOutput)] {
                     target: TargetMode::Kernel,
                     strict: true,
                     string_prefix: Some("__kern_str_".to_owned()),
-                    type_prelude: get_stdlib_type_prelude(),
+                    type_prelude: Vec::new(),
                     source_prelude: Some(source_prelude),
                     module_aliases,
                     module_mangle_prefix: None,
@@ -580,7 +621,7 @@ external klog_warn:             (msg: u8*)
 external klog_error:            (msg: u8*)
 external klog_int:              (label: u8*, val: i64)
 external kmalloc:               (size: u64) -> u8*
-external memset:                (dst: u8*, value: u8, n: u64) -> u8*
+external mem_set:               (dst: u8*, value: u8, n: u64) -> u8*
 external kshutdown:             (code: i64)
 external trap_init:             ()
 external plic_init:             ()
@@ -905,7 +946,7 @@ fn freestanding_console_putchar_uses_store_byte() {
     // sb (store-byte) is the correct instruction for writing a single char to UART TX;
     // a wider store would corrupt adjacent UART registers.
     assert!(
-        os_runtime::stdlib::FREESTANDING_CONSOLE.contains("sb   a0"),
+        os_runtime::stdlib::FREESTANDING_CONSOLE.contains("sb a0"),
         "console_putchar must use 'sb a0' to write a single byte to the UART TX register"
     );
 }

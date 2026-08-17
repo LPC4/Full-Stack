@@ -1,7 +1,7 @@
 ; Kernel initialization and boot orchestration.
 
 layout      := import("layout")
-heap_source := import("heap_source")
+heap_backend := import("heap_backend")
 klog        := import("klog")
 utilities   := import("utilities")
 mem         := import("mem")
@@ -72,7 +72,6 @@ kmain: () {
 boot_console: () {
     klog.ok("kernel starting".ptr)
     klog.ok("console online".ptr)
-    klog.int("boot hart".ptr, 0)
 }
 
 boot_traps: () {
@@ -103,9 +102,9 @@ boot_memory_diagnostics: () {
 boot_heap: () {
     ; Hand the stdlib allocator the kernel heap region carved out of RAM;
     ; before this only the 64 KiB bootstrap buffer backs allocations.
-    heap_source.heap_set_region(KHEAP_BASE, KHEAP_END)
+    heap_backend.heap_set_region(KHEAP_BASE, KHEAP_END)
     probe: u8* = utilities.malloc(64)
-    mem.memset(probe, 0, 64)
+    mem.set(probe, 0, 64)
     klog.ok("heap ready".ptr)
 }
 
@@ -132,11 +131,11 @@ spawn_user_process: () {
     ; Probe the first qword at USER_BINARY_PA. If it is 0, no user binary is loaded.
     header_ptr: u64* = USER_BINARY_PA as u64*
     if header_ptr[0] == 0 {
-        klog.warn("[ PROC ] no user binary present".ptr)
+        klog.warn("no user binary present".ptr)
         return
     }
 
-    klog.ok("[ PROC ] spawning user process".ptr)
+    klog.ok("spawning user process".ptr)
 
     src_user_pa: u64 = USER_BINARY_PA as u64
 
@@ -154,12 +153,12 @@ spawn_user_process: () {
     }
 
     if user_entry == 0 {
-        klog.warn("[ PROC ] user entry is 0, skipping".ptr)
+        klog.warn("user entry is 0, skipping".ptr)
         return
     }
 
     if user_size == 0 {
-        klog.warn("[ PROC ] user size is 0, skipping".ptr)
+        klog.warn("user size is 0, skipping".ptr)
         return
     }
 
@@ -185,7 +184,7 @@ spawn_user_process: () {
         src_page_pa: u64 = src_user_pa + offset
 
         ; Identity-mapped: physical address == virtual address.
-        mem.memcpy(dst_page, src_page_pa as u8*, page_size)
+        mem.copy(dst_page, src_page_pa as u8*, page_size)
 
         user_va: u64 = USER_CODE_VA + offset
         vmm.map(user_va, dst_page as u64, VMM_R + VMM_W + VMM_X + VMM_U)

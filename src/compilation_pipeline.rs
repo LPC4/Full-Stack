@@ -580,21 +580,23 @@ impl CompilationPipeline {
         modules: &[(&str, &str)],
     ) -> Result<Vec<AssembledOutput>, CompilationError> {
         let mut result = Vec::with_capacity(modules.len());
+        let saved_string_prefix = self.string_prefix.clone();
 
         for (module_name, source) in modules {
             self.set_artifact_stem(Some(module_name.to_string()));
-
-            let compile_result = self.compile(source)?;
-
-            let (_, tokens) = self
-                .compile_ir_to_assembly_with_tokens(&compile_result.ir_program)
-                .map_err(CompilationError::Codegen)?;
-
-            let assembled = self
-                .assemble_named(module_name, &tokens)
-                .map_err(|e| CompilationError::FreestandingErrors(vec![e.message]))?;
-
-            result.push(assembled);
+            let namespace = sanitize_artifact_component(module_name);
+            let base = saved_string_prefix.as_deref().unwrap_or("__module_");
+            self.string_prefix = Some(format!("{base}{namespace}_str_"));
+            let compiled = (|| {
+                let compile_result = self.compile(source)?;
+                let (_, tokens) = self
+                    .compile_ir_to_assembly_with_tokens(&compile_result.ir_program)
+                    .map_err(CompilationError::Codegen)?;
+                self.assemble_named(module_name, &tokens)
+                    .map_err(|e| CompilationError::FreestandingErrors(vec![e.message]))
+            })();
+            self.string_prefix = saved_string_prefix.clone();
+            result.push(compiled?);
         }
 
         Ok(result)
@@ -736,10 +738,14 @@ impl CompilationPipeline {
         let mut pipeline = CompilationPipeline::new();
         pipeline.set_target_mode(mode);
         pipeline.set_write_artifacts(false);
-        pipeline.set_type_prelude(hll_to_ir::stdlib::get_stdlib_type_prelude());
-        if mode == TargetMode::Kernel {
-            pipeline.set_string_prefix(Some("__kern_str_".to_owned()));
-        }
+        pipeline.set_string_prefix(Some(
+            if mode == TargetMode::Kernel {
+                "__kern_"
+            } else {
+                "__stdlib_"
+            }
+            .to_owned(),
+        ));
         let modules = hll_to_ir::stdlib::get_stdlib_modules_for_mode(mode);
         let mut objects = Vec::with_capacity(modules.len());
         for (module_name, source) in &modules {
@@ -766,7 +772,6 @@ impl CompilationPipeline {
         let mut pipeline = CompilationPipeline::new();
         pipeline.set_target_mode(TargetMode::Kernel);
         pipeline.set_write_artifacts(false);
-        pipeline.set_type_prelude(hll_to_ir::stdlib::get_stdlib_type_prelude());
         pipeline.set_string_prefix(Some("__kern_str_".to_owned()));
         pipeline.set_module_mangling(false);
         pipeline.set_current_source_path(bundled_module_path("my_kernel"));

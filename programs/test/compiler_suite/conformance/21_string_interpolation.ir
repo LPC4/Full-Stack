@@ -1,21 +1,12 @@
 type FormatError = { tag: i64, payload: i8[8] }
 type Result__u64__FormatError = { tag: i64, payload: i8[16] }
-extern console_putchar(i32) -> i32
+extern console_putchar(i32) -> void
 extern console_write(i8*) -> void
 extern console_writeln(i8*) -> void
-extern print(i8[]) -> i32
-extern println(i8[]) -> i32
-extern console_print_int_rec(i64) -> void
+extern console_print(i8[]) -> i32
+extern console_println(i8[]) -> i32
 extern console_print_int(i64) -> void
-extern print_int(i64) -> i32
 extern console_print_hex(i64) -> void
-extern puts(i8*) -> i32
-extern printf(i8*, i32) -> i32
-extern string_len(i8[]) -> i64
-extern string_is_empty(i8[]) -> i1
-extern string_equals(i8[], i8[]) -> i1
-extern string_copy(i8[]) -> i8[]
-extern string_concat(i8[], i8[]) -> i8[]
 extern fmt_result_ok(i64) -> Result__u64__FormatError
 extern fmt_result_too_small(i64) -> Result__u64__FormatError
 extern fmt_result_overflow() -> Result__u64__FormatError
@@ -31,7 +22,6 @@ extern fmt_write_i64(i8[], i64, i64) -> i64
 extern fmt_write_bool(i8[], i64, i1) -> i64
 extern fmt_subslice(i8[], i64, i64) -> i8[]
 extern fmt_exact_check(i64, i64) -> void
-extern fmt_f64_render(f64, i8[]) -> i64
 extern fmt_len_f64(f64) -> i64
 extern fmt_write_f64(i8[], i64, f64) -> i64
 
@@ -152,11 +142,11 @@ trap_ok_15:
     store i64 $26, $28 + 8
     $29 = load i64, $__m0_length
     $30 = call fmt_subslice($28, 0, $29)
-    $31 = call print($30)
+    $31 = call console_print($30)
     $32 = stack_alloc i8[]
     store i8* str_1, $32 + 0
     store i64 0, $32 + 8
-    $33 = call println($32)
+    $33 = call console_println($32)
     ret 42
 match_next_11:
     $34 = cmp eq i64 $21, 1

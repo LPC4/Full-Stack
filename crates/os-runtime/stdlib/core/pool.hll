@@ -1,0 +1,113 @@
+; Fixed-layout slots backed by non-moving chunks.
+
+alloc := import("alloc")
+
+export struct Pool<T> {
+	chunks: u8*,
+}
+
+export impl Pool<T> {
+	init: (self: Pool<T>*) {
+		self.chunks = null
+	}
+
+	alloc: (self: Pool<T>*) -> Result<T*, alloc.AllocError> {
+		stride: u64 = size_of<T>()
+		if stride == 0 { stride = 1 }
+
+		current: u8* = self.chunks
+		while current != null {
+			base: u8* = @((current + 8) as u8**)
+			states: u8* = @((current + 16) as u8**)
+			capacity: u64 = @((current + 24) as u64*)
+			i: u64 = 0
+			while i < capacity {
+				if states[i] == 0 {
+					states[i] = 1
+					address: u64 = (base as u64) + i * stride
+					return Ok(address as T*)
+				}
+				i += 1
+			}
+			current = @(current as u8**)
+		}
+
+		slots: u64 = 64
+		bytes := alloc.array_bytes(slots, stride)?
+
+		node := alloc.allocate(32, 8)?
+		states: u8* = null
+		states_result := alloc.allocate(slots, 1)
+		match states_result {
+			Ok(value) -> { states = value }
+			Err(error) -> {
+				alloc.deallocate(node, 32, 8)
+				return Err(error)
+			}
+		}
+		base: u8* = null
+		base_result := alloc.allocate(bytes, align_of<T>())
+		match base_result {
+			Ok(value) -> { base = value }
+			Err(error) -> {
+				alloc.deallocate(states, slots, 1)
+				alloc.deallocate(node, 32, 8)
+				return Err(error)
+			}
+		}
+		i: u64 = 0
+		while i < slots {
+			states[i] = 0
+			i += 1
+		}
+		@(node as u8**) = self.chunks
+		@((node + 8) as u8**) = base
+		@((node + 16) as u8**) = states
+		@((node + 24) as u64*) = slots
+		self.chunks = node
+		states[0] = 1
+		return Ok(base as T*)
+	}
+
+	release: (self: Pool<T>*, ptr: T*) -> bool {
+		stride: u64 = size_of<T>()
+		if stride == 0 { stride = 1 }
+		address: u64 = ptr as u64
+
+		current: u8* = self.chunks
+		while current != null {
+			base: u8* = @((current + 8) as u8**)
+			states: u8* = @((current + 16) as u8**)
+			capacity: u64 = @((current + 24) as u64*)
+			base_address: u64 = base as u64
+			span: u64 = capacity * stride
+			if address >= base_address and address < base_address + span {
+				offset: u64 = address - base_address
+				if offset % stride != 0 { return false }
+				index: u64 = offset / stride
+				if states[index] == 0 { return false }
+				states[index] = 0
+				return true
+			}
+			current = @(current as u8**)
+		}
+		return false
+	}
+
+	deinit: (self: Pool<T>*) {
+		stride: u64 = size_of<T>()
+		if stride == 0 { stride = 1 }
+		current: u8* = self.chunks
+		while current != null {
+			next: u8* = @(current as u8**)
+			base: u8* = @((current + 8) as u8**)
+			states: u8* = @((current + 16) as u8**)
+			capacity: u64 = @((current + 24) as u64*)
+			alloc.deallocate(base, capacity * stride, align_of<T>())
+			alloc.deallocate(states, capacity, 1)
+			alloc.deallocate(current, 32, 8)
+			current = next
+		}
+		self.chunks = null
+	}
+}

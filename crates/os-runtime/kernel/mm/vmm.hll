@@ -45,7 +45,7 @@ export vmm_alloc_pt: () -> u64* {
     if page == null {
         runtime.panic("vmm: out of memory for page table".ptr)
     }
-    mem.memset(page, 0, 4096)
+    mem.set(page, 0, 4096)
     return page as u64*
 }
 
@@ -132,7 +132,7 @@ export vmm_fork_copy: (parent_root: u64, child_root: u64) {
                             if dst == null {
                                 runtime.panic("vmm: out of memory in fork copy".ptr)
                             }
-                            mem.memcpy(dst, src_pa as u8*, 4096)
+                            mem.copy(dst, src_pa as u8*, 4096)
                             vmm_set_root(child_root)
                             vmm_map(va, dst as u64, flags)
                         }
@@ -244,7 +244,7 @@ export vmm_boot: () {
     ; stamps them into every per-process root (see vmm_new_root).
     vmm_map_kernel(vmm_get_root())
     vmm_enable()
-    klog.ok("[ VMM ] sv39 enabled".ptr)
+    klog.ok("sv39 enabled".ptr)
 }
 
 ; Re-enable S-mode interrupts after MMU is stable.

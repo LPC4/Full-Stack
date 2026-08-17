@@ -1,11 +1,11 @@
 ; Kernel platform helpers: shutdown, timer, and interrupt controller.
 
-memory_allocator    := import("memory_allocator")
+alloc               := import("alloc")
 runtime             := import("runtime")
 
 ; Panics on OOM instead of returning null.
 export kmalloc: (size: u64) -> u8* {
-    ptr: u8* = memory_allocator.malloc(size)
+    ptr: u8* = alloc.malloc(size)
     if ptr == null {
         runtime.panic("kmalloc: out of memory".ptr)
     }
@@ -13,7 +13,7 @@ export kmalloc: (size: u64) -> u8* {
 }
 
 export kfree: (ptr: u8*) {
-    memory_allocator.free(ptr)
+    alloc.free(ptr)
 }
 
 ; Write exit code to SYSCON (0x10010000) to halt the VM or QEMU.

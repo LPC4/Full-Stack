@@ -232,7 +232,7 @@ export load_elf_segments: (fd: i64, hdr: u8*) -> i64 {
                 if page_pa == null {
                     return -1 as i64
                 }
-                mem.memset(page_pa, 0, 4096)
+                mem.set(page_pa, 0, 4096)
                 if seg_off < p_filesz {
                     to_read: u64 = p_filesz - seg_off
                     if to_read > 4096 {
@@ -324,9 +324,9 @@ export sys_exec_impl: (options: ExecOptions) -> i64 {
         fs.close(fd)
         return -1 as i64
     }
-    mem.memset(arg_pa, 0, 4096)
+    mem.set(arg_pa, 0, 4096)
     if options.arg_len != 0 {
-        mem.memcpy(arg_pa, arg_buf, options.arg_len)
+        mem.copy(arg_pa, arg_buf, options.arg_len)
     }
     vmm.map(USER_ARG_BASE, arg_pa as u64, USER_ARG_FLAGS)
     pcb.frame.x10 = USER_ARG_BASE
@@ -395,7 +395,7 @@ export sys_fork_impl: (frame: layout.TrapFrame*) -> i64 {
 
     ; Child inherits the context but returns 0 and resumes past the ecall.
     cframe: layout.TrapFrame* = &child.frame
-    mem.memcpy(cframe as u8*, frame as u8*, TF_BYTES)
+    mem.copy(cframe as u8*, frame as u8*, TF_BYTES)
     cframe.x10 = 0
     cframe.sepc = cframe.sepc + 4
 
@@ -767,7 +767,7 @@ export sys_brk_impl: (frame: layout.TrapFrame*) -> layout.SysAction {
             frame.x10 = brk
             return Continue
         }
-        mem.memset(page_pa, 0, 4096)
+        mem.set(page_pa, 0, 4096)
         vmm.map(a, page_pa as u64, USER_HEAP_FLAGS)
         a = a + 4096
     }

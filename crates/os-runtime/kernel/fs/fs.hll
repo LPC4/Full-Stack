@@ -179,7 +179,7 @@ fs_name_write: (dst: u8*, name: u8[]) -> i64 {
     if name.len == 0 || name.len >= FS_NAME_LEN {
         return -1 as i64
     }
-    mem.memset(dst, 0, FS_NAME_LEN)
+    mem.set(dst, 0, FS_NAME_LEN)
     for i in 0..name.len {
         @(dst + i) = name[i]
     }
@@ -305,7 +305,7 @@ export fs_add_dirent: (dir_inode: u64, child_name: u8[], child_inode: u64) -> i6
             if new_blk == 0 {
                 return -1 as i64
             }
-            mem.memset(fs_block_pa(new_blk) as u8*, 0, FS_BLOCK_SIZE)
+            mem.set(fs_block_pa(new_blk) as u8*, 0, FS_BLOCK_SIZE)
             fs_inode_set_block(dir_inode, blk_slot, new_blk)
             blk = new_blk
         }
@@ -472,7 +472,7 @@ export fs_init: (base_pa: u64, image_size: u64) {
 
     fd_table: u8* = utilities.malloc(FS_MAX_FD * size_of<OpenFile>())
     fs_fd_table_pa = fd_table as u64
-    mem.memset(fd_table, 0, FS_MAX_FD * size_of<OpenFile>())
+    mem.set(fd_table, 0, FS_MAX_FD * size_of<OpenFile>())
     fs_ready = 1
 
     files: i64 = 0
@@ -575,7 +575,7 @@ export fs_read: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
         if chunk > FS_BLOCK_SIZE - blk_off {
             chunk = FS_BLOCK_SIZE - blk_off
         }
-        mem.memcpy(buf + done, (fs_block_pa(blk) + blk_off) as u8*, chunk)
+        mem.copy(buf + done, (fs_block_pa(blk) + blk_off) as u8*, chunk)
         done = done + chunk
     }
     return done as i64
@@ -615,7 +615,7 @@ export fs_write: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
             if new_blk == 0 {
                 break
             }
-            mem.memset(fs_block_pa(new_blk) as u8*, 0, FS_BLOCK_SIZE)
+            mem.set(fs_block_pa(new_blk) as u8*, 0, FS_BLOCK_SIZE)
             fs_inode_set_block(inode, blk_slot, new_blk)
             blk = new_blk
         }
@@ -623,7 +623,7 @@ export fs_write: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
         if chunk > FS_BLOCK_SIZE - blk_off {
             chunk = FS_BLOCK_SIZE - blk_off
         }
-        mem.memcpy((fs_block_pa(blk) + blk_off) as u8*, buf + done, chunk)
+        mem.copy((fs_block_pa(blk) + blk_off) as u8*, buf + done, chunk)
         done = done + chunk
     }
     end: u64 = offset + done

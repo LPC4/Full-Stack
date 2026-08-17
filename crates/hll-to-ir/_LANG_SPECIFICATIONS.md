@@ -126,8 +126,7 @@ There is no runtime reflection metadata or emitted call for either intrinsic.
 
 A string literal `"text"` is a `u8[]` slice (see 5.3): a `{ ptr: u8*, len: u64 }` fat
 pointer over read-only bytes. Its `.ptr` and `.len` fields, indexing, iteration, and range
-slicing all apply. This layout matches the legacy `Str` record, so a `u8[]` string links
-against `Str`-typed stdlib functions across translation units.
+slicing all apply. Standard-library string APIs accept this slice representation directly.
 
 ```hll
 name: u8[] = "Ada"
@@ -274,20 +273,20 @@ Interpolation never allocates: the caller supplies a mutable byte buffer and rec
 number of UTF-8 bytes written.
 
 ```hll
-string := import("string")
+fmt := import("format")
 
 buf: u8[64] = []
-written := string.format_into(buf[..], "user={name} code={code}")
+written := fmt.format_into(buf[..], "user={name} code={code}")
 match written {
     Ok(n) -> console.print(buf[0..n])
     Err(e) -> handle(e)
 }
 ```
 
-`string.format_into(destination, "...")` is compiler-recognized syntax rather than an ordinary
+`format.format_into(destination, "...")` is compiler-recognized syntax rather than an ordinary
 variadic function: a call of the shape `alias.format_into(expr, string-literal)` is parsed as an
 interpolation template whenever the second argument is a string literal, and `alias` must be an
-import of the `string` module (any other alias is a compile error). The member name
+import of the `format` module (any other alias is a compile error). The member name
 `format_into` with a string-literal second argument is therefore reserved. The result is
 `Result<u64, FormatError>`:
 
@@ -526,10 +525,10 @@ main: () -> i32 {
 - Bounds are checked in the importer, at the specialization, against the importer's types.
 - Each importer specializes its own copies. Two modules instantiating the same generic at the
   same type get one private copy each; the copies never collide because they are local symbols.
-- A generic body may reference its own module's exports (which take the module prefix and link
-  back to the provider) and its own parameters and locals. Referencing a private symbol or a
-  module the provider itself imported is rejected at extraction: the importer cannot resolve
-  either. Export the helper, or move it into the generic.
+- A generic body may reference its own module's exports and qualified exports from modules the
+  provider imports. The required import interfaces propagate transitively to the importer, with
+  qualified types and calls intact. Missing modules, dependency cycles, and private members are
+  rejected before specialization.
 
 ### 6.4 Modules, `import`, and `export`
 
@@ -632,7 +631,8 @@ The mechanisms above are the target. Current status:
   carries a module resolver (name -> source) and, for each direct `import`, prepends the
   target's extracted interface (`hll_to_ir::imports`): exported `type`/`const`/`struct`/`enum`
   verbatim, exported generic functions with their bodies, and other exported `fn`/globals as
-  `external`. The in-VM `cc` toolchain and the raw `HllCompiler` path do not resolve imports;
+  `external`. Imports required by that interface propagate recursively while implementation-only
+  imports do not. The in-VM `cc` toolchain and the raw `HllCompiler` path do not resolve imports;
   the import decl is inert there.
 - Qualified `alias := import(path)` is implemented for value, call, const, and type exports:
   the pipeline resolves each module binding, prepends its interface, and passes the alias's
@@ -655,10 +655,11 @@ The mechanisms above are the target. Current status:
   prepended interface.
 - The bundled resolver covers kernel modules (`layout`, `trap_entry`, `pmm`, `vmm`, `process`,
   `scheduler`, `fs`, `syscall`, `trap_handler`, `utilities`, `checks`) and stdlib modules
-  (`console`, `sys`, `cstr`, `runtime`, `klog`, `mem`, `string`, `memory_allocator`) through the
-  generated `os_runtime::module_source` registry. `hll_to_ir::stdlib` reads the ordered
-  `stdlib/stdlib.build` lists for hosted, freestanding, and kernel module order; the folders are
-  organizational only. Kernel TUs import the providers they use with qualified
+  (`alloc`, `vec`, `owned_string`, `arena`, `pool`, `string`, `format`, `mem`, `ascii`,
+  `console`, `sys`, `cstr`, `runtime`, `klog`) through the generated registry. Stdlib sources use
+  canonical crate-relative registry IDs, while `stdlib.build` maps those IDs to target-facing
+  logical module names. It composes `common` with `baremetal` or `hosted_platform` and a target
+  overlay. Kernel TUs import the providers they use with qualified
   `name := import("name")`; `layout.hll` exports the PCB/trap-frame structs and ABI consts. The
   production kernel build (`ensure_kernel_binary`, the GUI, the CLI, and the integration tests)
   drives the link set from the `my_kernel` closure with mangling off, linking it against the
@@ -668,9 +669,6 @@ The mechanisms above are the target. Current status:
   qualified relative imports; `as` and `cc` keep their layout headers as shared record prelude.
   User programs use qualified stdlib imports rather than hand-written `external` declarations;
   `external` remains reserved for ABI/runtime edges such as `_start` calling user `main`.
-- Shared type-prelude aliases are registered in every translation unit for semantic analysis and
-  lowering. Only aliases transitively referenced by the finished IR are emitted into that module;
-  source-authored type declarations remain visible even when unused.
 
 Migration order: (1) interface import for `type`/`const`/signatures, retiring the source
 prelude where possible; `as`/`cc` still need layout prelude for shared records); (2)
@@ -1080,8 +1078,10 @@ console := import("console")
 sys     := import("sys")       ; hosted targets only
 cstr    := import("cstr")      ; hosted targets
 string  := import("string")
+fmt     := import("format")
 mem     := import("mem")
-alloc   := import("memory_allocator")
+alloc   := import("alloc")
+vec     := import("vec")
 ```
 
 The normal source API is qualified through imports:
@@ -1093,6 +1093,7 @@ view: u8[] = cstr.view("a".ptr, 2)
 ok: bool = string.equals("x", "x")
 mem.copy(dst, src, n)
 ptr: u8* = alloc.malloc(64)
+values: vec.Vec<i32> = { .ptr = null, .len = 0, .capacity = 0 }
 ```
 
 `console.print`/`console.println` take a `u8[]` slice (string literals are slices) and write
@@ -1104,12 +1105,10 @@ targets provide `sys.*` syscall wrappers; freestanding and kernel targets omit t
 ### 11.2 Strings
 
 A string value is a `u8[]` slice (3.4): `.ptr`, `.len`, bounds-checked indexing, `for`, and
-range slicing all apply. The standard string utilities operate on `u8[]` through the
-`string` module. The layout-compatible
-`Str` record (`{ data: u8*, length: u64 }`) is retained only as a legacy ABI declaration for
-linking against existing `Str`-typed entry points.
+range slicing all apply. The `string` module provides length, equality, copy, concatenation,
+and search helpers over slices.
 
-The `string` module also carries the interpolation runtime (5.5): `FormatError`, the `Format`
+The `format` module carries the interpolation runtime (5.5): `FormatError`, the `Format`
 interface, and the `fmt_*` length/write helpers (`fmt_len_i64`, `fmt_write_u64`,
 `fmt_write_f64`, `fmt_write_bytes`, `fmt_subslice`, ...). They are plain exports and can be
 used directly for manual formatting without `format_into`.
@@ -1121,8 +1120,8 @@ them with `match` and `?` over ad-hoc `{ value, error }` records or `null` senti
 
 ### 11.4 Allocator ABI
 
-The `memory_allocator` module exports an aligned, fallible allocation ABI shared by every
-target. The raw byte source behind it is target-specific (`stdlib/*/heap_source.hll`):
+The `alloc` module exports an aligned, fallible allocation ABI shared by every target. The raw
+byte source behind it is target-specific (`stdlib/platform/*/heap.hll`):
 hosted userspace grows the program break via `brk`; freestanding and kernel builds bump a
 64 KiB bootstrap buffer plus an optional larger region a kernel registers at boot with
 `heap_set_region(start, end)`.
@@ -1153,8 +1152,9 @@ selection happens when the standard library is linked.
 
 ### 11.5 Containers
 
-`Vec<T>`, `OwnedString`, `Arena`, and `Pool<T>` are ordinary structs in `memory_allocator`
-built on the global ABI. They follow the raw-pointer model: copying a container copies its
+`Vec<T>`, `OwnedString`, `Arena`, and `Pool<T>` live in the `vec`, `owned_string`, `arena`, and
+`pool` modules. They build on `alloc` through ordinary qualified imports. They follow the
+raw-pointer model: copying a container copies its
 fields and aliases the same allocation; the programmer deinitializes it exactly once and
 must not use stale aliases. All operations are failure-atomic: container state changes only
 after a successful allocation. Growth policy (e.g. capacity doubling) is non-contractual.

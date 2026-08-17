@@ -409,13 +409,13 @@ main__trap_ok_15:
 	sd     a0, 304(sp)
 	sd     a1, 312(sp)
 ; --- End Function Call: fmt_subslice ---
-; --- Function Call: print ---
+; --- Function Call: console_print ---
 ; Passing 1 arguments
 	addi   t0, sp, 304
 	addi   a0, t0, 0
-	jal ra, print
+	jal ra, console_print
 	addiw  s2, a0, 0
-; --- End Function Call: print ---
+; --- End Function Call: console_print ---
 	addi   t0, sp, 192
 ; Store i8* to memory
 	la t1, str_1
@@ -424,13 +424,13 @@ main__trap_ok_15:
 ; Store i64 to memory
 	addi   t1, zero, 0
 	sd     t1, 0(t0)
-; --- Function Call: println ---
+; --- Function Call: console_println ---
 ; Passing 1 arguments
 	addi   t0, sp, 192
 	addi   a0, t0, 0
-	jal ra, println
+	jal ra, console_println
 	addiw  s2, a0, 0
-; --- End Function Call: println ---
+; --- End Function Call: console_println ---
 	addi   t1, zero, 42
 	addi   a0, t1, 0
 ; --- Function Epilogue ---

@@ -1026,17 +1026,15 @@ impl HighLevelCompiler {
         }
         if !self.format_aliases.contains(alias) {
             self.context.error(format!(
-                "`{alias}.format_into` requires `{alias} := import(\"string\")`; \
-                 only the string module carries the format runtime"
+                "`{alias}.format_into` requires `{alias} := import(\"format\")`"
             ));
             return None;
         }
         let Some(IrType::Named(result_enum)) =
             self.function_return_types.get("fmt_result_ok").cloned()
         else {
-            self.context.error(
-                "string interpolation requires the string module's format runtime".to_owned(),
-            );
+            self.context
+                .error("string interpolation requires the format module runtime".to_owned());
             return None;
         };
         if matches!(

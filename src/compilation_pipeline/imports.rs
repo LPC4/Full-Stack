@@ -3,6 +3,17 @@ use super::{
     ResolvedModuleSource, ResolvedModules, TargetMode, fs,
 };
 
+#[derive(Default)]
+struct ImportInterfaceState {
+    prelude: String,
+    aliases: std::collections::HashMap<String, hll_to_ir::imports::ModuleAlias>,
+    local_names: std::collections::HashSet<String>,
+    imported_exports: std::collections::HashMap<String, String>,
+    emitted: std::collections::HashSet<String>,
+    alias_targets: std::collections::HashMap<String, String>,
+    visiting: Vec<String>,
+}
+
 impl CompilationPipeline {
     pub(super) fn is_filesystem_import(path: &str) -> bool {
         let candidate = Path::new(path);
@@ -110,13 +121,7 @@ impl CompilationPipeline {
     }
 
     pub(super) fn resolve_modules(&self, source: &str) -> Result<ResolvedModules, Vec<Diagnostic>> {
-        let mut prelude = String::new();
-        let mut aliases: std::collections::HashMap<String, hll_to_ir::imports::ModuleAlias> =
-            std::collections::HashMap::new();
-        // Import aliases are namespace handles, not symbol definitions, so they never
-        // conflict with a same-named export such as `klog := import("klog")`.
-
-        // An unparsable root skips resolution; the compiler reports it with a span.
+        let mut state = ImportInterfaceState::default();
         let Ok(mut local_names) = hll_to_ir::imports::collect_declaration_names(source) else {
             return Ok(ResolvedModules {
                 prelude: None,
@@ -128,8 +133,7 @@ impl CompilationPipeline {
         {
             local_names.remove(&alias);
         }
-        let mut imported_exports: std::collections::HashMap<String, String> =
-            std::collections::HashMap::new();
+        state.local_names = local_names;
 
         if self.module_resolver.is_some() || self.current_source_path.is_some() {
             let module_imports = hll_to_ir::imports::collect_module_imports(source)
@@ -139,107 +143,153 @@ impl CompilationPipeline {
                     .iter()
                     .any(|(_, path)| Self::module_key(path) == "layout")
             {
-                prelude.push_str(os_runtime::kernel::LAYOUT);
-                prelude.push('\n');
+                state.prelude.push_str(os_runtime::kernel::LAYOUT);
+                state.prelude.push('\n');
+                state.emitted.insert(source_identity(
+                    "layout",
+                    bundled_module_path("layout").map(Path::new),
+                ));
             }
             for (alias, path) in module_imports {
-                if aliases.contains_key(&alias) {
-                    return Err(vec![Diagnostic::new(
-                        DiagnosticLevel::Error,
-                        format!("duplicate module import alias `{alias}`"),
-                    )]);
-                }
-                let resolved = self
-                    .resolve_module_source(&path, self.current_source_path.as_deref())
-                    .map_err(|msg| vec![Diagnostic::new(DiagnosticLevel::Error, msg)])?
-                    .ok_or_else(|| {
-                        let key = Self::module_key(&path);
-                        vec![Diagnostic::new(
-                            DiagnosticLevel::Error,
-                            format!("cannot resolve import(\"{path}\"): no module named `{key}`"),
-                        )]
-                    })?;
-                let exports =
-                    hll_to_ir::imports::collect_exports(&resolved.source).map_err(|msg| {
-                        vec![Diagnostic::new(
-                            DiagnosticLevel::Error,
-                            format!("failed to read exports of \"{path}\": {msg}"),
-                        )]
-                    })?;
-                // Interfaces and generic templates: prefixed like exports, but not link symbols.
-                let namespaced = hll_to_ir::imports::collect_exported_interfaces(&resolved.source)
-                    .map_err(|msg| {
-                        vec![Diagnostic::new(
-                            DiagnosticLevel::Error,
-                            format!("failed to read interfaces of \"{path}\": {msg}"),
-                        )]
-                    })?;
-                // Only modules the closure itself compiles are mangled. Stdlib modules are
-                // precompiled flat and skipped by the closure, so importing one resolves flat.
-                let mangle_this = self.mangle_modules && !resolved.is_stdlib;
-                let (prefix, mangled) = if mangle_this {
-                    let link_symbols =
-                        hll_to_ir::imports::collect_exported_link_symbols(&resolved.source)
-                            .map_err(|msg| {
-                                vec![Diagnostic::new(
-                                    DiagnosticLevel::Error,
-                                    format!("failed to read exports of \"{path}\": {msg}"),
-                                )]
-                            })?;
-                    (
-                        Self::module_prefix(&resolved.key, resolved.source_path.as_deref()),
-                        link_symbols,
-                    )
-                } else {
-                    (String::new(), std::collections::HashSet::new())
-                };
-                // The flat-namespace collision guard only applies when names stay flat across
-                // the whole link set, i.e. when this build is not mangling.
-                if !self.mangle_modules {
-                    Self::check_import_export_collisions(
-                        &format!("{alias} ({path})"),
-                        &exports,
-                        &local_names,
-                        &mut imported_exports,
-                    )?;
-                }
-                prelude.push_str(
-                    &hll_to_ir::imports::extract_interface_prefixed(&resolved.source, &prefix)
-                        .map_err(|msg| {
-                            vec![Diagnostic::new(
-                                DiagnosticLevel::Error,
-                                format!("failed to extract interface of \"{path}\": {msg}"),
-                            )]
-                        })?,
-                );
-                let member_aliases = module_member_aliases(&alias, &resolved.key, &exports);
-                let declared = hll_to_ir::imports::collect_declaration_names(&resolved.source)
-                    .map_err(|msg| {
-                        vec![Diagnostic::new(
-                            DiagnosticLevel::Error,
-                            format!("failed to read declarations of \"{path}\": {msg}"),
-                        )]
-                    })?;
-                aliases.insert(
-                    alias,
-                    hll_to_ir::imports::ModuleAlias {
-                        prefix,
-                        member_aliases,
-                        exports,
-                        mangled,
-                        namespaced,
-                        declared,
-                    },
-                );
+                self.resolve_import_interface(
+                    &alias,
+                    &path,
+                    self.current_source_path.as_deref(),
+                    &mut state,
+                )?;
             }
         }
 
-        prelude.push_str(&self.source_prelude);
+        state.prelude.push_str(&self.source_prelude);
 
         Ok(ResolvedModules {
-            prelude: (!prelude.is_empty()).then_some(prelude),
-            aliases,
+            prelude: (!state.prelude.is_empty()).then_some(state.prelude),
+            aliases: state.aliases,
         })
+    }
+
+    fn resolve_import_interface(
+        &self,
+        alias: &str,
+        path: &str,
+        base_source_path: Option<&Path>,
+        state: &mut ImportInterfaceState,
+    ) -> Result<(), Vec<Diagnostic>> {
+        let resolved = self
+            .resolve_module_source(path, base_source_path)
+            .map_err(|msg| vec![Diagnostic::new(DiagnosticLevel::Error, msg)])?
+            .ok_or_else(|| {
+                let key = Self::module_key(path);
+                vec![Diagnostic::new(
+                    DiagnosticLevel::Error,
+                    format!("cannot resolve import(\"{path}\"): no module named `{key}`"),
+                )]
+            })?;
+        let identity = source_identity(&resolved.key, resolved.source_path.as_deref());
+        if let Some(previous) = state.alias_targets.get(alias) {
+            if previous != &identity {
+                return Err(vec![Diagnostic::new(
+                    DiagnosticLevel::Error,
+                    format!("duplicate module import alias `{alias}`"),
+                )]);
+            }
+        } else {
+            state
+                .alias_targets
+                .insert(alias.to_owned(), identity.clone());
+        }
+        if let Some(index) = state.visiting.iter().position(|item| item == &identity) {
+            let mut cycle = state.visiting[index..].to_vec();
+            cycle.push(identity);
+            return Err(vec![Diagnostic::new(
+                DiagnosticLevel::Error,
+                format!("cyclic import: {}", cycle.join(" -> ")),
+            )]);
+        }
+
+        state.visiting.push(identity.clone());
+        let dependency_imports = hll_to_ir::imports::collect_interface_imports(&resolved.source)
+            .map_err(|msg| vec![Diagnostic::new(DiagnosticLevel::Error, msg)])?;
+        for (dependency_alias, dependency_path) in dependency_imports {
+            self.resolve_import_interface(
+                &dependency_alias,
+                &dependency_path,
+                resolved.source_path.as_deref(),
+                state,
+            )?;
+        }
+        state.visiting.pop();
+
+        let exports = hll_to_ir::imports::collect_exports(&resolved.source).map_err(|msg| {
+            vec![Diagnostic::new(
+                DiagnosticLevel::Error,
+                format!("failed to read exports of \"{path}\": {msg}"),
+            )]
+        })?;
+        let namespaced = hll_to_ir::imports::collect_exported_interfaces(&resolved.source)
+            .map_err(|msg| {
+                vec![Diagnostic::new(
+                    DiagnosticLevel::Error,
+                    format!("failed to read interfaces of \"{path}\": {msg}"),
+                )]
+            })?;
+        let mangle_this = self.mangle_modules && !resolved.is_stdlib;
+        let (prefix, mangled) = if mangle_this {
+            let link_symbols = hll_to_ir::imports::collect_exported_link_symbols(&resolved.source)
+                .map_err(|msg| {
+                    vec![Diagnostic::new(
+                        DiagnosticLevel::Error,
+                        format!("failed to read exports of \"{path}\": {msg}"),
+                    )]
+                })?;
+            (
+                Self::module_prefix(&resolved.key, resolved.source_path.as_deref()),
+                link_symbols,
+            )
+        } else {
+            (String::new(), std::collections::HashSet::new())
+        };
+
+        if state.emitted.insert(identity) {
+            if !self.mangle_modules {
+                Self::check_import_export_collisions(
+                    &format!("{alias} ({path})"),
+                    &exports,
+                    &state.local_names,
+                    &mut state.imported_exports,
+                )?;
+            }
+            state.prelude.push_str(
+                &hll_to_ir::imports::extract_interface_prefixed(&resolved.source, &prefix)
+                    .map_err(|msg| {
+                        vec![Diagnostic::new(
+                            DiagnosticLevel::Error,
+                            format!("failed to extract interface of \"{path}\": {msg}"),
+                        )]
+                    })?,
+            );
+        }
+
+        let member_aliases = module_member_aliases(alias, &resolved.key, &exports);
+        let declared =
+            hll_to_ir::imports::collect_declaration_names(&resolved.source).map_err(|msg| {
+                vec![Diagnostic::new(
+                    DiagnosticLevel::Error,
+                    format!("failed to read declarations of \"{path}\": {msg}"),
+                )]
+            })?;
+        state.aliases.insert(
+            alias.to_owned(),
+            hll_to_ir::imports::ModuleAlias {
+                prefix,
+                member_aliases,
+                exports,
+                mangled,
+                namespaced,
+                declared,
+            },
+        );
+        Ok(())
     }
 
     pub(super) fn check_import_export_collisions(

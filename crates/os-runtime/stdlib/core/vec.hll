@@ -1,0 +1,95 @@
+; Growable contiguous storage.
+
+alloc := import("alloc")
+
+export struct Vec<T> {
+	ptr: T*,
+	len: u64,
+	capacity: u64,
+}
+
+export impl Vec<T> {
+	init: (self: Vec<T>*) {
+		self.ptr = align_of<T>() as T*
+		self.len = 0
+		self.capacity = 0
+	}
+
+	reserve: (self: Vec<T>*, required: u64) -> Result<u64, alloc.AllocError> {
+		if required <= self.capacity { return Ok(self.capacity) }
+
+		element_size: u64 = size_of<T>()
+		alloc.array_bytes(required, element_size)?
+
+		max: u64 = 0
+		max -= 1
+		new_capacity: u64 = required
+		if self.capacity != 0 and self.capacity <= max / 2 {
+			doubled: u64 = self.capacity * 2
+			if doubled > new_capacity { new_capacity = doubled }
+		}
+		candidate_size := alloc.array_bytes(new_capacity, element_size)
+		match candidate_size {
+			Ok(bytes) -> {}
+			Err(error) -> { new_capacity = required }
+		}
+
+		if element_size == 0 {
+			self.capacity = new_capacity
+			return Ok(new_capacity)
+		}
+
+		old_bytes: u64 = self.capacity * element_size
+		new_bytes := alloc.array_bytes(new_capacity, element_size)?
+		replacement := alloc.reallocate(
+			self.ptr as u8*,
+			old_bytes,
+			new_bytes,
+			align_of<T>(),
+		)? as T*
+		self.ptr = replacement
+		self.capacity = new_capacity
+		return Ok(new_capacity)
+	}
+
+	push: (self: Vec<T>*, value: T) -> Result<u64, alloc.AllocError> {
+		needed := alloc.checked_add(self.len, 1)?
+		Vec_reserve<T>(self, needed)?
+		if size_of<T>() != 0 {
+			self.ptr[self.len] = value
+		}
+		self.len = needed
+		return Ok(self.len)
+	}
+
+	pop: (self: Vec<T>*, out: T*) -> bool {
+		if self.len == 0 { return false }
+		self.len -= 1
+		if size_of<T>() != 0 {
+			@out = self.ptr[self.len]
+		}
+		return true
+	}
+
+	get: (self: Vec<T>*, index: u64) -> T* {
+		if index >= self.len { return 0 as T* }
+		return &self.ptr[index]
+	}
+
+	clear: (self: Vec<T>*) {
+		self.len = 0
+	}
+
+	deinit: (self: Vec<T>*) {
+		if size_of<T>() != 0 {
+			alloc.deallocate(
+				self.ptr as u8*,
+				self.capacity * size_of<T>(),
+				align_of<T>(),
+			)
+		}
+		self.ptr = align_of<T>() as T*
+		self.len = 0
+		self.capacity = 0
+	}
+}

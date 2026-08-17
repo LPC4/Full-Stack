@@ -1,0 +1,19 @@
+; ASCII byte classification.
+
+export ascii_is_space: (c: u8) -> bool {
+	return c == ' ' or c == '\t' or c == '\r' or c == '\n'
+}
+
+export ascii_is_digit: (c: u8) -> bool {
+	return c >= '0' and c <= '9'
+}
+
+export ascii_is_alpha: (c: u8) -> bool {
+	if c == '_' { return true }
+	if c >= 'a' and c <= 'z' { return true }
+	return c >= 'A' and c <= 'Z'
+}
+
+export ascii_is_alnum: (c: u8) -> bool {
+	return ascii_is_alpha(c) or ascii_is_digit(c)
+}

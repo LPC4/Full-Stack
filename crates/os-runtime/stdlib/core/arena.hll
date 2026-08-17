@@ -1,0 +1,86 @@
+; Chunked bump allocation with whole-arena reset and deinitialization.
+
+alloc := import("alloc")
+
+struct ArenaChunk {
+	next: ArenaChunk*,
+	base: u8*,
+	size: u64,
+	used: u64,
+	align: u64,
+}
+
+export struct Arena {
+	head: u8*,
+}
+
+export impl Arena {
+	init: (self: Arena*) {
+		self.head = null
+	}
+
+	alloc: (self: Arena*, size: u64, align: u64) -> Result<u8*, alloc.AllocError> {
+		alloc.allocate(0, align)?
+		if size == 0 {
+			return Ok(align as u8*)
+		}
+
+		current: ArenaChunk* = self.head as ArenaChunk*
+		while current != null {
+			base_address: u64 = current.base as u64
+			cursor: u64 = base_address + current.used
+			aligned: u64 = ((cursor + align - 1) / align) * align
+			if aligned >= cursor {
+				end: u64 = aligned + size
+				if end >= aligned and end <= base_address + current.size {
+					current.used = end - base_address
+					return Ok(aligned as u8*)
+				}
+			}
+			current = current.next
+		}
+
+		chunk_bytes: u64 = 4096
+		needed := alloc.checked_add(size, align)?
+		if needed > chunk_bytes { chunk_bytes = needed }
+
+		node := alloc.allocate(size_of<ArenaChunk>(), align_of<ArenaChunk>())? as ArenaChunk*
+		data: u8* = null
+		data_result := alloc.allocate(chunk_bytes, align)
+		match data_result {
+			Ok(value) -> { data = value }
+			Err(error) -> {
+				alloc.deallocate(node as u8*, size_of<ArenaChunk>(), align_of<ArenaChunk>())
+				return Err(error)
+			}
+		}
+		@node = {
+			.next  = self.head as ArenaChunk*,
+			.base  = data,
+			.size  = chunk_bytes,
+			.used  = size,
+			.align = align,
+		}
+		self.head = node as u8*
+		return Ok(data)
+	}
+
+	reset: (self: Arena*) {
+		current: ArenaChunk* = self.head as ArenaChunk*
+		while current != null {
+			current.used = 0
+			current = current.next
+		}
+	}
+
+	deinit: (self: Arena*) {
+		current: ArenaChunk* = self.head as ArenaChunk*
+		while current != null {
+			next: ArenaChunk* = current.next
+			alloc.deallocate(current.base, current.size, current.align)
+			alloc.deallocate(current as u8*, size_of<ArenaChunk>(), align_of<ArenaChunk>())
+			current = next
+		}
+		self.head = null
+	}
+}

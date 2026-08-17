@@ -2,7 +2,8 @@
 console := import("console")
 sys := import("sys")
 cstr := import("cstr")
-text := import("text")
+text := import("../../lib/text.hll")
+ascii := import("ascii")
 runtime := import("runtime")
 codegen := import("./cc_codegen.hll")
 
@@ -212,7 +213,7 @@ tokenize: () {
     i: u64 = 0
     while i < src_len {
         c: u8 = src[i]
-        if text.is_space(c) {
+        if ascii.is_space(c) {
             i = i + 1
         } else {
             if c == ';' {
@@ -223,10 +224,10 @@ tokenize: () {
                     i = i + 1
                 }
             } else {
-                if text.is_alpha(c) {
+                if ascii.is_alpha(c) {
                     start: u64 = i
                     while i < src_len {
-                        if text.is_alnum(src[i]) {
+                        if ascii.is_alnum(src[i]) {
                             i = i + 1
                         } else {
                             break
@@ -236,11 +237,11 @@ tokenize: () {
                     push_tok(TokenKind.TokIdent, 0)
                     set_tok_txt(idx, start, i - start)
                 } else {
-                    if text.is_digit(c) {
+                    if ascii.is_digit(c) {
                         v: i64 = 0
                         while i < src_len {
                             d: u8 = src[i]
-                            if text.is_digit(d) {
+                            if ascii.is_digit(d) {
                                 v = v * 10 + (d as i64 - '0')
                                 i = i + 1
                             } else {

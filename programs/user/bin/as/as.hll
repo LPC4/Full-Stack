@@ -4,7 +4,7 @@ console := import("console")
 sys := import("sys")
 cstr := import("cstr")
 object := import("./as_object.hll")
-text := import("text")
+text := import("../../lib/text.hll")
 runtime := import("runtime")
 
 const USER_CODE_BASE = 0x40000000

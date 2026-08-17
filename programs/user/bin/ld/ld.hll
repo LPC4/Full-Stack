@@ -3,7 +3,7 @@ console := import("console")
 sys := import("sys")
 cstr := import("cstr")
 link := import("./ld_link.hll")
-text := import("text")
+text := import("../../lib/text.hll")
 runtime := import("runtime")
 
 const USER_CODE_BASE = 0x40000000

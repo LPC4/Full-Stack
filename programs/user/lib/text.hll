@@ -1,0 +1,51 @@
+; Shared fixed-width and C-string helpers for userspace tools.
+
+export copy_name16: (dst: u8*, src: u8[]) {
+	count: u64 = src.len
+	if count > 15 { count = 15 }
+	for i in 0..count {
+		dst[i] = src[i]
+	}
+	dst[count] = 0 as u8
+}
+
+export find_sub: (hay: u8*, needle: u8*) -> i64 {
+	if @needle == 0 { return -1 }
+	i: u64 = 0
+	while hay[i] != 0 {
+		j: u64 = 0
+		while true {
+			if needle[j] == 0 { return i as i64 }
+			if hay[i + j] != needle[j] { break }
+			j += 1
+		}
+		i += 1
+	}
+	return -1
+}
+
+export split_two: (arg: u8[], a: u8[], b: u8[]) -> bool {
+	i: u64 = 0
+	while i < arg.len {
+		if arg[i] == ' ' { break }
+		if i + 1 >= a.len { return false }
+		a[i] = arg[i]
+		i += 1
+	}
+	a[i] = 0 as u8
+	if i == arg.len { return false }
+	while i < arg.len {
+		if arg[i] != ' ' { break }
+		i += 1
+	}
+	if i == arg.len { return false }
+	k: u64 = 0
+	while i < arg.len {
+		if k + 1 >= b.len { return false }
+		b[k] = arg[i]
+		i += 1
+		k += 1
+	}
+	b[k] = 0 as u8
+	return true
+}

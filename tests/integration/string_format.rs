@@ -1,8 +1,8 @@
-//! String interpolation runtime and `string.format_into` end-to-end tests.
+//! String interpolation runtime and `format.format_into` end-to-end tests.
 
 use full_stack::compilation_pipeline::CompilationPipeline;
 use hll_to_ir::TargetMode;
-use hll_to_ir::stdlib::{get_stdlib_modules_for_mode, get_stdlib_type_prelude};
+use hll_to_ir::stdlib::get_stdlib_modules_for_mode;
 use virtual_machine::virtual_machine::StepOutcome;
 
 #[path = "../common/hosted_hll.rs"]
@@ -13,7 +13,6 @@ mod hosted_hll;
 #[test]
 fn stdlib_preludes_resolve() {
     assert!(!get_stdlib_modules_for_mode(TargetMode::Hosted).is_empty());
-    assert!(!get_stdlib_type_prelude().is_empty());
 }
 
 fn run_hll(src: &str, max_steps: u64) -> (StepOutcome, String) {
@@ -40,32 +39,32 @@ fn assert_exit_zero_with_uart(src: &str, expected_uart: &str) {
 fn format_runtime_helpers_render_primitives() {
     let src = r#"
 console := import("console")
-string := import("string")
+fmt := import("format")
 
 emit: (buf: u8[], n: u64) {
-    console.print(string.fmt_subslice(buf, 0, n))
+    console.print(fmt.fmt_subslice(buf, 0, n))
     console.println("")
 }
 
 main: () -> i32 {
     buf: u8[64] = []
     b: u8[] = buf[..]
-    emit(b, string.fmt_write_i64(b, 0, 0))
-    emit(b, string.fmt_write_i64(b, 0, -42))
+    emit(b, fmt.fmt_write_i64(b, 0, 0))
+    emit(b, fmt.fmt_write_i64(b, 0, -42))
     umax: u64 = 0 - 1
-    emit(b, string.fmt_write_u64(b, 0, umax))
-    emit(b, string.fmt_write_bool(b, 0, true))
-    emit(b, string.fmt_write_bool(b, 0, false))
-    emit(b, string.fmt_write_bytes(b, 0, "hello"))
-    emit(b, string.fmt_write_f64(b, 0, 0.1))
-    emit(b, string.fmt_write_f64(b, 0, 1.5))
-    emit(b, string.fmt_write_f64(b, 0, 42.0))
-    emit(b, string.fmt_write_f64(b, 0, -2.5))
-    emit(b, string.fmt_write_f64(b, 0, 0.0))
+    emit(b, fmt.fmt_write_u64(b, 0, umax))
+    emit(b, fmt.fmt_write_bool(b, 0, true))
+    emit(b, fmt.fmt_write_bool(b, 0, false))
+    emit(b, fmt.fmt_write_bytes(b, 0, "hello"))
+    emit(b, fmt.fmt_write_f64(b, 0, 0.1))
+    emit(b, fmt.fmt_write_f64(b, 0, 1.5))
+    emit(b, fmt.fmt_write_f64(b, 0, 42.0))
+    emit(b, fmt.fmt_write_f64(b, 0, -2.5))
+    emit(b, fmt.fmt_write_f64(b, 0, 0.0))
     one: f64 = 1.0
     zero: f64 = 0.0
-    emit(b, string.fmt_write_f64(b, 0, one / zero))
-    emit(b, string.fmt_write_f64(b, 0, zero / zero))
+    emit(b, fmt.fmt_write_f64(b, 0, one / zero))
+    emit(b, fmt.fmt_write_f64(b, 0, zero / zero))
     return 0
 }
 "#;
@@ -80,10 +79,10 @@ main: () -> i32 {
 fn slice_returning_extern_call_as_argument() {
     let src = r#"
 console := import("console")
-string := import("string")
+fmt := import("format")
 
 main: () -> i32 {
-    console.print(string.fmt_subslice("hello", 0, 4))
+    console.print(fmt.fmt_subslice("hello", 0, 4))
     console.println("")
     return 0
 }
@@ -121,7 +120,7 @@ main: () -> i32 {
 fn format_into_renders_primitives_and_braces() {
     let src = r#"
 console := import("console")
-string := import("string")
+fmt := import("format")
 
 main: () -> i32 {
     buf: u8[128] = []
@@ -129,10 +128,10 @@ main: () -> i32 {
     name: u8[] = "cube"
     ratio: f64 = 1.5
     flag: bool = true
-    written := string.format_into(buf[..], "{{{name}}} n={count} r={ratio} ok={flag}")
+    written := fmt.format_into(buf[..], "{{{name}}} n={count} r={ratio} ok={flag}")
     match written {
         Ok(n) -> {
-            console.print(string.fmt_subslice(buf[..], 0, n))
+            console.print(fmt.fmt_subslice(buf[..], 0, n))
             console.println("")
             return 0
         }
@@ -150,7 +149,7 @@ main: () -> i32 {
 fn format_into_undersized_buffer_is_untouched() {
     let src = r#"
 console := import("console")
-string := import("string")
+fmt := import("format")
 
 main: () -> i32 {
     buf: u8[4] = []
@@ -159,7 +158,7 @@ main: () -> i32 {
     buf[2] = 'c' as u8
     buf[3] = 'd' as u8
     x: i64 = 12345
-    written := string.format_into(buf[..], "value={x}")
+    written := fmt.format_into(buf[..], "value={x}")
     match written {
         Ok(_) -> {
             return 1
@@ -189,7 +188,7 @@ main: () -> i32 {
 fn format_into_evaluates_left_to_right_once() {
     let src = r#"
 console := import("console")
-string := import("string")
+fmt := import("format")
 
 counter: i64 = 0
 
@@ -205,10 +204,10 @@ init_counter: () {
 main: () -> i32 {
     init_counter()
     buf: u8[64] = []
-    written := string.format_into(buf[..], "{next()} {next()} {next()}")
+    written := fmt.format_into(buf[..], "{next()} {next()} {next()}")
     match written {
         Ok(n) -> {
-            console.print(string.fmt_subslice(buf[..], 0, n))
+            console.print(fmt.fmt_subslice(buf[..], 0, n))
             console.println("")
             return 0
         }
@@ -226,22 +225,22 @@ main: () -> i32 {
 fn format_into_calls_custom_format_impl() {
     let src = r#"
 console := import("console")
-string := import("string")
+fmt := import("format")
 
 struct Point { x: i64, y: i64 }
 
 impl Point {
     formatted_len: (self: Point*) -> Result<u64, FormatError> {
         ; "(x, y)" = x digits + y digits + 4 punctuation bytes
-        return Ok(string.fmt_len_i64(self.x) + string.fmt_len_i64(self.y) + 4)
+        return Ok(fmt.fmt_len_i64(self.x) + fmt.fmt_len_i64(self.y) + 4)
     }
     format_exact_into: (self: Point*, destination: u8[]) -> u64 {
         at: u64 = 0
         destination[at] = '(' as u8
-        at = string.fmt_write_i64(destination, at + 1, self.x)
+        at = fmt.fmt_write_i64(destination, at + 1, self.x)
         destination[at] = ',' as u8
         destination[at + 1] = ' ' as u8
-        at = string.fmt_write_i64(destination, at + 2, self.y)
+        at = fmt.fmt_write_i64(destination, at + 2, self.y)
         destination[at] = ')' as u8
         return at + 1
     }
@@ -250,10 +249,10 @@ impl Point {
 main: () -> i32 {
     buf: u8[64] = []
     p: Point = Point { .x = 3, .y = -14 }
-    written := string.format_into(buf[..], "p={p}")
+    written := fmt.format_into(buf[..], "p={p}")
     match written {
         Ok(n) -> {
-            console.print(string.fmt_subslice(buf[..], 0, n))
+            console.print(fmt.fmt_subslice(buf[..], 0, n))
             console.println("")
             return 0
         }
@@ -277,12 +276,12 @@ fn format_into_rejects_bad_templates() {
     ] {
         let src = format!(
             r#"
-string := import("string")
+fmt := import("format")
 
 main: () -> i32 {{
     buf: u8[8] = []
     x: i64 = 1
-    written := string.format_into(buf[..], {template})
+    written := fmt.format_into(buf[..], {template})
     return 0
 }}
 "#
@@ -303,24 +302,24 @@ main: () -> i32 {{
 #[test]
 fn format_runtime_lengths_agree_with_writes() {
     let src = r#"
-string := import("string")
+fmt := import("format")
 
 main: () -> i32 {
     buf: u8[64] = []
     b: u8[] = buf[..]
-    if string.fmt_write_i64(b, 0, -12345) != string.fmt_len_i64(-12345) { return 1 }
+    if fmt.fmt_write_i64(b, 0, -12345) != fmt.fmt_len_i64(-12345) { return 1 }
     umax: u64 = 0 - 1
-    if string.fmt_write_u64(b, 0, umax) != string.fmt_len_u64(umax) { return 2 }
-    if string.fmt_write_bool(b, 0, true) != string.fmt_len_bool(true) { return 3 }
-    if string.fmt_write_bool(b, 0, false) != string.fmt_len_bool(false) { return 4 }
-    if string.fmt_write_f64(b, 0, 0.1) != string.fmt_len_f64(0.1) { return 5 }
-    if string.fmt_write_f64(b, 0, -2.5) != string.fmt_len_f64(-2.5) { return 6 }
-    if string.fmt_write_bytes(b, 0, "abc") != string.fmt_len_str("abc") { return 7 }
+    if fmt.fmt_write_u64(b, 0, umax) != fmt.fmt_len_u64(umax) { return 2 }
+    if fmt.fmt_write_bool(b, 0, true) != fmt.fmt_len_bool(true) { return 3 }
+    if fmt.fmt_write_bool(b, 0, false) != fmt.fmt_len_bool(false) { return 4 }
+    if fmt.fmt_write_f64(b, 0, 0.1) != fmt.fmt_len_f64(0.1) { return 5 }
+    if fmt.fmt_write_f64(b, 0, -2.5) != fmt.fmt_len_f64(-2.5) { return 6 }
+    if fmt.fmt_write_bytes(b, 0, "abc") != fmt.fmt_len_str("abc") { return 7 }
     ; saturating accumulator: overflow is sticky and detectable
     big: u64 = 0 - 2
-    sat: u64 = string.fmt_len_add(big, 5)
-    if string.fmt_is_len_overflow(sat) == false { return 8 }
-    if string.fmt_is_len_overflow(string.fmt_len_add(3, 4)) { return 9 }
+    sat: u64 = fmt.fmt_len_add(big, 5)
+    if fmt.fmt_is_len_overflow(sat) == false { return 8 }
+    if fmt.fmt_is_len_overflow(fmt.fmt_len_add(3, 4)) { return 9 }
     return 0
 }
 "#;

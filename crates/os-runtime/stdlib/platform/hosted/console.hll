@@ -1,0 +1,13 @@
+; Syscall-backed stdout provider.
+
+sys := import("sys")
+
+export console_backend_write_byte: (c: u8) {
+	byte: u8[1] = []
+	byte[0] = c
+	sys.write(1, &byte[0], 1)
+}
+
+export console_backend_write_range: (data: u8*, len: u64) {
+	sys.write(1, data, len)
+}

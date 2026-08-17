@@ -9,7 +9,7 @@
 use asm_to_binary::AssembledOutput;
 use full_stack::compilation_pipeline::CompilationPipeline;
 use hll_to_ir::TargetMode;
-use hll_to_ir::stdlib::{get_stdlib_modules_for_mode, get_stdlib_type_prelude};
+use hll_to_ir::stdlib::get_stdlib_modules_for_mode;
 use virtual_machine::bus::ELF_LOAD_BASE;
 use virtual_machine::virtual_machine::VirtualMachine;
 
@@ -108,7 +108,6 @@ fn stdlib_provides_malloc() {
     pipeline.set_write_artifacts(false);
 
     // Compile each stdlib module independently; malloc lives in the allocator module.
-    pipeline.set_type_prelude(get_stdlib_type_prelude());
     let mut tokens = Vec::new();
     for (_, src) in get_stdlib_modules_for_mode(TargetMode::Hosted).iter() {
         let result = pipeline.compile(src).expect("stdlib compile");
@@ -197,7 +196,6 @@ fn stdlib_provides_runtime() {
     pipeline.set_write_artifacts(false);
 
     // Compile each stdlib module independently and gather their token streams.
-    pipeline.set_type_prelude(get_stdlib_type_prelude());
     let mut tokens = Vec::new();
     for (_, src) in get_stdlib_modules_for_mode(TargetMode::Hosted).iter() {
         let result = pipeline.compile(src).expect("stdlib compile");
@@ -213,14 +211,16 @@ fn stdlib_provides_runtime() {
             .any(|t| matches!(t, RvInstruction::Label(n) if n == name))
     };
     assert!(has("console_putchar"), "stdlib must define console_putchar");
-    assert!(has("print_int"), "stdlib must define print_int");
+    assert!(
+        has("console_print_int"),
+        "stdlib must define console_print_int"
+    );
     assert!(has("sys_exit"), "stdlib must define sys_exit");
     assert!(has("_start"), "stdlib must define _start");
 }
 
-// Verify console.writeln writes a null-terminated string plus newline.
 #[test]
-fn puts_basic() {
+fn writeln_basic() {
     let src = r#"
 console := import("console")
 
@@ -234,9 +234,8 @@ main: () -> i32 {
     assert_eq!(exit, Some(0));
 }
 
-// Verify print_int handles zero, positive, and negative values.
 #[test]
-fn print_int_basic() {
+fn console_print_int_basic() {
     let src = r#"
 console := import("console")
 

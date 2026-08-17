@@ -1,7 +1,7 @@
 // Each kernel module compiles in isolation, so `external` declarations resolve
 // at link time. Only a truly undefined identifier fails here.
 use full_stack::compilation_pipeline::{CompilationPipeline, TargetMode};
-use hll_to_ir::stdlib::{get_stdlib_modules_for_mode, get_stdlib_type_prelude};
+use hll_to_ir::stdlib::get_stdlib_modules_for_mode;
 use os_runtime::kernel;
 
 // Compile one kernel HLL source as a standalone module and assert it succeeds.
@@ -22,7 +22,6 @@ fn kernel_stdlib_all_modules_compile() {
     p.set_target_mode(TargetMode::Kernel);
     p.set_write_artifacts(false);
     p.set_string_prefix(Some("__kern_str_".to_owned()));
-    p.set_type_prelude(get_stdlib_type_prelude());
     p.compile_modules(&modules)
         .unwrap_or_else(|e| panic!("kernel stdlib modules failed to compile:\n{e}"));
 }
@@ -278,7 +277,6 @@ fn kernel_frames_stay_within_immediate_range() {
     p.set_write_artifacts(false);
     p.set_string_prefix(Some("__kern_str_".to_owned()));
 
-    p.set_type_prelude(get_stdlib_type_prelude());
     let mut sources: Vec<(&str, String)> = get_stdlib_modules_for_mode(TargetMode::Kernel)
         .iter()
         .map(|(n, s)| (*n, (*s).to_owned()))

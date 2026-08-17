@@ -29,7 +29,7 @@ use full_stack::compilation_pipeline::{CompilationPipeline, TargetMode};
 use full_stack::runconfig::{BuildRef, RunConfig, RunKind, run_config_from_manifest};
 use full_stack::session::{BuildOutcome, LiveMachine, MachineState, SessionEngine};
 use full_stack::workspace::{NativeFs, VPath};
-use hll_to_ir::stdlib::{get_stdlib_modules_for_mode, get_stdlib_type_prelude};
+use hll_to_ir::stdlib::get_stdlib_modules_for_mode;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -550,7 +550,6 @@ fn assemble_from_s_file(path: &str, mode: TargetMode) -> Result<AssembledOutput,
 fn compile_stdlib_objects(mode: TargetMode) -> Result<Vec<(String, AssembledOutput)>, CliError> {
     let mut pipeline = make_pipeline(mode, "_s_");
     pipeline.set_run_semantic_analysis(false);
-    pipeline.set_type_prelude(get_stdlib_type_prelude());
     if mode == TargetMode::Kernel {
         pipeline.set_string_prefix(Some("__kern_str_".to_owned()));
     }

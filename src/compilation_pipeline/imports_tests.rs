@@ -222,9 +222,8 @@ main: () -> i32 { return util.bump<i32>(1) }
     );
 }
 
-// The same rule covers the provider's own imports: the importer has no such alias.
 #[test]
-fn exported_generic_referencing_another_module_is_rejected() {
+fn exported_generic_retains_another_modules_function_interface() {
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     pipeline.set_module_resolver(Some(Box::new(move |name: &str| match name {
@@ -246,13 +245,65 @@ fn exported_generic_referencing_another_module_is_rejected() {
 util := import("util")
 main: () -> i32 { return util.bump<i32>(1) }
 "#;
-    let errors = pipeline
+    pipeline
         .compile(importer)
-        .expect_err("a generic body may not reach through the provider's own imports");
+        .expect("a generic body should retain its qualified imported call");
+}
+
+#[test]
+fn exported_generic_rejects_a_private_imported_member() {
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    pipeline.set_module_resolver(Some(Box::new(move |name: &str| match name {
+        "util" => Some(
+            "inner := import(\"inner\")
+             export bump: <T>(value: i32) -> i32 { return inner.step(value) }
+"
+            .to_owned(),
+        ),
+        "inner" => Some("step: (x: i32) -> i32 { return x + 1 }\n".to_owned()),
+        _ => None,
+    })));
+
+    let importer = r#"
+util := import("util")
+main: () -> i32 { return util.bump<i32>(1) }
+"#;
+    let error = pipeline
+        .compile(importer)
+        .expect_err("a private transitive member must remain inaccessible");
     assert!(
-        errors.to_string().contains("references `inner`"),
-        "unexpected diagnostics: {errors:?}"
+        error.to_string().contains("member `step`") && error.to_string().contains("private"),
+        "unexpected diagnostics: {error:?}"
     );
+}
+
+#[test]
+fn exported_generic_retains_another_modules_type_interface() {
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    pipeline.set_module_resolver(Some(Box::new(move |name: &str| match name {
+        "boxes" => Some(
+            "types := import(\"types\")
+             export unwrap: <T>(item: types.Box<T>) -> T { return item.value }
+"
+            .to_owned(),
+        ),
+        "types" => Some("export struct Box<T> { value: T }\n".to_owned()),
+        _ => None,
+    })));
+
+    let importer = r#"
+boxes := import("boxes")
+types := import("types")
+main: () -> i32 {
+    item: types.Box<i32> = { .value = 42 }
+    return boxes.unwrap<i32>(item) - 42
+}
+"#;
+    pipeline
+        .compile(importer)
+        .expect("an imported generic should retain qualified imported types");
 }
 
 // An exported generic keeps its bound: the importer checks it at specialization.
@@ -778,12 +829,12 @@ fn bundled_kernel_imports_resolve_and_extract_interfaces() {
         "trap_handler",
         "utilities",
         "checks",
-        "klog",
-        "mem",
-        "string_utils",
-        "memory_allocator",
-        "runtime",
-        "console",
+        "stdlib/platform/kernel/klog.hll",
+        "stdlib/core/mem.hll",
+        "stdlib/core/string.hll",
+        "stdlib/core/alloc.hll",
+        "stdlib/platform/baremetal/runtime.hll",
+        "stdlib/core/console.hll",
     ];
 
     for name in NAMES {

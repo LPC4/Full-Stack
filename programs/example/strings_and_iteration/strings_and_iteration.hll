@@ -33,7 +33,7 @@ main: () -> i32 {
 	if '\n' != 10 or '\t' != 9 { return 5 }
 
 	; .ptr exposes a raw u8* for a C-string style API.
-	console.puts("done".ptr)
+	console.writeln("done".ptr)
 
 	console.println("ok")
 	return 0

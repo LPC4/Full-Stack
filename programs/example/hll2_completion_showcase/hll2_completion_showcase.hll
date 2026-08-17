@@ -2,8 +2,9 @@
 ; vtables, impl members, associated items, interfaces, bounds, and modules.
 
 console := import("console")
-memory_allocator := import("memory_allocator")
-string := import("string")
+alloc := import("alloc")
+vec := import("vec")
+fmt := import("format")
 
 mathlib := import("./modules/mathlib.hll")
 
@@ -219,7 +220,7 @@ choose_binary: (multiply: bool) -> BinaryOp {
 ; deallocate/deinit. Containers use the same ABI without hiding disposal.
 showcase_heap: () -> i32 {
 	bytes: u8* = null
-	allocated := memory_allocator.allocate(8, 16)
+	allocated := alloc.allocate(8, 16)
 	match allocated {
 		Ok(ptr) -> { bytes = ptr }
 		Err(error) -> { return 42 }
@@ -227,24 +228,24 @@ showcase_heap: () -> i32 {
 	if (bytes as u64) % 16 != 0 { return 43 }
 	bytes[0] = 21
 
-	resized := memory_allocator.reallocate(bytes, 8, 32, 16)
+	resized := alloc.reallocate(bytes, 8, 32, 16)
 	match resized {
 		Ok(ptr) -> { bytes = ptr }
 		Err(error) -> { return 44 }
 	}
 	if bytes[0] != 21 { return 45 }
-	memory_allocator.deallocate(bytes, 32, 16)
+	alloc.deallocate(bytes, 32, 16)
 
-	values: Vec<i32> = { .ptr = null, .len = 0, .capacity = 0 }
-	Vec_init<i32>(&values)
-	pushed := Vec_push<i32>(&values, 42)
+	values: vec.Vec<i32> = { .ptr = null, .len = 0, .capacity = 0 }
+	vec.Vec_init<i32>(&values)
+	pushed := vec.Vec_push<i32>(&values, 42)
 	match pushed {
 		Ok(len) -> {}
 		Err(error) -> { return 46 }
 	}
-	slot: i32* = Vec_get<i32>(&values, 0)
+	slot: i32* = vec.Vec_get<i32>(&values, 0)
 	if slot == null or @slot != 42 { return 47 }
-	Vec_deinit<i32>(&values)
+	vec.Vec_deinit<i32>(&values)
 	return 0
 }
 
@@ -319,7 +320,7 @@ main: () -> i32 {
 
 	; --- Buffer-based string interpolation (never allocates) ---
 	fmt_buf: u8[32] = []
-	formatted := string.format_into(fmt_buf[..], "w={width} h={h}")
+	formatted := fmt.format_into(fmt_buf[..], "w={width} h={h}")
 	match formatted {
 		Ok(n) -> {
 			if n != 7 { return 48 }

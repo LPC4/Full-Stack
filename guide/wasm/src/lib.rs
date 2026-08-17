@@ -2,7 +2,7 @@
 
 use asm_to_binary::{AssembledOutput, Assembler, ObjectLinker, parse_asm_source};
 use hll_to_ir::imports::ModuleAlias;
-use hll_to_ir::{CompileConfig, HllCompiler, IrType, TargetMode};
+use hll_to_ir::{CompileConfig, HllCompiler, TargetMode};
 use ir_to_asm::CompilerRv64;
 use serde::Serialize;
 use std::cell::RefCell;
@@ -210,44 +210,87 @@ fn resolve_stdlib_imports(
 ) -> Result<(Option<String>, HashMap<String, ModuleAlias>), String> {
     let mut prelude = String::new();
     let mut aliases = HashMap::new();
+    let mut emitted = HashSet::new();
+    let mut visiting = Vec::new();
     for (alias, path) in hll_to_ir::imports::collect_module_imports(source)? {
-        let key = path.trim_end_matches(".hll");
-        let Some((module_name, module_source)) =
-            modules.iter().find(|(module_name, _)| *module_name == key)
-        else {
-            return Err(format!(
-                "HLL sandbox cannot resolve hosted standard-library module `{path}`"
-            ));
-        };
-        let exports = hll_to_ir::imports::collect_exports(module_source)?;
-        prelude.push_str(&hll_to_ir::imports::extract_interface(module_source)?);
-        aliases.insert(
-            alias.clone(),
-            ModuleAlias {
-                prefix: String::new(),
-                mangled: HashSet::new(),
-                namespaced: hll_to_ir::imports::collect_exported_interfaces(module_source)?,
-                member_aliases: module_member_aliases(&alias, module_name, &exports),
-                declared: hll_to_ir::imports::collect_declaration_names(module_source)?,
-                exports,
-            },
-        );
+        resolve_stdlib_import(
+            &alias,
+            &path,
+            modules,
+            &mut prelude,
+            &mut aliases,
+            &mut emitted,
+            &mut visiting,
+        )?;
     }
     Ok(((!prelude.is_empty()).then_some(prelude), aliases))
+}
+
+fn resolve_stdlib_import(
+    alias: &str,
+    path: &str,
+    modules: &[(&str, &str)],
+    prelude: &mut String,
+    aliases: &mut HashMap<String, ModuleAlias>,
+    emitted: &mut HashSet<String>,
+    visiting: &mut Vec<String>,
+) -> Result<(), String> {
+    let key = path.trim_end_matches(".hll");
+    let Some((module_name, module_source)) =
+        modules.iter().find(|(module_name, _)| *module_name == key)
+    else {
+        return Err(format!(
+            "HLL sandbox cannot resolve hosted standard-library module `{path}`"
+        ));
+    };
+    if visiting.iter().any(|name| name == module_name) {
+        visiting.push((*module_name).to_owned());
+        return Err(format!("cyclic import: {}", visiting.join(" -> ")));
+    }
+    visiting.push((*module_name).to_owned());
+    for (dependency_alias, dependency_path) in
+        hll_to_ir::imports::collect_interface_imports(module_source)?
+    {
+        resolve_stdlib_import(
+            &dependency_alias,
+            &dependency_path,
+            modules,
+            prelude,
+            aliases,
+            emitted,
+            visiting,
+        )?;
+    }
+    visiting.pop();
+
+    let exports = hll_to_ir::imports::collect_exports(module_source)?;
+    if emitted.insert((*module_name).to_owned()) {
+        prelude.push_str(&hll_to_ir::imports::extract_interface(module_source)?);
+    }
+    aliases.insert(
+        alias.to_owned(),
+        ModuleAlias {
+            prefix: String::new(),
+            mangled: HashSet::new(),
+            namespaced: hll_to_ir::imports::collect_exported_interfaces(module_source)?,
+            member_aliases: module_member_aliases(alias, module_name, &exports),
+            declared: hll_to_ir::imports::collect_declaration_names(module_source)?,
+            exports,
+        },
+    );
+    Ok(())
 }
 
 fn compile_hll_object(
     name: &str,
     source: &str,
     modules: &[(&str, &str)],
-    type_prelude: &[(String, IrType)],
 ) -> Result<(AssembledOutput, bool), String> {
     let (source_prelude, module_aliases) = resolve_stdlib_imports(source, modules)?;
     let compiler = HllCompiler::new(CompileConfig {
         target: TargetMode::Hosted,
         strict: true,
         string_prefix: Some(format!("__guide_{name}_str_")),
-        type_prelude: type_prelude.to_vec(),
         source_prelude,
         module_aliases,
         source_file: Some(name.to_owned()),
@@ -282,11 +325,10 @@ fn compile_hll_object(
 
 fn compile_hosted_stdlib() -> HostedResult {
     let modules = hll_to_ir::stdlib::get_stdlib_modules_for_mode(TargetMode::Hosted);
-    let type_prelude = hll_to_ir::stdlib::get_stdlib_type_prelude();
     modules
         .iter()
         .map(|(name, source)| {
-            compile_hll_object(name, source, &modules, &type_prelude)
+            compile_hll_object(name, source, &modules)
                 .map(|(object, _)| ((*name).to_owned(), object))
         })
         .collect()
@@ -308,8 +350,7 @@ pub fn run_hll(source: &str, max_steps: u64) -> Outcome {
         Err(error) => return Outcome::failed(error),
     };
     let modules = hll_to_ir::stdlib::get_stdlib_modules_for_mode(TargetMode::Hosted);
-    let type_prelude = hll_to_ir::stdlib::get_stdlib_type_prelude();
-    let (user, has_main) = match compile_hll_object(SNIPPET, source, &modules, &type_prelude) {
+    let (user, has_main) = match compile_hll_object(SNIPPET, source, &modules) {
         Ok(output) => output,
         Err(error) => return Outcome::failed(error),
     };

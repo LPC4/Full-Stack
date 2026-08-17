@@ -59,7 +59,7 @@ export schedule: (frame: layout.TrapFrame*, action: layout.SysAction) {
     }
 
     if current_process != null {
-        mem.memcpy((&current_process.frame) as u8*, frame as u8*, TF_BYTES)
+        mem.copy((&current_process.frame) as u8*, frame as u8*, TF_BYTES)
 
         match action {
             ExitSchedule -> {
@@ -86,7 +86,7 @@ export schedule: (frame: layout.TrapFrame*, action: layout.SysAction) {
     current_process = next
     ; Switch into the next process's address space before restoring its context.
     vmm.switch(next.page_root)
-    mem.memcpy(frame as u8*, (&next.frame) as u8*, TF_BYTES)
+    mem.copy(frame as u8*, (&next.frame) as u8*, TF_BYTES)
 }
 
 ; Record the process about to block on UART input so the RX interrupt can wake

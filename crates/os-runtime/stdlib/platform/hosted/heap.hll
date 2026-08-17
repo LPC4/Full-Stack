@@ -1,5 +1,5 @@
 ; Hosted raw memory source (U-mode only): grows the program break via the brk
-; syscall (214). The shared allocator in core/memory_allocator.hll sits on top.
+; syscall (214). The shared allocator in core/alloc.hll sits on top.
 
 ; Next free byte and the current break (mapped ceiling). 0 = uninitialised.
 heap_cur: u64 = 0

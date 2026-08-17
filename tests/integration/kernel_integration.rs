@@ -741,15 +741,15 @@ fn kernel_shell_exec_carries_global_initializers() {
 
     let child = compile_hosted(
         r#"
-external print_int: (value: i64) -> i32
+external console_print_int: (value: i64)
 external console_writeln: (str: u8*)
 g: i64 = 12345
 arr: i64[3] = [100, 200, 300]
 main: () -> i32 {
     console_writeln("SCALAR".ptr)
-    print_int(g)
+    console_print_int(g)
     console_writeln("ARRAY".ptr)
-    print_int(arr[0] + arr[1] + arr[2])
+    console_print_int(arr[0] + arr[1] + arr[2])
     return 0
 }
 "#,
@@ -1230,7 +1230,7 @@ fn inode_size_of(image: &[u8], name: &str) -> Option<u32> {
 #[test]
 fn editor_loads_clears_appends_writes_and_truncates() {
     let shell = compile_hosted_program("shell");
-    let editor = compile_hosted(user::EDIT);
+    let editor = compile_hosted_program("edit");
     let editor_exec = assembled_to_elf_file(&editor);
 
     let image = build_fs_image(&[
@@ -1332,12 +1332,12 @@ cat /doc.txt\nexit\n",
     );
 }
 
-// A child asleep in sc_readchar leaves the ready queue, so `waitpid` must use
+// A child asleep in sys_readchar leaves the ready queue, so `waitpid` must use
 // scheduler_pid_alive or it returns -1 and abandons a live child.
 #[test]
 fn editor_waits_while_idle_for_input() {
     let shell = compile_hosted_program("shell");
-    let editor_exec = assembled_to_elf_file(&compile_hosted(user::EDIT));
+    let editor_exec = assembled_to_elf_file(&compile_hosted_program("edit"));
 
     let image = build_fs_image(&[
         FsEntry::Dir { path: "/bin" },
@@ -1362,7 +1362,7 @@ fn editor_waits_while_idle_for_input() {
     );
 
     // Let it boot and launch the editor, then idle (spinning on
-    // sc_readchar/sc_yield under timer preemption) with no input available.
+    // sys_readchar/sys_yield under timer preemption) with no input available.
     let (_, boot_uart) = run_until(&mut vm, 60_000_000, |u| u.contains("edit: p=print"));
     let idle = vm.run(5_000_000);
     let uart1 = format!("{boot_uart}{}", idle.uart_output);
@@ -1967,11 +1967,11 @@ main: () -> i32 {
 fn kernel_shell_two_background_jobs_keep_distinct_slots() {
     let shell = compile_hosted_program("shell");
     let spin = r#"
-external sc_exit: (code: i64)
+external sys_exit: (code: i64)
 main: () -> i32 {
     i: u64 = 0
     while 1 == 1 { i = i + 1 }
-    sc_exit(0)
+    sys_exit(0)
     return 0
 }
 "#;
@@ -2026,11 +2026,11 @@ fn kernel_kill_background_job() {
     let shell = compile_hosted_program("shell");
     let spin = compile_hosted(
         r#"
-external sc_exit: (code: i64)
+external sys_exit: (code: i64)
 main: () -> i32 {
     i: u64 = 0
     while 1 == 1 { i = i + 1 }
-    sc_exit(0)
+    sys_exit(0)
     return 0
 }
 "#,
@@ -2079,11 +2079,11 @@ fn kernel_kill_by_jobid() {
     let shell = compile_hosted_program("shell");
     let spin = compile_hosted(
         r#"
-external sc_exit: (code: i64)
+external sys_exit: (code: i64)
 main: () -> i32 {
     i: u64 = 0
     while 1 == 1 { i = i + 1 }
-    sc_exit(0)
+    sys_exit(0)
     return 0
 }
 "#,
@@ -2130,10 +2130,10 @@ fn kernel_redirect_stdout_to_file() {
     let printer = compile_hosted(
         r#"
 external console_writeln: (str: u8*)
-external sc_exit: (code: i64)
+external sys_exit: (code: i64)
 main: () -> i32 {
     console_writeln("REDIRECT_OK".ptr)
-    sc_exit(0)
+    sys_exit(0)
     return 0
 }
 "#,
@@ -2176,10 +2176,10 @@ fn kernel_redirect_append() {
     let printer = compile_hosted(
         r#"
 external console_writeln: (str: u8*)
-external sc_exit: (code: i64)
+external sys_exit: (code: i64)
 main: () -> i32 {
     console_writeln("LINE".ptr)
-    sc_exit(0)
+    sys_exit(0)
     return 0
 }
 "#,
@@ -2222,18 +2222,18 @@ fn kernel_redirect_stdin_from_file() {
     let shell = compile_hosted_program("shell");
     let echo = compile_hosted(
         r#"
-external sc_readchar: () -> i64
+external sys_readchar: () -> i64
 external console_putchar: (c: i32)
-external sc_exit: (code: i64)
+external sys_exit: (code: i64)
 main: () -> i32 {
     while 1 == 1 {
-        c: i64 = sc_readchar()
+        c: i64 = sys_readchar()
         if c < 0 {
             break
         }
         console_putchar(c as i32)
     }
-    sc_exit(0)
+    sys_exit(0)
     return 0
 }
 "#,
@@ -2337,7 +2337,7 @@ fn kernel_echo_redirect_to_file() {
     );
 }
 
-// A builtin `cat <file> >> <dst>` appends through the shell sink via sc_lseek,
+// A builtin `cat <file> >> <dst>` appends through the shell sink via sys_lseek,
 // so two appends of one source must read back twice.
 #[test]
 fn kernel_cat_append_builtin() {
@@ -2380,10 +2380,10 @@ fn kernel_pipe_two_stage() {
     let producer = compile_hosted(
         r#"
 external console_writeln: (str: u8*)
-external sc_exit: (code: i64)
+external sys_exit: (code: i64)
 main: () -> i32 {
     console_writeln("PIPE_PAYLOAD".ptr)
-    sc_exit(0)
+    sys_exit(0)
     return 0
 }
 "#,
@@ -2391,18 +2391,18 @@ main: () -> i32 {
     // Copy stdin to stdout until EOF (-1): a transparent filter.
     let filter = compile_hosted(
         r#"
-external sc_readchar: () -> i64
+external sys_readchar: () -> i64
 external console_putchar: (c: i32)
-external sc_exit: (code: i64)
+external sys_exit: (code: i64)
 main: () -> i32 {
     while 1 == 1 {
-        c: i64 = sc_readchar()
+        c: i64 = sys_readchar()
         if c < 0 {
             break
         }
         console_putchar(c as i32)
     }
-    sc_exit(0)
+    sys_exit(0)
     return 0
 }
 "#,
@@ -2452,28 +2452,28 @@ fn kernel_pipe_to_file() {
     let producer = compile_hosted(
         r#"
 external console_writeln: (str: u8*)
-external sc_exit: (code: i64)
+external sys_exit: (code: i64)
 main: () -> i32 {
     console_writeln("VIA_PIPE".ptr)
-    sc_exit(0)
+    sys_exit(0)
     return 0
 }
 "#,
     );
     let filter = compile_hosted(
         r#"
-external sc_readchar: () -> i64
+external sys_readchar: () -> i64
 external console_putchar: (c: i32)
-external sc_exit: (code: i64)
+external sys_exit: (code: i64)
 main: () -> i32 {
     while 1 == 1 {
-        c: i64 = sc_readchar()
+        c: i64 = sys_readchar()
         if c < 0 {
             break
         }
         console_putchar(c as i32)
     }
-    sc_exit(0)
+    sys_exit(0)
     return 0
 }
 "#,
@@ -2525,18 +2525,18 @@ fn kernel_pipe_builtin_source() {
     let shell = compile_hosted_program("shell");
     let filter = compile_hosted(
         r#"
-external sc_readchar: () -> i64
+external sys_readchar: () -> i64
 external console_putchar: (c: i32)
-external sc_exit: (code: i64)
+external sys_exit: (code: i64)
 main: () -> i32 {
     while 1 == 1 {
-        c: i64 = sc_readchar()
+        c: i64 = sys_readchar()
         if c < 0 {
             break
         }
         console_putchar(c as i32)
     }
-    sc_exit(0)
+    sys_exit(0)
     return 0
 }
 "#,
@@ -2685,13 +2685,13 @@ fn kernel_shell_interrupt_wake_lists_running_background_job() {
     // sole runnable process while the shell is blocked waiting for a keystroke.
     let spinner = compile_hosted(
         r#"
-external sc_exit: (code: i64)
+external sys_exit: (code: i64)
 main: () -> i32 {
     i: u64 = 0
     while 1 == 1 {
         i = i + 1
     }
-    sc_exit(0)
+    sys_exit(0)
     return 0
 }
 "#,
@@ -2761,7 +2761,7 @@ fn kernel_shell_background_job_runs_and_fg_reaps_it() {
     let slow = compile_hosted(
         r#"
 external console_writeln: (str: u8*)
-external sc_exit: (code: i64)
+external sys_exit: (code: i64)
 spin: () {
     i: u64 = 0
     while i < 2000000 {
@@ -2771,7 +2771,7 @@ spin: () {
 main: () -> i32 {
     spin()
     console_writeln("SLOW_DONE".ptr)
-    sc_exit(7)
+    sys_exit(7)
     return 0
 }
 "#,
@@ -2838,25 +2838,25 @@ fn fork_child_runs_and_parent_reaps_exit_code() {
     let parent = compile_hosted(
         r#"
 external console_writeln: (str: u8*)
-external sc_fork: () -> i64
-external sc_wait: () -> i64
-external sc_exit: (code: i64)
+external sys_fork: () -> i64
+external sys_wait: () -> i64
+external sys_exit: (code: i64)
 
 main: () -> i32 {
-    pid: i64 = sc_fork()
+    pid: i64 = sys_fork()
     if pid == 0 {
         console_writeln("CHILD_RAN".ptr)
-        sc_exit(42)
+        sys_exit(42)
     }
 
     console_writeln("PARENT_FORKED".ptr)
-    code: i64 = sc_wait()
+    code: i64 = sys_wait()
     if code == 42 {
         console_writeln("PARENT_REAPED_42".ptr)
     } else {
         console_writeln("PARENT_REAPED_WRONG".ptr)
     }
-    sc_exit(0)
+    sys_exit(0)
     return 0
 }
 "#,
@@ -2903,10 +2903,10 @@ fn scheduler_timer_preempts_compute_bound_processes() {
     let parent = compile_hosted(
         r#"
 external console_writeln: (str: u8*)
-external sc_fork:  () -> i64
-external sc_wait:  () -> i64
-external sc_exit:  (code: i64)
-external sc_write: (fd: i64, buf: u8*, len: u64) -> i64
+external sys_fork:  () -> i64
+external sys_wait:  () -> i64
+external sys_exit:  (code: i64)
+external sys_write: (fd: i64, buf: u8*, len: u64) -> i64
 
 ; A compute-only delay long enough that the 1e6-cycle timer fires within it.
 spin: () {
@@ -2918,25 +2918,25 @@ spin: () {
 
 main: () -> i32 {
     console_writeln("SENTINEL_START".ptr)
-    pid: i64 = sc_fork()
+    pid: i64 = sys_fork()
     if pid == 0 {
         n: u64 = 0
         while n < 4 {
             spin()
-            sc_write(1, "B".ptr, 1)
+            sys_write(1, "B".ptr, 1)
             n = n + 1
         }
-        sc_exit(0)
+        sys_exit(0)
     }
     m: u64 = 0
     while m < 4 {
         spin()
-        sc_write(1, "A".ptr, 1)
+        sys_write(1, "A".ptr, 1)
         m = m + 1
     }
-    sc_wait()
+    sys_wait()
     console_writeln("SENTINEL_END".ptr)
-    sc_exit(0)
+    sys_exit(0)
     return 0
 }
 "#,
@@ -2988,23 +2988,23 @@ fn per_process_address_spaces_are_isolated() {
     let parent_src = format!(
         r#"
 external console_writeln: (str: u8*)
-external sc_exec: (path: u8[]) -> i64
-external sc_pidalive: (pid: u64) -> i64
-external sc_yield: ()
-external sc_exit: (code: i64)
+external sys_exec: (path: u8[]) -> i64
+external sys_pidalive: (pid: u64) -> i64
+external sys_yield: ()
+external sys_exit: (code: i64)
 
 main: () -> i32 {{
     p: u8* = {shared} as u8*
     @p = 0xAA as u8
     console_writeln("PARENT_WROTE".ptr)
 
-    pid: i64 = sc_exec("/child.elf")
+    pid: i64 = sys_exec("/child.elf")
     if pid < 0 {{
         console_writeln("PARENT_EXEC_FAIL".ptr)
-        sc_exit(1)
+        sys_exit(1)
     }}
-    while sc_pidalive(pid as u64) == 1 {{
-        sc_yield()
+    while sys_pidalive(pid as u64) == 1 {{
+        sys_yield()
     }}
 
     v: u8 = @p
@@ -3013,7 +3013,7 @@ main: () -> i32 {{
     }} else {{
         console_writeln("PARENT_FINAL_CORRUPT".ptr)
     }}
-    sc_exit(0)
+    sys_exit(0)
     return 0
 }}
 "#,
@@ -3074,12 +3074,12 @@ main: () -> i32 {{
 
 // User program that exercises the full FS API and prints FS_ALL_PASS on success.
 const FS_EXERCISER: &str = r#"
-external sc_open:   (path: u8[], flags: u64) -> i64
-external sc_close:  (fd: i64)
-external sc_read:   (fd: i64, buf: u8*, offset: u64, len: u64) -> i64
-external sc_write:  (fd: i64, buf: u8*, len: u64) -> i64
-external sc_mkdir:  (path: u8[]) -> i64
-external sc_rename: (old_path: u8[], new_path: u8[]) -> i64
+external sys_open:   (path: u8[], flags: u64) -> i64
+external sys_close:  (fd: i64)
+external sys_read:   (fd: i64, buf: u8*, offset: u64, len: u64) -> i64
+external sys_write:  (fd: i64, buf: u8*, len: u64) -> i64
+external sys_mkdir:  (path: u8[]) -> i64
+external sys_rename: (old_path: u8[], new_path: u8[]) -> i64
 
 fail: (label: u8*) -> i32 {
     console_write("FS_FAIL: ".ptr)
@@ -3102,39 +3102,39 @@ main: () -> i32 {
     buf: u8[64] = []
 
     ; 1. Read a pre-populated file.
-    fd: i64 = sc_open("/hello.txt", 0)
+    fd: i64 = sys_open("/hello.txt", 0)
     if fd < 2 { return fail("open hello".ptr) }
-    n: i64 = sc_read(fd, &buf[0], 0, 13)
+    n: i64 = sys_read(fd, &buf[0], 0, 13)
     if n != 13 { return fail("read hello count".ptr) }
     if bytes_eq(&buf[0], "hello from fs".ptr, 13) == 0 { return fail("read hello data".ptr) }
-    sc_close(fd)
+    sys_close(fd)
 
     ; 2. Create a directory.
-    if sc_mkdir("/out") < 0 { return fail("mkdir out".ptr) }
+    if sys_mkdir("/out") < 0 { return fail("mkdir out".ptr) }
 
     ; 3. Create a file in it and write to it.
-    wfd: i64 = sc_open("/out/result.txt", 2)
+    wfd: i64 = sys_open("/out/result.txt", 2)
     if wfd < 2 { return fail("create result".ptr) }
-    w: i64 = sc_write(wfd, "data123".ptr, 7)
+    w: i64 = sys_write(wfd, "data123".ptr, 7)
     if w != 7 { return fail("write count".ptr) }
-    sc_close(wfd)
+    sys_close(wfd)
 
     ; 4. Re-open and read back the written contents.
-    rfd: i64 = sc_open("/out/result.txt", 0)
+    rfd: i64 = sys_open("/out/result.txt", 0)
     if rfd < 2 { return fail("reopen result".ptr) }
-    rn: i64 = sc_read(rfd, &buf[0], 0, 7)
+    rn: i64 = sys_read(rfd, &buf[0], 0, 7)
     if rn != 7 { return fail("readback count".ptr) }
     if bytes_eq(&buf[0], "data123".ptr, 7) == 0 { return fail("readback data".ptr) }
-    sc_close(rfd)
+    sys_close(rfd)
 
     ; 5. Rename within the directory; old name must disappear.
-    if sc_rename("/out/result.txt", "/out/final.txt") != 0 {
+    if sys_rename("/out/result.txt", "/out/final.txt") != 0 {
         return fail("rename".ptr)
     }
-    ffd: i64 = sc_open("/out/final.txt", 0)
+    ffd: i64 = sys_open("/out/final.txt", 0)
     if ffd < 2 { return fail("open final".ptr) }
-    sc_close(ffd)
-    gone: i64 = sc_open("/out/result.txt", 0)
+    sys_close(ffd)
+    gone: i64 = sys_open("/out/result.txt", 0)
     if gone >= 0 { return fail("old name still present".ptr) }
 
     console_writeln("FS_ALL_PASS".ptr)

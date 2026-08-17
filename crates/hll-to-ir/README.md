@@ -81,6 +81,7 @@ Copy propagation and leaf-function inlining are planned but not yet implemented.
 
 The HLL stdlib sources are not stored in this crate. They live in `os-runtime`
 (`crates/os-runtime/stdlib` and `crates/os-runtime/kernel`) and are pulled in as
-compile-time string constants. `stdlib.rs` defines the per-mode link order and the
-shared type prelude (`Str`, `HeapBlock`). Each module is compiled independently so
-that `.ir`, `.s`, and `.o` artifacts exist per source file rather than as one bundle.
+compile-time string constants. `stdlib/stdlib.build` assigns target-facing logical
+names to canonical repository-relative source IDs, and `stdlib.rs` composes the
+per-mode module order. Each module is compiled independently so that `.ir`, `.s`,
+and `.o` artifacts exist per source file rather than as one bundle.

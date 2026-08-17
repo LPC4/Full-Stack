@@ -1,0 +1,63 @@
+; Slice-based byte string operations.
+
+alloc := import("alloc")
+
+export string_len: (text: u8[]) -> u64 {
+	return text.len
+}
+
+export string_is_empty: (text: u8[]) -> bool {
+	return text.len == 0
+}
+
+export string_equals: (lhs: u8[], rhs: u8[]) -> bool {
+	if lhs.len != rhs.len { return false }
+	for i in 0..lhs.len {
+		if lhs[i] != rhs[i] { return false }
+	}
+	return true
+}
+
+export string_copy: (src: u8[]) -> u8[] {
+	data: u8* = alloc.malloc(src.len)
+	for i in 0..src.len {
+		data[i] = src[i]
+	}
+	return { .ptr = data, .len = src.len }
+}
+
+export string_concat: (left: u8[], right: u8[]) -> u8[] {
+	total: u64 = left.len + right.len
+	data: u8* = alloc.malloc(total)
+	for i in 0..left.len {
+		data[i] = left[i]
+	}
+	for j in 0..right.len {
+		data[left.len + j] = right[j]
+	}
+	return { .ptr = data, .len = total }
+}
+
+export string_find: (haystack: u8[], needle: u8[]) -> i64 {
+	if needle.len == 0 { return 0 }
+	if needle.len > haystack.len { return -1 }
+	i: u64 = 0
+	while i <= haystack.len - needle.len {
+		matched: bool = true
+		j: u64 = 0
+		while j < needle.len {
+			if haystack[i + j] != needle[j] {
+				matched = false
+				break
+			}
+			j += 1
+		}
+		if matched { return i as i64 }
+		i += 1
+	}
+	return -1
+}
+
+export string_contains: (haystack: u8[], needle: u8[]) -> bool {
+	return string_find(haystack, needle) >= 0
+}

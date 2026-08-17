@@ -64,27 +64,12 @@ fn collect_sources(dir: &Path, manifest_dir: &Path, out: &mut Vec<Source>) {
 }
 
 fn source_key(rel: &Path) -> String {
-    let components: Vec<String> = rel
-        .components()
-        .map(|component| component.as_os_str().to_string_lossy().into_owned())
-        .collect();
     let stem = rel
         .file_stem()
         .and_then(|stem| stem.to_str())
         .expect("hll stem");
-
-    if components == ["stdlib", "hosted", "console.hll"] {
-        "console_hosted".to_owned()
-    } else if components == ["stdlib", "hosted", "cstr.hll"] {
-        "cstr_hosted".to_owned()
-    } else if components == ["stdlib", "hosted", "heap_source.hll"] {
-        "heap_source_hosted".to_owned()
-    } else if components == ["stdlib", "hosted", "runtime.hll"] {
-        "runtime_hosted".to_owned()
-    } else if components == ["stdlib", "hosted", "sys.hll"] {
-        "sys_hosted".to_owned()
-    } else if components == ["kernel", "core", "entry.hll"] {
-        "kernel_entry".to_owned()
+    if rel.starts_with("stdlib") {
+        rel.to_string_lossy().replace('\\', "/")
     } else {
         stem.to_owned()
     }

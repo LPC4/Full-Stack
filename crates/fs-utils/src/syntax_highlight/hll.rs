@@ -398,7 +398,7 @@ fn collect_symbols(code: &str) -> HllSymbols {
     }
 
     let mut symbols = HllSymbols {
-        nominal_types: ["Option", "Result", "Str"]
+        nominal_types: ["Option", "Result"]
             .into_iter()
             .map(str::to_owned)
             .collect::<HashSet<_>>(),

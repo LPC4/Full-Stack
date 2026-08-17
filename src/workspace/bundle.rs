@@ -280,7 +280,7 @@ mod tests {
             "crates/os-runtime/boot/startup.s",
             "crates/os-runtime/boot/trap.s",
             "crates/os-runtime/stdlib/stdlib.build",
-            "crates/os-runtime/stdlib/core/text.hll",
+            "programs/user/lib/text.hll",
             "programs/user/bin/shell/shell.build",
             "programs/user/bin/shell/shell.hll",
             "programs/example/core_basics/core_basics.hll",
