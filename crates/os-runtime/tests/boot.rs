@@ -59,9 +59,10 @@ fn append_import(
     let key = module_key(path);
     let module =
         bundled_module_source(&key).unwrap_or_else(|| panic!("missing bundled module `{key}`"));
-    if visiting.contains(&key) {
-        panic!("cyclic bundled import through `{key}`");
-    }
+    assert!(
+        !visiting.contains(&key),
+        "cyclic bundled import through `{key}`"
+    );
     if !emitted.contains(&key) {
         visiting.push(key.clone());
         for (dependency_alias, dependency_path) in
