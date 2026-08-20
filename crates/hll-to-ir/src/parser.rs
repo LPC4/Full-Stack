@@ -813,7 +813,7 @@ impl<'a> Parser<'a> {
 
         while !self.check_rbrace() && !self.is_eof() {
             if matches!(self.peek(), Some(Token::StatementTerminator)) {
-                let source = self.spans[self.pos].source_line.trim().to_owned();
+                let source = Self::normalize_asm_line(&self.spans[self.pos].source_line);
                 self.advance();
                 if !source.is_empty() {
                     lines.push(source);
@@ -823,8 +823,110 @@ impl<'a> Parser<'a> {
             }
         }
 
+        // The loop does not capture a one-line block before reaching `}`.
+        if !self.is_eof() {
+            let source = Self::normalize_asm_line(&self.spans[self.pos].source_line);
+            if !source.is_empty() {
+                lines.push(source);
+            }
+        }
+
         self.expect_rbrace()?;
-        Ok(Statement::AsmBlock { lines })
+        Ok(Statement::AsmBlock {
+            ops: self.parse_asm_ops(lines)?,
+        })
+    }
+
+    // Strip the wrapper carried by opening and one-line asm source lines.
+    fn normalize_asm_line(line: &str) -> String {
+        let mut s = line;
+        if let Some(idx) = s.find('{') {
+            s = &s[idx + 1..];
+        }
+        if let Some(idx) = s.rfind('}') {
+            s = &s[..idx];
+        }
+        s.trim().to_owned()
+    }
+
+    // Parse the three typed bridge forms; keep every other line raw.
+    fn parse_asm_ops(&mut self, lines: Vec<String>) -> Result<Vec<crate::ast::AsmOp>, ParserError> {
+        use crate::ast::AsmOp;
+        let mut ops = Vec::with_capacity(lines.len());
+        for line in lines {
+            let code = line
+                .split_once(';')
+                .map_or(line.as_str(), |(code, _)| code)
+                .trim();
+            let (opcode, operands) = code
+                .split_once(char::is_whitespace)
+                .map_or((code, ""), |(opcode, operands)| (opcode, operands.trim()));
+            let operands = operands.split(',').map(str::trim).collect::<Vec<_>>();
+            match (opcode, operands.as_slice()) {
+                ("mv", [op1, op2]) => {
+                    if let Some(place) = Self::parse_asm_place(op2) {
+                        if op1.starts_with('$') {
+                            return Err(self.error(
+                                "asm bridge `mv` cannot move between two `$place` operands",
+                            ));
+                        }
+                        ops.push(AsmOp::Load {
+                            reg: (*op1).to_owned(),
+                            place,
+                        });
+                    } else if op1.starts_with('$') {
+                        let Some(place) = Self::parse_asm_place(op1) else {
+                            return Err(self.error("invalid inline-asm `$place` operand"));
+                        };
+                        ops.push(AsmOp::Store {
+                            place,
+                            reg: (*op2).to_owned(),
+                        });
+                    } else {
+                        ops.push(AsmOp::Raw(line.clone()));
+                    }
+                }
+                ("la", [reg, operand]) if operand.starts_with('$') => {
+                    let Some(place) = Self::parse_asm_place(operand) else {
+                        return Err(self.error("invalid inline-asm `$place` operand"));
+                    };
+                    ops.push(AsmOp::Addr {
+                        reg: (*reg).to_owned(),
+                        place,
+                    });
+                }
+                _ => ops.push(AsmOp::Raw(line)),
+            }
+        }
+        Ok(ops)
+    }
+
+    fn parse_asm_place(operand: &str) -> Option<crate::ast::AsmPlace> {
+        let path = operand.strip_prefix('$')?;
+        let mut segments = path.split('.');
+        let base = segments.next()?;
+        if !Self::valid_asm_place_segment(base) {
+            return None;
+        }
+        let fields = segments.map(str::to_owned).collect::<Vec<_>>();
+        if fields
+            .iter()
+            .any(|field| !Self::valid_asm_place_segment(field))
+        {
+            return None;
+        }
+        Some(crate::ast::AsmPlace {
+            base: base.to_owned(),
+            fields,
+        })
+    }
+
+    fn valid_asm_place_segment(segment: &str) -> bool {
+        let mut chars = segment.chars();
+        chars
+            .next()
+            .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
+            && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
     }
 
     fn parse_assignment(&mut self) -> Result<Expression, ParserError> {
@@ -1333,14 +1435,7 @@ impl<'a> Parser<'a> {
 
                 let type_arguments = type_arguments.unwrap_or_default();
 
-                if name == "asm_reg" {
-                    if !type_arguments.is_empty() {
-                        return Err(self.error("asm_reg does not accept type arguments"));
-                    }
-                    let reg = self.expect_ident()?;
-                    self.expect_rparen()?;
-                    expr = Expression::Primary(PrimaryExpr::AsmReg { reg });
-                } else if let Some(target_ty) = self.parse_type_name_as_cast(&name) {
+                if let Some(target_ty) = self.parse_type_name_as_cast(&name) {
                     if !type_arguments.is_empty() {
                         return Err(self.error("type casts do not accept type arguments"));
                     }

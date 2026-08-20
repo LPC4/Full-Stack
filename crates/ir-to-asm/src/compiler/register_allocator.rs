@@ -197,7 +197,7 @@ mod tests {
         let mut block = IrBlock::new("entry");
         block.push_instruction(lit_math("a", 1, 2));
         block.push_instruction(IrInstruction::InlineAsm {
-            lines: vec!["nop".to_owned()],
+            ops: vec![hll_to_ir::IrAsmOp::Raw("nop".to_owned())],
         });
         block.set_terminator(IrTerminator::Return(Some(IrValue::Register(reg("a")))));
         func.push_block(block);

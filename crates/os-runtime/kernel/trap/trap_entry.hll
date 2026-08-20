@@ -85,6 +85,8 @@ export _s_trap_host: () {
         ld   t0, 256(sp)
         csrw sepc, t0
         ld   t0, 280(sp)
+        ; Keep SIE clear until sret restores it from SPIE.
+        andi t0, t0, -3
         csrw sstatus, t0
 
         ; Restore GPRs (x2/sp last so the frame stays valid until the end).
@@ -154,6 +156,7 @@ export trap_init: () {
 ; Read sscratch into *out.
 export sscratch_get_to: (out: u64*) {
     asm {
+        mv   a0, $out
         csrr t0, sscratch
         sd   t0, 0(a0)
     }
@@ -161,5 +164,8 @@ export sscratch_get_to: (out: u64*) {
 
 ; Write sscratch CSR.
 export sscratch_set: (val: u64) {
-    asm { csrw sscratch, a0 }
+    asm {
+        mv a0, $val
+        csrw sscratch, a0
+    }
 }

@@ -37,13 +37,12 @@ pub struct FunctionContext {
     reg_slots: HashMap<IrRegister, usize>,
     // Vregs promoted by register allocation; these have no stack slot.
     phys_regs: HashMap<IrRegister, Reg>,
-    param_indices: HashMap<IrRegister, usize>,
     reg_types: HashMap<IrRegister, IrType>,
     // Registers whose value is the address of their own stack slot.
     stack_address_regs: HashSet<IrRegister>,
     label_map: HashMap<IrLabel, String>,
-    // When true, incoming parameters may be read directly from a0-a7 / fa0-fa7.
-    preserve_param_registers: bool,
+    // Bridge expansions save their temporary here so authored registers survive.
+    asm_scratch_slots: Option<[usize; 2]>,
     // When true, skip the s0 frame pointer; locals are addressed via sp.
     omit_frame_pointer: bool,
 }
@@ -55,11 +54,10 @@ impl FunctionContext {
             type_aliases: type_aliases.clone(),
             reg_slots: HashMap::new(),
             phys_regs: HashMap::new(),
-            param_indices: HashMap::new(),
             reg_types: HashMap::new(),
             stack_address_regs: HashSet::new(),
             label_map: HashMap::new(),
-            preserve_param_registers: false,
+            asm_scratch_slots: None,
             omit_frame_pointer: false,
         }
     }
@@ -143,21 +141,12 @@ impl FunctionContext {
         self.phys_regs.get(reg).copied()
     }
 
-    /// Record the ABI argument index for a function parameter register.
-    pub fn set_param_index(&mut self, reg: &IrRegister, index: usize) {
-        self.param_indices.insert(reg.clone(), index);
+    pub fn set_asm_scratch_slots(&mut self, slots: [usize; 2]) {
+        self.asm_scratch_slots = Some(slots);
     }
 
-    pub fn param_index(&self, reg: &IrRegister) -> Option<usize> {
-        self.param_indices.get(reg).copied()
-    }
-
-    pub fn set_preserve_param_registers(&mut self, preserve: bool) {
-        self.preserve_param_registers = preserve;
-    }
-
-    pub fn preserve_param_registers(&self) -> bool {
-        self.preserve_param_registers
+    pub fn asm_scratch_slots(&self) -> Option<[usize; 2]> {
+        self.asm_scratch_slots
     }
 
     pub fn set_omit_frame_pointer(&mut self, omit: bool) {
@@ -270,42 +259,6 @@ impl FunctionContext {
             1,
             None,
             Some("--- End Parameter Spills ---"),
-        );
-    }
-
-    /// Emit spills for inline-asm-only functions. The first eight parameters
-    /// stay in their arrival registers; only stack-passed args are spilled.
-    pub fn emit_parameter_spills_for_inline_asm(
-        &self,
-        backend: &mut impl Rv64Backend,
-        func: &IrFunction,
-    ) {
-        self.emit_parameter_spills_from_index(
-            backend,
-            func,
-            8,
-            0,
-            Some("--- Function Parameter Spills (asm-only) ---"),
-            None,
-        );
-    }
-
-    /// Emit spills for inline-asm-only functions that also use the hidden sret pointer.
-    pub fn emit_parameter_spills_with_sret_for_inline_asm(
-        &self,
-        backend: &mut impl Rv64Backend,
-        func: &IrFunction,
-        sret_slot: usize,
-    ) {
-        backend.emit_comment("--- Function Parameter Spills (with sret, asm-only) ---");
-        self.emit_sret_save(backend, sret_slot);
-        self.emit_parameter_spills_from_index(
-            backend,
-            func,
-            7,
-            1,
-            Some("--- End Parameter Spills ---"),
-            None,
         );
     }
 

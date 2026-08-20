@@ -64,8 +64,8 @@ contain dots and angle-bracketed monomorphization components because those chara
 collide with HLL source identifiers.
 
 String contents use C-style escapes for backslash, quote, newline, tab, and carriage return.
-Inline assembly strings escape backslash and quote. Source-line markers are internal metadata and
-do not appear in the canonical textual dump.
+Raw inline-assembly operations use the same escaping. Source-line markers are internal metadata
+and do not appear in the canonical textual dump.
 
 Generated comments retain useful source information that instructions cannot express directly.
 In particular, `; local var: name` and `; inferred local var: name` mark HLL bindings before their
@@ -177,7 +177,6 @@ terminator.
 | Index | `$dest = index T $base, index` | Add `index * sizeof(T)` and return `T*`. |
 | Offset | `$dest = offset T $base, bytes` | Add an unscaled byte count and return `T*`. |
 | Global address | `$dest = global_ref name` | Load a global variable's address. |
-| ABI register | `$dest = read_reg reg` | Read an allowed ABI register as `i64`. |
 
 An omitted allocation count means one element. Stack counts are compile-time unsigned integers;
 heap counts may also be virtual registers.
@@ -266,12 +265,21 @@ The HLL front end does not yet emit organic phi nodes. Mutable locals remain in 
 ### 5.7 Inline assembly
 
 ```text
-inline_asm { "mv a0, s1"; "ecall"; }
+inline_asm { mv a0, $fd; raw "ecall"; mv $result, a0; }
+inline_asm { la a1, $request + 16; mv a0, &global; }
 ```
 
-Lines are emitted verbatim after string unescaping. Only ABI-stable registers (`sp`, `fp`, `ra`,
-`a0` through `a7`, and `s1` through `s11`) may appear. Labels and branches must remain inside the
-block.
+`raw` operations are emitted verbatim after string unescaping. A structured `mv` loads from or
+stores to a resolved HLL place; `la` materializes its address. A local place prints as its stack
+allocation register, a global as `&symbol`, and a nonzero static field offset as `+ bytes`. The
+in-memory IR also carries the place type so lowering selects the correct byte, halfword, word, or
+doubleword operation.
+
+Bridge registers are integer registers. Lowering expands each operation at its exact position and
+preserves every unrelated hardware register, using reserved frame scratch slots when an address
+cannot be formed directly. Any function containing inline assembly remains stack-slot allocated
+because raw operations may clobber arbitrary registers. Raw labels and branches must remain inside
+their block.
 
 ## 6. Terminators
 
@@ -393,7 +401,6 @@ store           = "store" type value "," register [ "+" integer ];
 index           = register "=" "index" type register "," value;
 offset          = register "=" "offset" type register "," value;
 global_ref      = register "=" "global_ref" identifier;
-read_reg        = register "=" "read_reg" abi_reg;
 
 binary_op       = "add" | "sub" | "mul" | "div" | "sdiv" | "udiv"
                 | "mod" | "umod" | "shl" | "shr" | "and" | "or" | "xor";
@@ -413,19 +420,18 @@ indirect_call   = [ register "=" ] "indirect_call" value
 function_addr   = register "=" "function_addr" identifier;
 phi_arm         = "[" value "," label "]";
 phi             = register "=" "phi" type phi_arm { "," phi_arm };
-inline_asm      = "inline_asm" "{" { string ";" } "}";
+asm_place       = ( register | "&" identifier ) [ "+" integer ];
+integer_reg     = identifier;
+asm_op          = "raw" string
+                | "mv" integer_reg "," asm_place
+                | "mv" asm_place "," integer_reg
+                | "la" integer_reg "," asm_place;
+inline_asm      = "inline_asm" "{" { asm_op ";" } "}";
 comment         = ";" { any_char_except_newline };
 
 instruction     = stack_alloc | heap_alloc | heap_free | load | store | index | offset
-                | global_ref | read_reg | binary | unary | compare | cast | call
+                | global_ref | binary | unary | compare | cast | call
                 | indirect_call | function_addr | phi | inline_asm | comment;
-```
-
-```ebnf
-abi_reg         = "sp" | "fp" | "ra"
-                | "a0" | "a1" | "a2" | "a3" | "a4" | "a5" | "a6" | "a7"
-                | "s1" | "s2" | "s3" | "s4" | "s5" | "s6"
-                | "s7" | "s8" | "s9" | "s10" | "s11";
 ```
 
 ### 8.5 Terminators

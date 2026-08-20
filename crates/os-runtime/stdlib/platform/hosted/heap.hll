@@ -5,23 +5,17 @@
 heap_cur: u64 = 0
 heap_top: u64 = 0
 
-; brk argument/return scratch (inline asm cannot reach locals).
-_brk_a0:  u64 = 0
-_brk_ret: u64 = 0
-
 ; brk(addr): move the program break to `addr` (0 queries it). Returns `addr` on
 ; success, the unchanged break on failure. Syscall 214.
 export heap_brk: (addr: u64) -> u64 {
-	_brk_a0 = addr
+	result: u64 = 0
 	asm {
-		la t0, _brk_a0
-		ld a0, 0(t0)
+		mv a0, $addr
 		li a7, 214
 		ecall
-		la t0, _brk_ret
-		sd a0, 0(t0)
+		mv $result, a0
 	}
-	return _brk_ret
+	return result
 }
 
 ; No-op: the hosted source always grows via brk. Present so both heap_source

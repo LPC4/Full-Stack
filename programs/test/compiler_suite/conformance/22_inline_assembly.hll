@@ -1,10 +1,39 @@
+bridge_global: i64 = 0
+
+asm_add: (left: i64, right: i64) -> i64 {
+    result: i64 = 0
+    asm {
+        mv a0, $left
+        mv a1, $right
+        add a0, a0, a1
+        mv $result, a0
+    }
+    return result
+}
+
 main: () -> i32 {
-    before: i64 = asm_reg(sp)
+    before: i64 = 0
+    after: i64 = 0
+    asm { mv $before, sp }
     asm {
         addi sp, sp, 0
     }
-    after: i64 = asm_reg(sp)
+    asm { mv $after, sp }
     if before <= 0 { return 1 }
     if after != before { return 2 }
+    value: i64 = asm_add(12, 30)
+    scratch: i64 = 0
+    asm {
+        li t0, 9
+        mv a0, $value
+        mv $bridge_global, a0
+        la a1, $bridge_global
+        ld a2, 0(a1)
+        mv $value, a2
+        mv $scratch, t0
+    }
+    if bridge_global != 42 { return 3 }
+    if value != 42 { return 4 }
+    if scratch != 9 { return 5 }
     return 42
 }

@@ -313,11 +313,11 @@ fn kernel_boot_no_user_binary() {
         other => panic!("expected clean shutdown, got {other:?}; uart={uart:?}"),
     }
     assert!(
-        uart.contains("[ PROC ] no user binary present"),
+        uart.contains("[ WARN ] no user binary present"),
         "expected user binary skip; uart={uart:?}"
     );
     assert!(
-        uart.contains("[ VMM ] sv39 enabled\n"),
+        uart.contains("[  OK  ] sv39 enabled\n"),
         "expected MMU enable; uart={uart:?}"
     );
 }
@@ -3562,18 +3562,13 @@ fn fs_inspector_reads_tree_and_preview() {
 // --- FS layout / symbol checks (no VM needed) ---
 
 #[test]
-fn kernel_fs_user_globals_in_mapped_range() {
+fn hosted_syscall_wrappers_have_no_shared_scratch_globals() {
     let assembled = compile_hosted(FS_EXERCISER);
-    let flat = assembled.to_flat_binary();
-    let padded = (flat.len().div_ceil(4096) * 4096) as u64;
 
     for sym in &["_a0", "_a1", "_a2", "_a3", "_ret"] {
-        let off = assembled
-            .symbol_address(sym)
-            .unwrap_or_else(|| panic!("symbol '{sym}' missing from user binary"));
         assert!(
-            off + 8 <= padded,
-            "global '{sym}' at offset {off:#x} extends past mapped region end {padded:#x}"
+            !assembled.has_symbol(sym),
+            "obsolete shared syscall scratch global '{sym}' remains in the user binary"
         );
     }
 }

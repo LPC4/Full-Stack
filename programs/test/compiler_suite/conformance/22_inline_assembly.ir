@@ -1,26 +1,69 @@
+global bridge_global: i64 = zero
+
+define asm_add($left: i64, $right: i64) -> i64 {
+entry:
+    $left_ptr = stack_alloc i64
+    store i64 $left, $left_ptr
+    $right_ptr = stack_alloc i64
+    store i64 $right, $right_ptr
+    ; local var: result
+    $result = stack_alloc i64
+    store i64 0, $result
+    inline_asm { mv a0, $left_ptr; mv a1, $right_ptr; raw "add a0, a0, a1"; mv $result, a0; }
+    $0 = load i64, $result
+    ret $0
+}
+
 define main() -> i32 {
 entry:
     ; local var: before
     $before = stack_alloc i64
-    $0 = read_reg sp
-    store i64 $0, $before
-    inline_asm { "addi sp, sp, 0"; }
+    store i64 0, $before
     ; local var: after
     $after = stack_alloc i64
-    $1 = read_reg sp
-    store i64 $1, $after
-    $2 = load i64, $before
-    $3 = cmp sle i64 $2, 0
-    branch $3 ? if_then_0 : if_merge_2
+    store i64 0, $after
+    inline_asm { mv $before, sp; }
+    inline_asm { raw "addi sp, sp, 0"; }
+    inline_asm { mv $after, sp; }
+    $0 = load i64, $before
+    $1 = cmp sle i64 $0, 0
+    branch $1 ? if_then_0 : if_merge_2
 if_then_0:
     ret 1
 if_merge_2:
-    $4 = load i64, $after
-    $5 = load i64, $before
-    $6 = cmp ne i64 $4, $5
-    branch $6 ? if_then_3 : if_merge_5
+    $2 = load i64, $after
+    $3 = load i64, $before
+    $4 = cmp ne i64 $2, $3
+    branch $4 ? if_then_3 : if_merge_5
 if_then_3:
     ret 2
 if_merge_5:
+    ; local var: value
+    $value = stack_alloc i64
+    $5 = call asm_add(12, 30)
+    store i64 $5, $value
+    ; local var: scratch
+    $scratch = stack_alloc i64
+    store i64 0, $scratch
+    inline_asm { raw "li t0, 9"; mv a0, $value; mv &bridge_global, a0; la a1, &bridge_global; raw "ld a2, 0(a1)"; mv $value, a2; mv $scratch, t0; }
+    $6 = global_ref bridge_global
+    $7 = load i64, $6
+    $8 = cmp ne i64 $7, 42
+    branch $8 ? if_then_6 : if_merge_8
+if_then_6:
+    ret 3
+if_merge_8:
+    $9 = load i64, $value
+    $10 = cmp ne i64 $9, 42
+    branch $10 ? if_then_9 : if_merge_11
+if_then_9:
+    ret 4
+if_merge_11:
+    $11 = load i64, $scratch
+    $12 = cmp ne i64 $11, 9
+    branch $12 ? if_then_12 : if_merge_14
+if_then_12:
+    ret 5
+if_merge_14:
     ret 42
 }

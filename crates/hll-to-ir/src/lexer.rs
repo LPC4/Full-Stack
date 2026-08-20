@@ -122,6 +122,7 @@ impl<'a> Lexer<'a> {
             '/' => self.op_or_compound(CompoundOp::Div, Token::Slash),
             '%' => self.op_or_compound(CompoundOp::Mod, Token::Percent),
             '@' => Token::At,
+            '$' => Token::Dollar,
             '?' => Token::Question,
             '&' => {
                 if self.peek_is('&') {

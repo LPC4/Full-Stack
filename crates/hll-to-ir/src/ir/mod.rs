@@ -6,7 +6,7 @@ pub mod types;
 pub mod values;
 
 pub use block::IrBlock;
-pub use instruction::{IrInstruction, IrTerminator};
+pub use instruction::{IrAsmOp, IrAsmPlace, IrInstruction, IrTerminator};
 pub use ops::{IrCastMode, IrCmpOp, IrMathOp, IrUnaryOp};
 pub use program::{
     IrExternFn, IrFunction, IrGlobalString, IrGlobalVar, IrParam, IrProgram, IrTypeAlias,

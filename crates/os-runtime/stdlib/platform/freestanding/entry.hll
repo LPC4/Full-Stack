@@ -4,6 +4,7 @@ external main: () -> i32
 _start: () {
 	code: i32 = main()
 	asm {
+		mv   a0, $code
 		li   t0, 268447744  ; SYSCON 0x10010000
 		sd   a0, 0(t0)
 	.Lhalt:

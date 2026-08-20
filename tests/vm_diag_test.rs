@@ -161,14 +161,16 @@ fn functions_and_io() {
     assert_eq!(exit, Some(0));
 }
 
-// Verify that asm_reg(sp) compiles, runs, and returns a plausible stack-pointer value.
+// Verify that an inline-asm bridge can capture the stack pointer.
 #[test]
-fn asm_reg_reads_sp() {
+fn asm_bridge_reads_sp() {
     let src = r#"
 console := import("console")
 
 get_sp: () -> i64 {
-    return asm_reg(sp)
+    result: i64 = 0
+    asm { mv $result, sp }
+    return result
 }
 
 main: () -> i32 {

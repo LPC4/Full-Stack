@@ -104,7 +104,6 @@ fn fold_instruction(
         | IrInstruction::Index { dest, .. }
         | IrInstruction::Phi { dest, .. }
         | IrInstruction::HeapAlloc { dest, .. }
-        | IrInstruction::ReadReg { dest, .. }
         | IrInstruction::GlobalRef { dest, .. }
         | IrInstruction::FunctionAddr { dest, .. }
         | IrInstruction::Alloc { dest, .. } => {

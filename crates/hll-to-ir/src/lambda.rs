@@ -297,7 +297,6 @@ fn collect_primary_binders(primary: &PrimaryExpr, binders: &mut HashSet<String>)
         }
         PrimaryExpr::Identifier(_)
         | PrimaryExpr::Literal(_)
-        | PrimaryExpr::AsmReg { .. }
         | PrimaryExpr::AssociatedConst { .. } => {}
     }
 }

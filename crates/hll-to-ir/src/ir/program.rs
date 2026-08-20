@@ -255,7 +255,6 @@ fn instruction_type(instruction: &IrInstruction) -> Option<&IrType> {
         | IrInstruction::SourceLine { .. }
         | IrInstruction::HeapFree { .. }
         | IrInstruction::InlineAsm { .. }
-        | IrInstruction::ReadReg { .. }
         | IrInstruction::Call { .. }
         | IrInstruction::GlobalRef { .. }
         | IrInstruction::FunctionAddr { .. } => None,

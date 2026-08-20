@@ -306,6 +306,58 @@ main: () -> i32 {
         .expect("an imported generic should retain qualified imported types");
 }
 
+#[test]
+fn transitive_import_alias_does_not_collide_with_importer_alias() {
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    pipeline.set_module_resolver(Some(Box::new(move |name: &str| match name {
+        "wrapper" => Some(
+            "types := import(\"inner_types\")\n\
+             export unwrap: <T>(item: types.Box<T>) -> T { return item.value }\n"
+                .to_owned(),
+        ),
+        "inner_types" => Some("export struct Box<T> { value: T }\n".to_owned()),
+        "outer_types" => Some("export type Number = i32\n".to_owned()),
+        _ => None,
+    })));
+
+    let importer = r#"
+types := import("outer_types")
+wrapper := import("wrapper")
+main: () -> types.Number {
+    item: Box<i32> = { .value = 42 }
+    return wrapper.unwrap<i32>(item)
+}
+"#;
+    pipeline
+        .compile(importer)
+        .expect("a transitive alias must not occupy the importer's alias scope");
+}
+
+#[test]
+fn chained_imported_type_aliases_resolve_in_each_module_scope() {
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    pipeline.set_module_resolver(Some(Box::new(move |name: &str| match name {
+        "leaf" => Some("export type Scalar = i32\n".to_owned()),
+        "middle" => {
+            Some("types := import(\"leaf\")\nexport type Number = types.Scalar\n".to_owned())
+        }
+        "top" => {
+            Some("types := import(\"middle\")\nexport type Result = types.Number\n".to_owned())
+        }
+        _ => None,
+    })));
+
+    let importer = r#"
+types := import("top")
+main: () -> types.Result { return 42 }
+"#;
+    pipeline
+        .compile(importer)
+        .expect("chained imported aliases should resolve through their declaring modules");
+}
+
 // An exported generic keeps its bound: the importer checks it at specialization.
 #[test]
 fn imported_generic_bound_is_checked_at_the_importer() {

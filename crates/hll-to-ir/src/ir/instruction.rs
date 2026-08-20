@@ -3,6 +3,51 @@ use crate::ir::types::IrType;
 use crate::ir::values::{IrLabel, IrRegister, IrValue};
 use std::fmt;
 
+/// A resolved inline-asm place with exactly one local slot or global symbol.
+/// `offset` and `ty` describe the selected storage within that base.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IrAsmPlace {
+    pub local: Option<IrRegister>,
+    pub symbol: Option<String>,
+    pub offset: i64,
+    pub ty: IrType,
+}
+
+impl IrAsmPlace {
+    fn fmt_place(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(local) = &self.local {
+            write!(f, "{local}")?;
+        } else if let Some(symbol) = &self.symbol {
+            write!(f, "&{symbol}")?;
+        }
+        if self.offset != 0 {
+            write!(f, " + {}", self.offset)?;
+        }
+        Ok(())
+    }
+}
+
+/// A raw instruction or typed storage bridge at its authored position.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IrAsmOp {
+    Raw(String),
+    /// `mv reg, $place`
+    Load {
+        reg: String,
+        place: IrAsmPlace,
+    },
+    /// `mv $place, reg`
+    Store {
+        place: IrAsmPlace,
+        reg: String,
+    },
+    /// `la reg, $place`
+    Addr {
+        reg: String,
+        place: IrAsmPlace,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum IrInstruction {
     Comment(String),
@@ -27,11 +72,7 @@ pub enum IrInstruction {
         ptr: IrRegister,
     },
     InlineAsm {
-        lines: Vec<String>,
-    },
-    ReadReg {
-        dest: IrRegister,
-        reg: String,
+        ops: Vec<IrAsmOp>,
     },
     Load {
         dest: IrRegister,
@@ -130,15 +171,34 @@ impl fmt::Display for IrInstruction {
                 Ok(())
             }
             Self::HeapFree { ptr } => write!(f, "heap_free {ptr}"),
-            Self::InlineAsm { lines } => {
+            Self::InlineAsm { ops } => {
                 write!(f, "inline_asm {{")?;
-                for line in lines {
-                    let escaped = line.replace('\\', "\\\\").replace('"', "\\\"");
-                    write!(f, " \"{escaped}\";")?;
+                for op in ops {
+                    write!(f, " ")?;
+                    match op {
+                        IrAsmOp::Raw(line) => {
+                            let escaped = line.replace('\\', "\\\\").replace('"', "\\\"");
+                            write!(f, "raw \"{escaped}\";")?;
+                        }
+                        IrAsmOp::Load { reg, place } => {
+                            write!(f, "mv {reg}, ")?;
+                            place.fmt_place(f)?;
+                            write!(f, ";")?;
+                        }
+                        IrAsmOp::Store { place, reg } => {
+                            write!(f, "mv ")?;
+                            place.fmt_place(f)?;
+                            write!(f, ", {reg};")?;
+                        }
+                        IrAsmOp::Addr { reg, place } => {
+                            write!(f, "la {reg}, ")?;
+                            place.fmt_place(f)?;
+                            write!(f, ";")?;
+                        }
+                    }
                 }
                 write!(f, " }}")
             }
-            Self::ReadReg { dest, reg } => write!(f, "{dest} = read_reg {reg}"),
             Self::Load {
                 dest,
                 ty,
@@ -301,6 +361,10 @@ mod tests {
         IrType::Integer(IntWidth::I32)
     }
 
+    fn i64_type() -> IrType {
+        IrType::Integer(IntWidth::I64)
+    }
+
     #[test]
     fn instructions_use_ir_2_spelling() {
         let function_type = IrType::FunctionPointer {
@@ -341,16 +405,29 @@ mod tests {
             ),
             (
                 IrInstruction::InlineAsm {
-                    lines: vec!["mv a0, \"x\"".to_owned()],
+                    ops: vec![
+                        IrAsmOp::Raw("ecall".to_owned()),
+                        IrAsmOp::Load {
+                            reg: "a0".to_owned(),
+                            place: IrAsmPlace {
+                                local: Some(reg("fd")),
+                                symbol: None,
+                                offset: 0,
+                                ty: i32_type(),
+                            },
+                        },
+                        IrAsmOp::Store {
+                            place: IrAsmPlace {
+                                local: None,
+                                symbol: Some("_ret".to_owned()),
+                                offset: 0,
+                                ty: i64_type(),
+                            },
+                            reg: "a0".to_owned(),
+                        },
+                    ],
                 },
-                "inline_asm { \"mv a0, \\\"x\\\"\"; }".to_owned(),
-            ),
-            (
-                IrInstruction::ReadReg {
-                    dest: reg("sp"),
-                    reg: "sp".to_owned(),
-                },
-                "$sp = read_reg sp".to_owned(),
+                "inline_asm { raw \"ecall\"; mv a0, $fd; mv &_ret, a0; }".to_owned(),
             ),
             (
                 IrInstruction::Load {

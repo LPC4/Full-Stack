@@ -156,6 +156,7 @@ pub enum Token<'a> {
     Pipe,
     Tilde,
     At,
+    Dollar,
     LParen,
     RParen,
     LBrace,

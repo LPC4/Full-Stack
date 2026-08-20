@@ -245,8 +245,6 @@ fn collect_stmt_refs(stmt: &Statement, refs: &mut HashSet<String>) {
         }
         Statement::InferredVariableDecl { init, .. }
         | Statement::DestructureBinding { init, .. } => collect_expr_refs(init, refs),
-        // Inline asm is the qualified-access escape hatch: it names link symbols literally and
-        // is not modelled as identifier nodes, so it never contributes a bare reference here.
         Statement::Return(None)
         | Statement::AsmBlock { .. }
         | Statement::Break
@@ -348,7 +346,7 @@ fn collect_primary_refs(primary: &PrimaryExpr, refs: &mut HashSet<String>) {
                 collect_expr_refs(end, refs);
             }
         }
-        PrimaryExpr::Literal(_) | PrimaryExpr::AsmReg { .. } => {}
+        PrimaryExpr::Literal(_) => {}
     }
 }
 
@@ -752,7 +750,7 @@ fn rewrite_primary_children(
                 rewrite_expr(end, aliases)?;
             }
         }
-        PrimaryExpr::Identifier(_) | PrimaryExpr::Literal(_) | PrimaryExpr::AsmReg { .. } => {}
+        PrimaryExpr::Identifier(_) | PrimaryExpr::Literal(_) => {}
     }
     Ok(())
 }
@@ -838,10 +836,28 @@ fn rewrite_stmt(
         }
         Statement::InferredVariableDecl { init, .. }
         | Statement::DestructureBinding { init, .. } => rewrite_expr(init, aliases)?,
-        Statement::Return(None)
-        | Statement::AsmBlock { .. }
-        | Statement::Break
-        | Statement::Continue => {}
+        Statement::AsmBlock { ops } => {
+            for op in ops {
+                let place = match op {
+                    crate::ast::AsmOp::Load { place, .. }
+                    | crate::ast::AsmOp::Store { place, .. }
+                    | crate::ast::AsmOp::Addr { place, .. } => place,
+                    crate::ast::AsmOp::Raw(_) => continue,
+                };
+                if !aliases.contains_key(&place.base) {
+                    continue;
+                }
+                let Some(member) = place.fields.first().cloned() else {
+                    return Err(format!(
+                        "module `{}` is not storage; name an exported global",
+                        place.base
+                    ));
+                };
+                place.base = resolve_member(aliases, &place.base, &member)?;
+                place.fields.remove(0);
+            }
+        }
+        Statement::Return(None) | Statement::Break | Statement::Continue => {}
     }
     Ok(())
 }
@@ -1050,10 +1066,23 @@ impl Mangler<'_> {
                     self.bind(&field.binding);
                 }
             }
-            Statement::Return(None)
-            | Statement::AsmBlock { .. }
-            | Statement::Break
-            | Statement::Continue => {}
+            Statement::Return(None) | Statement::Break | Statement::Continue => {}
+            Statement::AsmBlock { ops } => {
+                for op in ops {
+                    if let crate::ast::AsmOp::Raw(_) = op {
+                        continue;
+                    }
+                    // `$place` bases are HLL identifiers: rename them like any
+                    // other reference so mangled modules resolve consistently.
+                    let place = match op {
+                        crate::ast::AsmOp::Load { place, .. }
+                        | crate::ast::AsmOp::Store { place, .. }
+                        | crate::ast::AsmOp::Addr { place, .. } => place,
+                        crate::ast::AsmOp::Raw(_) => unreachable!(),
+                    };
+                    self.mangle_ref(&mut place.base);
+                }
+            }
         }
     }
 
@@ -1148,7 +1177,7 @@ impl Mangler<'_> {
                     self.expr(end);
                 }
             }
-            PrimaryExpr::Literal(_) | PrimaryExpr::AsmReg { .. } => {}
+            PrimaryExpr::Literal(_) => {}
         }
     }
 
@@ -1187,29 +1216,32 @@ pub fn extract_interface(source: &str) -> Result<String, String> {
 /// As [`extract_interface`], but mangling exported `fn`/global names to `prefix__name` so an
 /// importer's mangled references resolve to the target module's mangled definitions.
 pub fn extract_interface_prefixed(source: &str, prefix: &str) -> Result<String, String> {
-    let program = parse_module(source)?;
+    extract_interface_prefixed_with_aliases(source, prefix, &HashMap::new())
+}
+
+/// As [`extract_interface_prefixed`], with the module's direct imports resolved in its own scope.
+pub fn extract_interface_prefixed_with_aliases(
+    source: &str,
+    prefix: &str,
+    aliases: &HashMap<String, ModuleAlias>,
+) -> Result<String, String> {
+    let mut program = parse_module(source)?;
     let exported_interfaces = program
         .declarations
         .iter()
         .filter(|decl| decl.exported)
         .filter_map(|decl| match &decl.decl {
-            DeclNode::Interface { name, .. } => Some(name.as_str()),
+            DeclNode::Interface { name, .. } => Some(name.clone()),
             _ => None,
         })
         .collect::<HashSet<_>>();
+    validate_exported_bounds(&program, &exported_interfaces)?;
+    rewrite_qualified_access(&mut program, aliases)?;
     let (exported_symbols, private_symbols) = module_symbol_sets(&program);
     let mut out = String::new();
     for decl in &program.declarations {
         if !decl.exported {
             continue;
-        }
-        let bounds = declaration_bounds(&decl.decl);
-        if let Some((_, private)) = bounds.iter().find(|(_, interface)| {
-            interface.segments.len() == 1 && !exported_interfaces.contains(&**interface)
-        }) {
-            return Err(format!(
-                "exported declaration exposes private interface `{private}` in its bounds"
-            ));
         }
         let node = match &decl.decl {
             DeclNode::Function { generics, .. } if !generics.is_empty() => {
@@ -1217,7 +1249,7 @@ pub fn extract_interface_prefixed(source: &str, prefix: &str) -> Result<String, 
             }
             other => other.clone(),
         };
-        if let Some(rendered) = render_export(&node, prefix)? {
+        if let Some(rendered) = render_export(&node, prefix, &exported_interfaces)? {
             out.push_str(&rendered);
             out.push('\n');
         }
@@ -1225,8 +1257,26 @@ pub fn extract_interface_prefixed(source: &str, prefix: &str) -> Result<String, 
     Ok(out)
 }
 
+fn validate_exported_bounds(
+    program: &Program,
+    exported_interfaces: &HashSet<String>,
+) -> Result<(), String> {
+    for decl in program.declarations.iter().filter(|decl| decl.exported) {
+        let bounds = declaration_bounds(&decl.decl);
+        if let Some((_, private)) = bounds.iter().find(|(_, interface)| {
+            interface.segments.len() == 1
+                && !exported_interfaces.contains(interface.segments[0].as_str())
+        }) {
+            return Err(format!(
+                "exported declaration exposes private interface `{private}` in its bounds"
+            ));
+        }
+    }
+    Ok(())
+}
+
 // A module's exported fn/global names, and private names an importer cannot resolve.
-// Imported aliases remain qualified and are supplied with their interfaces transitively.
+// Direct imports have already resolved within this module's interface scope.
 fn module_symbol_sets(program: &Program) -> (HashSet<String>, HashSet<String>) {
     let mut exported = HashSet::new();
     let mut unreachable_names = HashSet::new();
@@ -1296,7 +1346,11 @@ fn prepare_generic_export(
 
 // Render one exported declaration as an interface line, or `None` if it contributes
 // nothing an importer can use (e.g. a generic function, which cannot be `external`).
-fn render_export(decl: &DeclNode, prefix: &str) -> Result<Option<String>, String> {
+fn render_export(
+    decl: &DeclNode,
+    prefix: &str,
+    exported_interfaces: &HashSet<String>,
+) -> Result<Option<String>, String> {
     let rendered = match decl {
         DeclNode::Type {
             name,
@@ -1307,7 +1361,7 @@ fn render_export(decl: &DeclNode, prefix: &str) -> Result<Option<String>, String
             format!(
                 "type {}{} = {}",
                 name,
-                render_generics(generics, bounds, prefix),
+                render_generics(generics, bounds, prefix, exported_interfaces),
                 render_type(ty)?
             )
         }
@@ -1320,7 +1374,7 @@ fn render_export(decl: &DeclNode, prefix: &str) -> Result<Option<String>, String
             format!(
                 "struct {}{} {{ {} }}",
                 name,
-                render_generics(generics, bounds, prefix),
+                render_generics(generics, bounds, prefix, exported_interfaces),
                 render_fields(fields)?
             )
         }
@@ -1333,7 +1387,7 @@ fn render_export(decl: &DeclNode, prefix: &str) -> Result<Option<String>, String
             format!(
                 "enum {}{} {{ {} }}",
                 name,
-                render_generics(generics, bounds, prefix),
+                render_generics(generics, bounds, prefix, exported_interfaces),
                 render_variants(variants)?
             )
         }
@@ -1356,7 +1410,7 @@ fn render_export(decl: &DeclNode, prefix: &str) -> Result<Option<String>, String
                 format!(
                     "{}: {}({}){} {}",
                     mangled_name(prefix, name),
-                    render_generics(generics, bounds, prefix),
+                    render_generics(generics, bounds, prefix, exported_interfaces),
                     render_params(params)?,
                     render_return(return_type.as_ref())?,
                     render_block(body, 0)?,
@@ -1431,6 +1485,7 @@ fn render_generics(
     generics: &[String],
     bounds: &[(String, crate::ast::Path)],
     prefix: &str,
+    exported_interfaces: &HashSet<String>,
 ) -> String {
     if generics.is_empty() {
         String::new()
@@ -1441,7 +1496,15 @@ fn render_generics(
                 let interfaces = bounds
                     .iter()
                     .filter(|(param, _)| param == generic)
-                    .map(|(_, interface)| mangled_name(prefix, interface))
+                    .map(|(_, interface)| {
+                        if interface.segments.len() == 1
+                            && exported_interfaces.contains(interface.segments[0].as_str())
+                        {
+                            mangled_name(prefix, interface)
+                        } else {
+                            interface.to_string()
+                        }
+                    })
                     .collect::<Vec<_>>();
                 if interfaces.is_empty() {
                     generic.clone()
@@ -1560,7 +1623,27 @@ fn render_statement(statement: &Statement, depth: usize) -> Result<String, Strin
             None => "return".to_owned(),
         },
         Statement::Defer(expr) => format!("defer {}", render_expr(expr)?),
-        Statement::AsmBlock { lines } => format!("asm {{\n{}\n}}", lines.join("\n")),
+        Statement::AsmBlock { ops } => {
+            let mut rendered = String::from("asm {\n");
+            for op in ops {
+                rendered.push_str("    ");
+                match op {
+                    crate::ast::AsmOp::Raw(line) => rendered.push_str(line),
+                    crate::ast::AsmOp::Load { reg, place } => {
+                        rendered.push_str(&format!("mv {reg}, {}", place.render()));
+                    }
+                    crate::ast::AsmOp::Store { place, reg } => {
+                        rendered.push_str(&format!("mv {}, {reg}", place.render()));
+                    }
+                    crate::ast::AsmOp::Addr { reg, place } => {
+                        rendered.push_str(&format!("la {reg}, {}", place.render()));
+                    }
+                }
+                rendered.push('\n');
+            }
+            rendered.push('}');
+            rendered
+        }
         Statement::Break => "break".to_owned(),
         Statement::Continue => "continue".to_owned(),
         Statement::VariableDecl { name, ty, init } => {
@@ -1795,7 +1878,6 @@ fn render_primary(primary: &PrimaryExpr) -> Result<String, String> {
             );
             format!("new({})", values.join(", "))
         }
-        PrimaryExpr::AsmReg { reg } => format!("asm_reg({reg:?})"),
         PrimaryExpr::AssociatedConst {
             owner,
             owner_args,
@@ -2065,6 +2147,61 @@ main: () -> i32 {
             &arguments[0],
             Expression::Primary(PrimaryExpr::Identifier(n)) if n == "ZERO"
         ));
+    }
+
+    #[test]
+    fn rewrites_inline_asm_imported_global_and_keeps_field_chain() {
+        let mut program = parse_module(
+            r#"
+state := import("state")
+main: () -> i32 {
+    asm { mv a0, $state.cursor.ptr }
+    return 0
+}
+"#,
+        )
+        .unwrap();
+        rewrite_qualified_access(
+            &mut program,
+            &prefixed_aliases([("state", "state", &["cursor"][..])]),
+        )
+        .unwrap();
+
+        let DeclNode::Function {
+            body: Some(body), ..
+        } = &program.declarations[1].decl
+        else {
+            panic!("expected main function");
+        };
+        let Statement::AsmBlock { ops } = &body.statements[0] else {
+            panic!("expected asm block");
+        };
+        let crate::ast::AsmOp::Load { place, .. } = &ops[0] else {
+            panic!("expected asm load");
+        };
+        assert_eq!(place.base, "state__cursor");
+        assert_eq!(place.fields, ["ptr"]);
+    }
+
+    #[test]
+    fn rejects_private_imported_global_in_inline_asm() {
+        let mut program = parse_module(
+            r#"
+state := import("state")
+main: () -> i32 {
+    asm { mv a0, $state.secret }
+    return 0
+}
+"#,
+        )
+        .unwrap();
+        let mut map = aliases(&[("state", &["visible"])]);
+        map.get_mut("state")
+            .unwrap()
+            .declared
+            .insert("secret".to_owned());
+        let error = rewrite_qualified_access(&mut program, &map).unwrap_err();
+        assert!(error.contains("member `secret` of module `state` is private"));
     }
 
     #[test]

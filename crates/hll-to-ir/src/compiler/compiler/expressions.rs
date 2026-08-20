@@ -137,22 +137,6 @@ impl HighLevelCompiler {
                     is_unsigned: false,
                 })
             }
-            PrimaryExpr::AsmReg { reg } => {
-                if mode == EvalMode::Address {
-                    return None;
-                }
-                use crate::ir::IrInstruction;
-                let dest = self.new_temp();
-                self.push_instruction(IrInstruction::ReadReg {
-                    dest: dest.clone(),
-                    reg: reg.clone(),
-                });
-                Some(LoweredValue {
-                    value: IrValue::Register(dest),
-                    ty: IrType::Integer(IntWidth::I64),
-                    is_unsigned: false,
-                })
-            }
             PrimaryExpr::FunctionCall {
                 name,
                 type_arguments,
@@ -1496,11 +1480,85 @@ impl HighLevelCompiler {
     }
 
     // The { ptr, len } fields of a slice, used for `.ptr` / `.len` access.
-    fn slice_fields(elem: &IrType) -> Vec<(String, IrType)> {
+    pub(super) fn slice_fields(elem: &IrType) -> Vec<(String, IrType)> {
         vec![
             ("ptr".to_owned(), IrType::Pointer(Box::new(elem.clone()))),
             ("len".to_owned(), IrType::Integer(IntWidth::I64)),
         ]
+    }
+
+    // Resolve `$place` to local or global storage plus its static offset and type.
+    // Field chains traverse aggregate storage; pointers would require a load.
+    pub(super) fn resolve_asm_place(
+        &mut self,
+        place: &crate::ast::AsmPlace,
+    ) -> Option<crate::ir::IrAsmPlace> {
+        use crate::ir::IrAsmPlace;
+
+        // Locals and parameters are `Pointer(T)` symbol entries whose value is
+        // the slot register; the storage holds `T`.
+        let local = self.context.symbols.lookup(&place.base).and_then(|info| {
+            let IrValue::Register(reg) = info.value.clone() else {
+                return None;
+            };
+            Some(match self.resolve_named_type(&info.ty) {
+                IrType::Pointer(inner) => (reg, *inner),
+                other => (reg, other),
+            })
+        });
+        let (storage, mut current_ty) = if let Some((reg, ty)) = local {
+            (Some(reg), ty)
+        } else if let Some(ty) = self.global_vars.get(&place.base).cloned() {
+            (None, ty)
+        } else if self.compile_time_consts.contains_key(&place.base) {
+            self.context.error(format!(
+                "asm place `{}` is a constant; asm operands need a variable",
+                place.render()
+            ));
+            return None;
+        } else {
+            self.context
+                .error(format!("asm place `{}` is not in scope", place.render()));
+            return None;
+        };
+
+        let mut offset: i64 = 0;
+        for field in &place.fields {
+            let fields = match self.resolve_named_type(&current_ty) {
+                IrType::Aggregate(fields) => fields,
+                IrType::Slice(elem) => Self::slice_fields(&elem),
+                other => {
+                    self.context.error(format!(
+                        "asm place `{}`: `{}` is not a struct or slice, so `.{}` is invalid",
+                        place.render(),
+                        self.context.types.get_type_name(&other),
+                        field
+                    ));
+                    return None;
+                }
+            };
+            let Some((field_offset, field_ty)) =
+                self.aggregate_field_offset_and_type(&fields, field)
+            else {
+                self.context.error(format!(
+                    "asm place `{}`: `{}` has no field `{}`",
+                    place.render(),
+                    self.context.types.get_type_name(&current_ty),
+                    field
+                ));
+                return None;
+            };
+            offset += field_offset;
+            current_ty = field_ty;
+        }
+
+        let symbol = storage.is_none().then(|| place.base.clone());
+        Some(IrAsmPlace {
+            local: storage,
+            symbol,
+            offset,
+            ty: current_ty,
+        })
     }
 
     // Index a slice: load { ptr, len } from the fat pointer, bounds-check the

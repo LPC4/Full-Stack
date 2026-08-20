@@ -45,7 +45,6 @@ fn collect_instruction_types(instruction: &IrInstruction, names: &mut Vec<String
         | IrInstruction::SourceLine { .. }
         | IrInstruction::HeapFree { .. }
         | IrInstruction::InlineAsm { .. }
-        | IrInstruction::ReadReg { .. }
         | IrInstruction::Call { .. }
         | IrInstruction::GlobalRef { .. }
         | IrInstruction::FunctionAddr { .. } => {}

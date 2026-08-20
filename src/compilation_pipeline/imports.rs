@@ -151,12 +151,23 @@ impl CompilationPipeline {
                 ));
             }
             for (alias, path) in module_imports {
-                self.resolve_import_interface(
+                let (identity, module) = self.resolve_import_interface(
                     &alias,
                     &path,
                     self.current_source_path.as_deref(),
                     &mut state,
                 )?;
+                if let Some(previous) = state.alias_targets.get(&alias) {
+                    if previous != &identity {
+                        return Err(vec![Diagnostic::new(
+                            DiagnosticLevel::Error,
+                            format!("duplicate module import alias `{alias}`"),
+                        )]);
+                    }
+                } else {
+                    state.alias_targets.insert(alias.clone(), identity);
+                }
+                state.aliases.insert(alias, module);
             }
         }
 
@@ -174,7 +185,7 @@ impl CompilationPipeline {
         path: &str,
         base_source_path: Option<&Path>,
         state: &mut ImportInterfaceState,
-    ) -> Result<(), Vec<Diagnostic>> {
+    ) -> Result<(String, hll_to_ir::imports::ModuleAlias), Vec<Diagnostic>> {
         let resolved = self
             .resolve_module_source(path, base_source_path)
             .map_err(|msg| vec![Diagnostic::new(DiagnosticLevel::Error, msg)])?
@@ -186,18 +197,6 @@ impl CompilationPipeline {
                 )]
             })?;
         let identity = source_identity(&resolved.key, resolved.source_path.as_deref());
-        if let Some(previous) = state.alias_targets.get(alias) {
-            if previous != &identity {
-                return Err(vec![Diagnostic::new(
-                    DiagnosticLevel::Error,
-                    format!("duplicate module import alias `{alias}`"),
-                )]);
-            }
-        } else {
-            state
-                .alias_targets
-                .insert(alias.to_owned(), identity.clone());
-        }
         if let Some(index) = state.visiting.iter().position(|item| item == &identity) {
             let mut cycle = state.visiting[index..].to_vec();
             cycle.push(identity);
@@ -210,13 +209,26 @@ impl CompilationPipeline {
         state.visiting.push(identity.clone());
         let dependency_imports = hll_to_ir::imports::collect_interface_imports(&resolved.source)
             .map_err(|msg| vec![Diagnostic::new(DiagnosticLevel::Error, msg)])?;
+        let mut dependency_aliases = std::collections::HashMap::new();
+        let mut dependency_targets = std::collections::HashMap::new();
         for (dependency_alias, dependency_path) in dependency_imports {
-            self.resolve_import_interface(
+            let (dependency_identity, dependency) = self.resolve_import_interface(
                 &dependency_alias,
                 &dependency_path,
                 resolved.source_path.as_deref(),
                 state,
             )?;
+            if let Some(previous) = dependency_targets.get(&dependency_alias) {
+                if previous != &dependency_identity {
+                    return Err(vec![Diagnostic::new(
+                        DiagnosticLevel::Error,
+                        format!("duplicate module import alias `{dependency_alias}`"),
+                    )]);
+                }
+            } else {
+                dependency_targets.insert(dependency_alias.clone(), dependency_identity);
+            }
+            dependency_aliases.insert(dependency_alias, dependency);
         }
         state.visiting.pop();
 
@@ -250,7 +262,7 @@ impl CompilationPipeline {
             (String::new(), std::collections::HashSet::new())
         };
 
-        if state.emitted.insert(identity) {
+        if state.emitted.insert(identity.clone()) {
             if !self.mangle_modules {
                 Self::check_import_export_collisions(
                     &format!("{alias} ({path})"),
@@ -260,13 +272,17 @@ impl CompilationPipeline {
                 )?;
             }
             state.prelude.push_str(
-                &hll_to_ir::imports::extract_interface_prefixed(&resolved.source, &prefix)
-                    .map_err(|msg| {
-                        vec![Diagnostic::new(
-                            DiagnosticLevel::Error,
-                            format!("failed to extract interface of \"{path}\": {msg}"),
-                        )]
-                    })?,
+                &hll_to_ir::imports::extract_interface_prefixed_with_aliases(
+                    &resolved.source,
+                    &prefix,
+                    &dependency_aliases,
+                )
+                .map_err(|msg| {
+                    vec![Diagnostic::new(
+                        DiagnosticLevel::Error,
+                        format!("failed to extract interface of \"{path}\": {msg}"),
+                    )]
+                })?,
             );
         }
 
@@ -278,8 +294,8 @@ impl CompilationPipeline {
                     format!("failed to read declarations of \"{path}\": {msg}"),
                 )]
             })?;
-        state.aliases.insert(
-            alias.to_owned(),
+        Ok((
+            identity,
             hll_to_ir::imports::ModuleAlias {
                 prefix,
                 member_aliases,
@@ -288,8 +304,7 @@ impl CompilationPipeline {
                 namespaced,
                 declared,
             },
-        );
-        Ok(())
+        ))
     }
 
     pub(super) fn check_import_export_collisions(

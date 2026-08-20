@@ -20,6 +20,7 @@ export kfree: (ptr: u8*) {
 ; Falls back to a WFI loop if the SYSCON write doesn't halt (real hardware).
 export kshutdown: (code: i64) {
     asm {
+        mv   a0, $code
         li   t0, 268500992
         sd   a0, 0(t0)
     }
@@ -37,6 +38,7 @@ export timer_get: () -> u64 {
     asm {
         li   t0, 33603576
         ld   a0, 0(t0)
+        mv   $result, a0
     }
     return result
 }
@@ -44,6 +46,7 @@ export timer_get: () -> u64 {
 ; Schedule next timer interrupt at MTIME + interval (MTIMECMP hart 0).
 export timer_set: (interval: u64) {
     asm {
+        mv   a0, $interval
         li   t0, 33603576
         ld   t1, 0(t0)
         add  t1, t1, a0

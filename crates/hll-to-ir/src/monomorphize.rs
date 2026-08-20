@@ -499,9 +499,7 @@ fn validate_declaration_bound_instantiations(
                         check_type(ty, generic_scope, templates, interfaces, signatures)?;
                     }
                 }
-                PrimaryExpr::Identifier(_)
-                | PrimaryExpr::Literal(_)
-                | PrimaryExpr::AsmReg { .. } => {}
+                PrimaryExpr::Identifier(_) | PrimaryExpr::Literal(_) => {}
             },
         }
         Ok(())
@@ -1423,7 +1421,6 @@ fn infer_expression_calls(
             }
             PrimaryExpr::Identifier(_)
             | PrimaryExpr::Literal(_)
-            | PrimaryExpr::AsmReg { .. }
             | PrimaryExpr::AssociatedConst { .. } => {}
             PrimaryExpr::Grouped(_) => unreachable!(),
         },
@@ -1635,7 +1632,6 @@ pub(crate) fn infer_expression_type(
             PrimaryExpr::StructLiteral { .. }
             | PrimaryExpr::Slice { .. }
             | PrimaryExpr::CallExpr { .. }
-            | PrimaryExpr::AsmReg { .. }
             | PrimaryExpr::AssociatedConst { .. }
             | PrimaryExpr::FormatInto { .. },
         ) => None,
@@ -1987,7 +1983,6 @@ fn rewrite_expression_calls(
             // Projections are folded before call rewriting; nothing to visit.
             PrimaryExpr::Identifier(_)
             | PrimaryExpr::Literal(_)
-            | PrimaryExpr::AsmReg { .. }
             | PrimaryExpr::AssociatedConst { .. } => {}
             PrimaryExpr::Grouped(_) => unreachable!(),
         },
@@ -2190,7 +2185,7 @@ pub(crate) fn substitute_expression_types(
                     *ty = substitute_type(ty, substitutions);
                 }
             }
-            PrimaryExpr::Identifier(_) | PrimaryExpr::Literal(_) | PrimaryExpr::AsmReg { .. } => {}
+            PrimaryExpr::Identifier(_) | PrimaryExpr::Literal(_) => {}
             PrimaryExpr::Grouped(_) => unreachable!(),
         },
     }
@@ -2770,9 +2765,7 @@ impl EnumSpecializer {
                         self.rewrite_type(ty);
                     }
                 }
-                PrimaryExpr::Identifier(_)
-                | PrimaryExpr::Literal(_)
-                | PrimaryExpr::AsmReg { .. } => {}
+                PrimaryExpr::Identifier(_) | PrimaryExpr::Literal(_) => {}
             },
         }
     }
@@ -2988,9 +2981,7 @@ impl EnumSpecializer {
                         self.rewrite_expr_uses(arg, None, env);
                     }
                 }
-                PrimaryExpr::Literal(_)
-                | PrimaryExpr::AsmReg { .. }
-                | PrimaryExpr::AssociatedConst { .. } => {}
+                PrimaryExpr::Literal(_) | PrimaryExpr::AssociatedConst { .. } => {}
             },
         }
     }

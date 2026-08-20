@@ -311,7 +311,7 @@ pub(super) fn inst_uses(inst: &IrInstruction) -> Vec<IrRegister> {
 pub(super) fn inst_defs(inst: &IrInstruction) -> Vec<IrRegister> {
     use IrInstruction::{
         Alloc, Call, Cast, Cmp, FunctionAddr, GlobalRef, HeapAlloc, Index, IndirectCall, Load,
-        Math, Offset, Phi, ReadReg, Unary,
+        Math, Offset, Phi, Unary,
     };
     match inst {
         Alloc { dest, .. }
@@ -324,7 +324,6 @@ pub(super) fn inst_defs(inst: &IrInstruction) -> Vec<IrRegister> {
         | Offset { dest, .. }
         | Index { dest, .. }
         | HeapAlloc { dest, .. }
-        | ReadReg { dest, .. }
         | GlobalRef { dest, .. }
         | FunctionAddr { dest, .. } => vec![dest.clone()],
         Call { dest, .. } | IndirectCall { dest, .. } => dest.clone().into_iter().collect(),

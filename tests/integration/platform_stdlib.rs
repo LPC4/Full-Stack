@@ -37,6 +37,12 @@ fn run_hll(src: &str) -> (String, Option<i64>) {
 }
 
 #[test]
+fn freestanding_stdlib_compiles_as_separate_modules() {
+    CompilationPipeline::compile_stdlib_objects(TargetMode::Freestanding)
+        .expect("freestanding stdlib compile");
+}
+
+#[test]
 fn kernel_stdlib_compiles_as_separate_modules() {
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_target_mode(full_stack::compilation_pipeline::TargetMode::Kernel);
@@ -122,7 +128,7 @@ fn kernel_boot_runs_with_separate_stdlib_objects() {
         ),
     }
     assert!(
-        run.uart_output.contains("[ PROC ] no user binary present"),
+        run.uart_output.contains("[ WARN ] no user binary present"),
         "expected user binary skip; uart={:?}",
         run.uart_output
     );
@@ -1185,11 +1191,11 @@ fn my_kernel_example_program() {
         "missing kernel start; uart={uart:?}"
     );
     assert!(
-        uart.contains("[ VMM ] sv39 enabled\n"),
+        uart.contains("[  OK  ] sv39 enabled\n"),
         "missing MMU enable; uart={uart:?}"
     );
     assert!(
-        uart.contains("[ PROC ] no user binary present"),
+        uart.contains("[ WARN ] no user binary present"),
         "missing user binary skip; uart={uart:?}"
     );
     assert_eq!(exit, Some(0), "kernel must exit with code 0; uart={uart:?}");

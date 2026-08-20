@@ -319,7 +319,16 @@ fn check_asm_in_block(block: &Block, diags: &mut Vec<Diagnostic>) {
 
 fn check_asm_in_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
     match stmt {
-        Statement::AsmBlock { lines } => check_asm_lines(lines, diags),
+        Statement::AsmBlock { ops } => {
+            let lines: Vec<String> = ops
+                .iter()
+                .filter_map(|op| match op {
+                    crate::ast::AsmOp::Raw(line) => Some(line.clone()),
+                    _ => None,
+                })
+                .collect();
+            check_asm_lines(&lines, diags);
+        }
         Statement::Block(b) => check_asm_in_block(b, diags),
         Statement::If {
             then_block,
@@ -478,6 +487,113 @@ main: () -> i32 {
 }
 ";
         compile_hll(src).expect("generic named struct literal should compile");
+    }
+
+    #[test]
+    fn inline_asm_bridges_resolve_parameters_locals_fields_globals_and_addresses() {
+        let output = compile_hll(
+            r#"
+global: u64 = 7
+struct Pair { first: u64, second: u64 }
+
+bridge: (arg: u64) -> u64 {
+    pair: Pair = Pair { .first = 1, .second = 2 }
+    result: u64 = 0
+    asm {
+        mv a0, $arg
+        mv $pair.second, a0
+        la a1, $pair
+        mv a2, $global
+        mv $result, a0
+    }
+    return result
+}
+
+main: () -> i32 { return bridge(9) as i32 }
+"#,
+        )
+        .expect("typed asm bridges should compile");
+        let ir = output.ir.to_string();
+        assert!(ir.contains("mv a0, $arg_ptr;"), "{ir}");
+        assert!(ir.contains("mv $pair + 8, a0;"), "{ir}");
+        assert!(ir.contains("la a1, $pair;"), "{ir}");
+        assert!(ir.contains("mv a2, &global;"), "{ir}");
+    }
+
+    #[test]
+    fn inline_asm_one_line_bridge_uses_the_shadowing_local() {
+        let output = compile_hll(
+            r#"
+value: i64 = 3
+main: () -> i32 {
+    value: i64 = 9
+    asm { mv $value, sp }
+    return 0
+}
+"#,
+        )
+        .expect("one-line bridge should compile");
+        let function = output
+            .ir
+            .functions
+            .iter()
+            .find(|function| function.name == "main")
+            .unwrap();
+        let place = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .find_map(|instruction| match instruction {
+                crate::ir::IrInstruction::InlineAsm { ops } => ops.iter().find_map(|op| match op {
+                    crate::ir::IrAsmOp::Store { place, .. } => Some(place),
+                    _ => None,
+                }),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            place.local,
+            Some(crate::ir::IrRegister::Named("value".to_owned()))
+        );
+        assert!(place.symbol.is_none());
+    }
+
+    #[test]
+    fn inline_asm_bridge_rejections_are_precise() {
+        let cases = [
+            ("mv a0, $missing", "asm place `$missing` is not in scope"),
+            ("mv $LIMIT, a0", "asm place `$LIMIT` has no storage"),
+            ("mv a0, $pair", "not integer-like scalar storage"),
+            ("mv a0, $pair.nope", "has no field `nope`"),
+            ("mv a0, $fraction", "not integer-like scalar storage"),
+            ("mv fa0, $value", "is not an integer register"),
+            ("mv sp, $value", "cannot write `sp`"),
+            ("add a0, $value, a1", "only valid on `mv`/`la` bridge"),
+            (
+                "mv $value, $value",
+                "cannot move between two `$place` operands",
+            ),
+        ];
+        for (instruction, expected) in cases {
+            let source = format!(
+                "const LIMIT = 4\nstruct Pair {{ field: i64 }}\nmain: () -> i32 {{\n\
+                 pair: Pair = Pair {{ .field = 0 }}\nfraction: f64 = 1.0\nvalue: i64 = 0\n\
+                 asm {{ {instruction} }}\nreturn 0\n}}"
+            );
+            let diagnostics = match compile_hll(&source) {
+                Ok(_) => panic!("invalid bridge must fail"),
+                Err(diagnostics) => diagnostics,
+            };
+            let messages = diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.message.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(
+                messages.contains(expected),
+                "expected `{expected}` in:\n{messages}"
+            );
+        }
     }
 
     #[test]

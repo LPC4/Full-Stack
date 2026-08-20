@@ -1,7 +1,7 @@
 # HLL Language Specification
 
-HLL is a small systems language. Memory operations are explicit and deterministic: there 
-are no hidden conversions, no hidden ownership, and no hidden dispatch. This document 
+HLL is a small systems language. Memory operations are explicit and deterministic: there
+are no hidden conversions, no hidden ownership, and no hidden dispatch. This document
 is the normative specification of the language the `hll-to-ir` front end implements.
 
 ## 1. Design principles
@@ -582,12 +582,12 @@ spelling when it can map it unambiguously to an exported symbol: `pmm.alloc()` r
 `klog_ok`. This is a source-level namespace convenience only; it does not rename object symbols
 or change `.globl` visibility.
 
-Inside an `asm { }` block the qualified `alias.member` spelling does not apply: inline assembly
-names HLL symbols by their literal flat link name (`call trap_handler`, `la t0, pmm_free_head`).
-This is the one allowed escape from qualified access. A module that calls an imported symbol only
-from inline asm still imports it (e.g. `trap_handler_dep := import("trap_handler")`) so the build
-closure compiles the provider and prepends its link interface; the alias binding may go otherwise
-unused. Such modules must be built with per-module mangling off so the literal names resolve.
+Unsigiled names inside `asm { }` remain literal assembler/linker names (`call trap_handler`,
+`la t0, pmm_free_head`) and do not use qualified HLL access. In a typed bridge operand, however,
+`$alias.exported_global` uses normal module visibility and resolves to the imported global's link
+symbol; later segments form a static field chain. A module that refers to an imported symbol only
+through an unsigiled raw instruction still imports it so the build closure includes the provider.
+Such raw references require the link spelling expected by the selected mangling mode.
 
 #### Paths
 
@@ -631,9 +631,9 @@ The mechanisms above are the target. Current status:
   carries a module resolver (name -> source) and, for each direct `import`, prepends the
   target's extracted interface (`hll_to_ir::imports`): exported `type`/`const`/`struct`/`enum`
   verbatim, exported generic functions with their bodies, and other exported `fn`/globals as
-  `external`. Imports required by that interface propagate recursively while implementation-only
-  imports do not. The in-VM `cc` toolchain and the raw `HllCompiler` path do not resolve imports;
-  the import decl is inert there.
+  `external`. Imports required by that interface propagate recursively and resolve in the scope
+  of the module that declared them; implementation-only imports do not propagate. The in-VM `cc`
+  toolchain and the raw `HllCompiler` path do not resolve imports; the import decl is inert there.
 - Qualified `alias := import(path)` is implemented for value, call, const, and type exports:
   the pipeline resolves each module binding, prepends its interface, and passes the alias's
   exported names to the compiler, which rewrites `alias.member`, `alias.member(args)`, and
@@ -898,32 +898,39 @@ consume: (buf: u8[], count: u64) {
 
 ## 8. Inline assembly
 
-Two forms emit raw RISC-V or read hardware registers. They exist only for low-level system
-code (`_start`, syscall wrappers); application code should not need them.
-
-`asm_reg(name)` reads a named ABI register as an `i64` and is valid in any expression:
-
-```hll
-stack_ok: () -> bool { return asm_reg(sp) > 0x10000 }
-```
-
-`asm { }` is a verbatim block of RISC-V instructions, one per line, whitespace-delimited:
+`asm { }` combines raw RISC-V instructions with typed bridge operations. It exists for low-level
+system code such as entry points, trap handlers, and syscall wrappers; application code should
+not normally need it.
 
 ```hll
-_start: () {
+write: (fd: i64, buf: u8[]) -> i64 {
+    result: i64 = 0
     asm {
-        call main
-        li   a7, 93
+        mv a0, $fd
+        mv a1, $buf.ptr
+        mv a2, $buf.len
+        li a7, 64
         ecall
+        mv $result, a0
     }
+    return result
 }
 ```
 
-- Allowed registers (both forms): `sp`, `fp`, `ra`, `gp`, `tp`, `a0`-`a7`, `s1`-`s11`. Spell
-  the frame pointer `fp` (the `s0` alias is not accepted). Temporaries `t0`-`t6` are not
-  allowed: the register allocator may hold live values in them at any asm site.
-- An `asm { }` block contains raw assembly text only (no HLL expressions, no data directives).
-  Branches and labels inside a block must not target outside it, and blocks cannot nest.
+- `mv reg, $place` loads an HLL value into an integer register.
+- `mv $place, reg` stores an integer register into mutable HLL storage.
+- `la reg, $place` loads the address of HLL storage.
+- `$place` follows normal scope and visibility. It may name a parameter, local, same-module global,
+  imported exported global, or a static struct/slice field chain. It cannot contain a dereference,
+  call, arithmetic expression, or dynamic index.
+- `mv` accepts `bool`, integer, pointer, and function-pointer storage of at most eight bytes. Use
+  `la` for aggregates. Destination registers cannot be `zero`/`x0` or `sp`; floating-point
+  registers are not bridge operands.
+- Each bridge runs exactly where authored. Compiler-generated address temporaries are saved in
+  frame scratch slots and restored before the next raw instruction, so unrelated hardware
+  registers are unchanged.
+- All other lines remain raw assembly. Unsigiled names are literal linker symbols. Data directives,
+  nested blocks, and branches or labels that cross an asm block boundary are not allowed.
 
 ## 9. Formal grammar (EBNF)
 
@@ -997,7 +1004,13 @@ for_stmt       = "for" identifier "in" ( range_expr | expression ) block;
 range_expr     = [ expression ] ( ".." | "..=" ) [ expression ];
 return_stmt    = "return" [ expression ];
 defer_stmt     = "defer" expression;
-asm_block      = "asm" "{" { asm_line } "}";
+asm_block      = "asm" "{" { asm_operation } "}";
+asm_operation  = asm_bridge | asm_line;
+asm_bridge     = "mv" integer_reg "," asm_place
+               | "mv" asm_place "," integer_reg
+               | "la" integer_reg "," asm_place;
+asm_place      = "$" identifier { "." identifier };
+integer_reg    = identifier;
 expression     = match_expr | binary_expr | cast_expr | unary_expr | postfix_expr
                | format_into;
 format_into    = identifier "." "format_into" "(" expression "," string ")";
@@ -1013,9 +1026,8 @@ postfix_expr   = primary_expr { "." identifier | "[" index_or_range "]"
                  | "(" [ arg_list ] ")" | "?" };
 index_or_range = expression | range_expr;
 primary_expr   = identifier [ type_args ] | literal | "(" expression ")"
-               | array_literal | struct_literal | new_expr | asm_reg_expr;
+               | array_literal | struct_literal | new_expr;
 new_expr       = "new" "(" type [ "," expression ] ")";
-asm_reg_expr   = "asm_reg" "(" abi_reg ")";
 array_literal  = "[" [ expression { "," expression } ] "]";
 struct_literal = [ identifier ] "{" [ literal_body ] "}";
 literal_body   = field_init { "," field_init } [ "," [ ".." ] ] | "..";

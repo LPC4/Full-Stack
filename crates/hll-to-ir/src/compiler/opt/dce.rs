@@ -6,7 +6,7 @@
 //!
 //! Conservative about side effects: `Load` is retained because a load may target
 //! MMIO and have observable effects, and `Call`/`HeapAlloc`/`HeapFree`/`Store`/
-//! `ReadReg`/`InlineAsm`/`Alloc`/`IndirectCall` are always kept. Liveness is whole-function and
+//! `InlineAsm`/`Alloc`/`IndirectCall` are always kept. Liveness is whole-function and
 //! ignores which definition reaches a use, which is sound here because an
 //! instruction is only removed when its register has zero readers at all.
 
@@ -47,7 +47,7 @@ fn keep_instruction(inst: &IrInstruction, used: &HashSet<IrRegister>) -> bool {
         | IrInstruction::GlobalRef { dest, .. }
         | IrInstruction::FunctionAddr { dest, .. }
         | IrInstruction::Phi { dest, .. } => used.contains(dest),
-        // Comment, Alloc, HeapAlloc, HeapFree, InlineAsm, ReadReg, Load, Store,
+        // Comment, Alloc, HeapAlloc, HeapFree, InlineAsm, Load, Store,
         // Call: retained for their side effects (or conservatively).
         _ => true,
     }

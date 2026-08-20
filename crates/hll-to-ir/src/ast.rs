@@ -256,6 +256,44 @@ pub struct Block {
     pub stmt_lines: Vec<u32>,
 }
 
+/// An inline-asm `$place`; `base` follows HLL scope and `fields` is static.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AsmPlace {
+    pub base: String,
+    pub fields: Vec<String>,
+}
+
+impl AsmPlace {
+    pub fn render(&self) -> String {
+        if self.fields.is_empty() {
+            format!("${}", self.base)
+        } else {
+            format!("${}.{}", self.base, self.fields.join("."))
+        }
+    }
+}
+
+/// A raw instruction or typed HLL storage bridge in an `asm { }` block.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AsmOp {
+    Raw(String),
+    /// `mv reg, $place`
+    Load {
+        reg: String,
+        place: AsmPlace,
+    },
+    /// `mv $place, reg`
+    Store {
+        place: AsmPlace,
+        reg: String,
+    },
+    /// `la reg, $place`
+    Addr {
+        reg: String,
+        place: AsmPlace,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
     Expression(Expression),
@@ -277,7 +315,7 @@ pub enum Statement {
     Return(Option<Expression>),
     Defer(Expression),
     AsmBlock {
-        lines: Vec<String>,
+        ops: Vec<AsmOp>,
     },
     Break,
     Continue,
@@ -475,9 +513,6 @@ pub enum PrimaryExpr {
     New {
         ty: Type,
         args: Vec<Expression>, // Optional size/capacity args
-    },
-    AsmReg {
-        reg: String,
     },
     // `Matrix<i32>.LANES`: an associated constant projected from an impl owner.
     // Folded to its literal value before semantic analysis.

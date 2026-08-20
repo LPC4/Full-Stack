@@ -135,7 +135,7 @@ Every allocation pushes the end of the heap towards higher addresses.
 
 ![The stack at high addresses and the heap growing toward it](figures/the_stack_and_the_heap.svg)
 
-You can probably see the danger: if the stack uses more memory than available, or starts overwriting the heap, 
+You can probably see the danger: if the stack uses more memory than available, or starts overwriting the heap,
 that is the *stack overflow error* you've probably heard of.
 
 Let's use the stack in a small example. We reserve some stack space, store two numbers in it, load them
@@ -300,7 +300,7 @@ Okay, so now we've made a sum from 1 to 10, but what if you want to sum up a ran
 size, so we can't just put it all in registers, or use math tricks to sum them all (which is what you would try
 to do if writing really optimized assembly).
 
-So we'll have to put the array into memory, which for our purposes is basically unlimited: all 32 registers together 
+So we'll have to put the array into memory, which for our purposes is basically unlimited: all 32 registers together
 hold just 256 bytes, while the VM in this project has 128 MiB of RAM, and your own PC has gigabytes of it.
 
 We can do this through *sections*: `.text` and `.data`. These are directives that tell the *assembler* what the
@@ -452,7 +452,7 @@ register, but the `s` registers are "saved" registers that must come out of a ca
 so if you want to use one, you have to save its old value first, because it belongs to your caller. At the end of the
 function, the *epilogue* undoes all of it in reverse: `ld` the saved registers back, move `sp` up, `ret`.
 
-This is all a bit abstract, so let's have a look at an example. Here's a function that needs all of it, `max3`, which 
+This is all a bit abstract, so let's have a look at an example. Here's a function that needs all of it, `max3`, which
 finds the largest of three numbers by calling `max` twice:
 
 ```asm
@@ -518,7 +518,7 @@ example:
 ![A stack frame addressed from the frame pointer](figures/the_frame_pointer.svg)
 
 Most compilers drop `fp` and track the offsets themselves to be more efficient: no need to burn a register and two
-extra instructions per function. Our examples from before do the compiler thing, pure `sp` offsets, which is also why 
+extra instructions per function. Our examples from before do the compiler thing, pure `sp` offsets, which is also why
 `max3` was free to use `s0` (alias `fp`) as an ordinary saved register.
 
 Now let's tie the whole thing together with one last example: factorial. It's a good fit, because
@@ -615,7 +615,7 @@ block, and the stack looks like this:
 ![Five live `fact` frames on the stack](figures/the_frame_pointer_3.svg)
 
 The innermost `fact(1)` took the base-case branch before storing anything, so its local slot is still
-`(unused)`; every frame above it has its `n` saved and is waiting for the call below to return. `ret` and the epilogue 
+`(unused)`; every frame above it has its `n` saved and is waiting for the call below to return. `ret` and the epilogue
 pop the frames off one at a time, and the answers multiply their way back up to `fact(5) = 120`.
 
 Now we can see how recursion can cause a *stack overflow*. Each call pushes the stack a little further down, and a
@@ -883,7 +883,7 @@ people who have been doing it way longer.
 The board we'll use is called `virt`. It doesn't correspond to any chip you can buy: it's a board the QEMU authors
 invented, with a RISC-V CPU and a small set of standard devices at fixed addresses. That sounds like cheating,
 but the CPU is a real RV64 implementation and the devices are real device designs, so code written for `virt` is written
-against the same rules as code for silicon. The board is fictional, but it's CPU and devices follow the same 
+against the same rules as code for silicon. The board is fictional, but it's CPU and devices follow the same
 specifications as real hardware.
 
 The port is [`07_qemu/hello_world.s`](repo:programs/lessons/07_qemu/hello_world.s). Two things change
@@ -1476,7 +1476,7 @@ For a quick reminder of the terminology used so far, see the [glossary](../../gl
 Open the [`08: HLL compiler pipeline`](repo:programs/lessons/08_hll/compiler_pipeline.hll) example
 again and click debug, but instead of pressing run, advance one instruction at a time. The first
 instruction is not in `main`. You land in a file called
-[`runtime.hll`](repo:crates/os-runtime/stdlib/hosted/runtime.hll). That's the *runtime*, a small piece
+[`runtime.hll`](repo:crates/os-runtime/stdlib/platform/hosted/runtime.hll). That's the *runtime*, a small piece
 of code that wraps your program so it can start and stop cleanly without you having to interact with
 any type of hardware or assembly.
 
@@ -1508,7 +1508,7 @@ export _start: (entry_arg_ptr: u8*, entry_arg_len: u64) {
 
 `external main` tells the compiler that somebody else will provide `main`. That somebody else is you! The runtime calls
 `main`, captures whatever it returns into `code`, and then calls `sys.exit(code)`. Under the kernel,
-the loader places the process argument pointer and length in `a0` and `a1`, these get saved in the globals by `_start`, 
+the loader passes the process argument pointer and length to `_start`, which saves them in the runtime globals,
 and then `runtime.arg()` lets you access the arguments as a slice.
 
 Continue stepping until `jal ra, main` is next. Step once more and the machine jumps into the small
@@ -1522,21 +1522,19 @@ Step into `sys.exit`. You'll find a small assembly wrapper in the standard libra
 
 ```hll
 export sys_exit: (code: i64) {
-	_a0 = code as u64
 	asm {
-		la t0, _a0
-		ld a0, 0(t0)
+		mv a0, $code
 		li a7, 93
 		ecall
 	}
 }
 ```
 
-The exit code is stored in a global variable `_a0`. Inline assembly loads it into register `a0`, puts the number 93
-into `a7`, and then executes an instruction we haven't seen before: `ecall`.
+The `$code` operand bridges the typed HLL parameter into register `a0` at that exact point. Inline
+assembly then puts the number 93 into `a7` and executes an instruction we haven't seen before: `ecall`.
 
 `ecall` is short for *environment call*. Think of it like a jump instruction, but instead of jumping
-to a label in your own code, the CPU pauses your program and jumps to a handler address that was configured during startup. 
+to a label in your own code, the CPU pauses your program and jumps to a handler address that was configured during startup.
 The number in `a7` tells that handler which service you want, in this case it's exiting with a specific code.
 
 In our hosted setup, that handler lives in ROM and only knows a few basic services. Syscall 93 means "exit".
@@ -1684,9 +1682,9 @@ Every language ends up needing the same handful of things: printing, reading inp
 memory. Rewriting all of that for every single program would be pointless, so most languages ship it prebuilt as
 a standard library. HLL does so too, this chapter goes over some of the most useful pieces of mine.
 
-The library lives under [crates/os-runtime/stdlib](repo:crates/os-runtime/stdlib/hosted/runtime.hll). You've already
-seen two of its modules: [runtime.hll](repo:crates/os-runtime/stdlib/hosted/runtime.hll) wraps `main`, and [console.hll](repo:crates/os-runtime/stdlib/hosted/console.hll)
-is where the print functions live. First we'll look at memory.
+The library lives under [crates/os-runtime/stdlib](repo:crates/os-runtime/stdlib/stdlib.build). You've already
+seen two of its modules: [runtime.hll](repo:crates/os-runtime/stdlib/platform/hosted/runtime.hll) wraps `main`, and [console.hll](repo:crates/os-runtime/stdlib/core/console.hll)
+is where the target-independent print functions live. First we'll look at memory.
 
 ### Dynamic memory allocation
 
@@ -1866,8 +1864,42 @@ I won't be diving into the different allocation methods in this guide. I just wa
 understand the concept: keep track of which parts of the heap are in use, reuse freed blocks when
 possible, and grow the heap when necessary. There are loads of ways to actually implement it.
 
-You can find this project's actual allocator in
-[`memory_allocator.hll`](repo:crates/os-runtime/stdlib/core/memory_allocator.hll). It uses a linked
+You can find the project's actual allocator in [`alloc.hll`](repo:crates/os-runtime/stdlib/core/alloc.hll). It uses a linked
 list instead of the fixed `blocks` array, but the basic search and reuse are the same, and it also
 reuses each block whole. You can step into the standard library from either lesson and watch a similar
 allocator run.
+
+### Different targets
+
+Of course, allocation isn't the only thing in the standard library. There's also string utilities, memory functions,
+console-writing wrappers, logging helpers, and the small runtime that calls your `main` function. But not every program
+can use the exact same implementation for all of those things.
+
+As we've seen, HLL can build three kinds of programs: *freestanding*, *hosted*, and *kernel*. These targets are directly
+related to the privilege modes we looked at in the last chapter:
+
+* **M-mode (Freestanding):** Programs running in M-mode are at the very bottom. They don't have an operating system beneath
+  them to make `ecalls` to, so they have to interact with the hardware directly (exactly like the raw assembly we wrote earlier).
+  They grow their own heap, write straight to the UART, and shut down via SYSCON.
+* **S-mode (Kernel):** A kernel is ultimately just a program running in S-mode. It has access to `ecalls` that trap
+  directly into the M-mode firmware, so it can use those firmware services in its own standard library implementations.
+* **U-mode (Hosted):** Normal user programs run in U-mode. They aren't allowed to touch the hardware directly, but they
+  can make `ecalls` into the S-mode kernel. Their standard library just wraps those kernel syscalls to get things done.
+
+This is exactly why the standard library is split up. You don't want your U-mode program trying to write to a device's
+memory address, and your M-mode program literally can't make an `ecall` into an OS kernel that hasn't been loaded yet.
+
+Because of this, the standard library separates the reusable, target-independent logic (like math, string formatting,
+and container types) from the low-level code that actually talks to the environment.
+
+At compile time, you just select your target in the build file, and the compiler automatically pulls in the correct
+standard library implementations for you:
+
+| Target | What it links |
+|--------|---------------|
+| **Freestanding** | Baremetal hardware providers (direct UART, raw heap growth) + the freestanding `_start` and shutdown logic. |
+| **Hosted** | Syscall wrappers (like `sys.write` and `brk`) + the hosted `_start`. |
+| **Kernel** | Baremetal hardware providers + the kernel's specific entry point (`_kernel_start`) and logging. |
+
+All three targets share the exact same core algorithms. The build file just changes the underlying "backend"
+functions.

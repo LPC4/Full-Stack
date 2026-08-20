@@ -381,7 +381,7 @@ fn resolve_primary(primary: &mut PrimaryExpr, catalog: &AssociatedCatalog) -> Re
         PrimaryExpr::AssociatedConst { .. } => {
             unreachable!("associated constants are rewritten before recursion")
         }
-        PrimaryExpr::Identifier(_) | PrimaryExpr::Literal(_) | PrimaryExpr::AsmReg { .. } => Ok(()),
+        PrimaryExpr::Identifier(_) | PrimaryExpr::Literal(_) => Ok(()),
     }
 }
 

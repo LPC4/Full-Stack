@@ -2,6 +2,7 @@
 
 export console_backend_write_byte: (c: u8) {
 	asm {
+		mv a0, $c
 		li t0, 0x10000000
 		sb a0, 0(t0)
 	}

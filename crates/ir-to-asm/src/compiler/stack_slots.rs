@@ -85,7 +85,7 @@ fn collect_vregs_from_instruction(
 ) {
     use IrInstruction::{
         Alloc, Call, Cast, Cmp, FunctionAddr, GlobalRef, HeapAlloc, Index, IndirectCall, Load,
-        Math, Offset, Phi, ReadReg, Unary,
+        Math, Offset, Phi, Unary,
     };
 
     match inst {
@@ -147,11 +147,6 @@ fn collect_vregs_from_instruction(
         HeapAlloc { dest, ty, .. } => {
             if !vregs.iter().any(|(r, _)| r == dest) {
                 vregs.push((dest.clone(), IrType::Pointer(Box::new(ty.clone()))));
-            }
-        }
-        ReadReg { dest, .. } => {
-            if !vregs.iter().any(|(r, _)| r == dest) {
-                vregs.push((dest.clone(), IrType::Integer(hll_to_ir::IntWidth::I64)));
             }
         }
         GlobalRef { dest, .. } => {

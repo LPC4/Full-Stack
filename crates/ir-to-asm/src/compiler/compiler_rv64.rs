@@ -203,6 +203,19 @@ impl CompilerRv64 {
 
         let mut ctx = FunctionContext::new(&self.type_aliases);
         ctx.set_omit_frame_pointer(self.omit_frame_pointer);
+        let has_asm_bridge = func.blocks.iter().any(|block| {
+            block.instructions.iter().any(|inst| {
+                matches!(
+                    inst,
+                    IrInstruction::InlineAsm { ops }
+                        if ops.iter().any(|op| !matches!(op, hll_to_ir::IrAsmOp::Raw(_)))
+                )
+            })
+        });
+        if has_asm_bridge {
+            let slots = [ctx.frame.alloc_slot(8, 8), ctx.frame.alloc_slot(8, 8)];
+            ctx.set_asm_scratch_slots(slots);
+        }
         stack_slots::assign_stack_slots(
             func,
             &mut ctx,
@@ -243,10 +256,6 @@ impl CompilerRv64 {
         }
         ctx.finalize();
 
-        for (index, param) in func.params.iter().enumerate() {
-            ctx.set_param_index(&param.register, index + usize::from(needs_sret));
-        }
-
         for block in &func.blocks {
             ctx.map_label(&block.label, format!("{}__{}", func.name, block.label.0));
         }
@@ -263,41 +272,7 @@ impl CompilerRv64 {
             self.emitter.emit_mv(9, A0);
         }
 
-        // Inline-asm-only functions keep their params in a0-a7 / fa0-fa7 for the
-        // asm to read, so the normal spills are skipped.
-        let has_inline_asm = func.blocks.iter().any(|block| {
-            block
-                .instructions
-                .iter()
-                .any(|inst| matches!(inst, IrInstruction::InlineAsm { .. }))
-        });
-        let is_asm_only = has_inline_asm
-            && func.blocks.iter().all(|block| {
-                block.instructions.iter().all(|inst| {
-                    matches!(
-                        inst,
-                        IrInstruction::InlineAsm { .. }
-                            | IrInstruction::Comment(_)
-                            | IrInstruction::Alloc { .. }
-                            | IrInstruction::Store { .. }
-                            | IrInstruction::Phi { .. }
-                    )
-                })
-            });
-
-        ctx.set_preserve_param_registers(is_asm_only);
-
-        if is_asm_only {
-            if let Some(sret_slot) = sret_slot {
-                ctx.emit_parameter_spills_with_sret_for_inline_asm(
-                    &mut self.emitter,
-                    func,
-                    sret_slot,
-                );
-            } else {
-                ctx.emit_parameter_spills_for_inline_asm(&mut self.emitter, func);
-            }
-        } else if let Some(sret_slot) = sret_slot {
+        if let Some(sret_slot) = sret_slot {
             ctx.emit_parameter_spills_with_sret(&mut self.emitter, func, sret_slot);
         } else {
             ctx.emit_parameter_spills(&mut self.emitter, func);
@@ -414,18 +389,30 @@ impl CompilerRv64 {
     fn lower_instruction(&mut self, inst: &IrInstruction, ctx: &mut FunctionContext) {
         use IrInstruction::{
             Alloc, Call, Cast, Cmp, Comment, FunctionAddr, GlobalRef, HeapAlloc, HeapFree, Index,
-            IndirectCall, InlineAsm, Load, Math, Offset, Phi, ReadReg, Store, Unary,
+            IndirectCall, InlineAsm, Load, Math, Offset, Phi, Store, Unary,
         };
         match inst {
             Comment(s) => self.emitter.emit_comment(s),
             IrInstruction::SourceLine { file, line } => self.emitter.emit_source_loc(file, *line),
             Alloc { .. } | Phi { .. } => {}
-            InlineAsm { lines } => {
-                for line in lines {
-                    self.emitter.emit_raw(&format!("\t{line}"));
+            InlineAsm { ops } => {
+                for op in ops {
+                    match op {
+                        hll_to_ir::IrAsmOp::Raw(line) => {
+                            self.emitter.emit_raw(&format!("\t{line}"));
+                        }
+                        hll_to_ir::IrAsmOp::Load { reg, place } => {
+                            self.lower_asm_load(reg, place, ctx);
+                        }
+                        hll_to_ir::IrAsmOp::Store { place, reg } => {
+                            self.lower_asm_store(place, reg, ctx);
+                        }
+                        hll_to_ir::IrAsmOp::Addr { reg, place } => {
+                            self.lower_asm_addr(reg, place, ctx);
+                        }
+                    }
                 }
             }
-            ReadReg { dest, reg } => self.lower_read_reg(dest, reg, ctx),
             GlobalRef { dest, name } => self.lower_global_ref(dest, name, ctx),
             Load {
                 dest,
@@ -1213,6 +1200,127 @@ impl CompilerRv64 {
         self.commit_canonical_result(dest, temp, &ptr_ty, ctx);
     }
 
+    fn lower_asm_load(&mut self, reg: &str, place: &hll_to_ir::IrAsmPlace, ctx: &FunctionContext) {
+        let dest = asm_to_binary::parse_int_reg(reg).expect("validated asm bridge register");
+        self.emit_asm_place_address(dest, place, ctx);
+        let ty = self.resolve_ir_type(&place.ty);
+        self.emitter.emit_load_typed(dest, dest, &ty, 0);
+    }
+
+    fn lower_asm_addr(&mut self, reg: &str, place: &hll_to_ir::IrAsmPlace, ctx: &FunctionContext) {
+        let dest = asm_to_binary::parse_int_reg(reg).expect("validated asm bridge register");
+        self.emit_asm_place_address(dest, place, ctx);
+    }
+
+    fn lower_asm_store(&mut self, place: &hll_to_ir::IrAsmPlace, reg: &str, ctx: &FunctionContext) {
+        let source = asm_to_binary::parse_int_reg(reg).expect("validated asm bridge register");
+        let ty = self.resolve_ir_type(&place.ty);
+        if let Some(offset) = Self::asm_local_offset(place, ctx)
+            && let Ok(offset) = i32::try_from(offset)
+            && (-2048..=2047).contains(&offset)
+        {
+            self.emitter.emit_store_from_tmp(SP, source, &ty, offset);
+            return;
+        }
+
+        let [address, auxiliary] = Self::asm_scratch_registers(source);
+        let [address_slot, auxiliary_slot] = ctx
+            .asm_scratch_slots()
+            .expect("bridge functions reserve scratch slots");
+        self.emitter.emit_sd(SP, address, address_slot as i32);
+        self.emitter.emit_sd(SP, auxiliary, auxiliary_slot as i32);
+        self.emit_asm_place_address_with_scratch(address, auxiliary, place, ctx);
+        self.emitter.emit_store_from_tmp(address, source, &ty, 0);
+        self.emitter.emit_ld(auxiliary, SP, auxiliary_slot as i32);
+        self.emitter.emit_ld(address, SP, address_slot as i32);
+    }
+
+    fn emit_asm_place_address(
+        &mut self,
+        dest: Reg,
+        place: &hll_to_ir::IrAsmPlace,
+        ctx: &FunctionContext,
+    ) {
+        if let Some(offset) = Self::asm_local_offset(place, ctx) {
+            if (-2048..=2047).contains(&offset) {
+                self.emitter.emit_addi(dest, SP, offset as i32);
+            } else {
+                self.emitter
+                    .emit_raw(&format!("\tli {}, {offset}", reg_name(dest, false)));
+                self.emitter.emit_add(dest, SP, dest);
+            }
+            return;
+        }
+
+        let symbol = place.symbol.as_deref().expect("global asm place symbol");
+        self.emitter
+            .emit_raw(&format!("\tla {}, {symbol}", reg_name(dest, false)));
+        if place.offset == 0 {
+            return;
+        }
+        if (-2048..=2047).contains(&place.offset) {
+            self.emitter.emit_addi(dest, dest, place.offset as i32);
+            return;
+        }
+
+        let [scratch, _] = Self::asm_scratch_registers(dest);
+        let [scratch_slot, _] = ctx
+            .asm_scratch_slots()
+            .expect("bridge functions reserve scratch slots");
+        self.emitter.emit_sd(SP, scratch, scratch_slot as i32);
+        self.emitter.emit_raw(&format!(
+            "\tli {}, {}",
+            reg_name(scratch, false),
+            place.offset
+        ));
+        self.emitter.emit_add(dest, dest, scratch);
+        self.emitter.emit_ld(scratch, SP, scratch_slot as i32);
+    }
+
+    fn emit_asm_place_address_with_scratch(
+        &mut self,
+        address: Reg,
+        auxiliary: Reg,
+        place: &hll_to_ir::IrAsmPlace,
+        ctx: &FunctionContext,
+    ) {
+        if let Some(offset) = Self::asm_local_offset(place, ctx) {
+            self.emitter
+                .emit_raw(&format!("\tli {}, {offset}", reg_name(address, false)));
+            self.emitter.emit_add(address, SP, address);
+            return;
+        }
+
+        let symbol = place.symbol.as_deref().expect("global asm place symbol");
+        self.emitter
+            .emit_raw(&format!("\tla {}, {symbol}", reg_name(address, false)));
+        if place.offset != 0 {
+            self.emitter.emit_raw(&format!(
+                "\tli {}, {}",
+                reg_name(auxiliary, false),
+                place.offset
+            ));
+            self.emitter.emit_add(address, address, auxiliary);
+        }
+    }
+
+    fn asm_local_offset(place: &hll_to_ir::IrAsmPlace, ctx: &FunctionContext) -> Option<i64> {
+        let local = place.local.as_ref()?;
+        let slot = i64::try_from(ctx.slot_for_reg(local).expect("asm local slot"))
+            .expect("stack offset fits i64");
+        Some(
+            slot.checked_add(place.offset)
+                .expect("asm place offset overflow"),
+        )
+    }
+
+    fn asm_scratch_registers(protected: Reg) -> [Reg; 2] {
+        let mut registers = [5, 6, 7, 28, 29, 30, 31]
+            .into_iter()
+            .filter(|reg| *reg != protected);
+        [registers.next().unwrap(), registers.next().unwrap()]
+    }
+
     fn lower_function_addr(
         &mut self,
         dest: &hll_to_ir::IrRegister,
@@ -1474,21 +1582,6 @@ impl CompilerRv64 {
         self.emitter.emit_raw("\tcall free");
     }
 
-    fn lower_read_reg(
-        &mut self,
-        dest: &hll_to_ir::IrRegister,
-        reg: &str,
-        ctx: &mut FunctionContext,
-    ) {
-        use asm_to_binary::parse_int_reg;
-        self.emitter.reset_temp_counter();
-        let src_hw = parse_int_reg(reg).expect("asm_reg: register validated by semantic analysis");
-        let tmp = self.result_reg_for(dest, ctx);
-        self.emitter.emit_mv(tmp, src_hw);
-        let i64_ty = IrType::Integer(hll_to_ir::IntWidth::I64);
-        self.commit_canonical_result(dest, tmp, &i64_ty, ctx);
-    }
-
     fn lower_terminator(
         &mut self,
         term: &IrTerminator,
@@ -1745,7 +1838,6 @@ impl CompilerRv64 {
     fn load_value_to_temp(&mut self, val: &IrValue, ctx: &FunctionContext) -> Reg {
         // Register-resident values are used in place; no temp, no load.
         if let IrValue::Register(reg) = val
-            && !ctx.preserve_param_registers()
             && let Some(phys) = ctx.phys_reg_for(reg)
         {
             return phys;
@@ -1754,14 +1846,6 @@ impl CompilerRv64 {
         let temp = self.emitter.alloc_temp_reg();
         match val {
             IrValue::Register(reg) => {
-                if ctx.preserve_param_registers()
-                    && let Some(index) = ctx.param_index(reg)
-                    && index < 8
-                {
-                    self.emitter.emit_mv(temp, reg_for_arg(index));
-                    return temp;
-                }
-
                 // Load the register's value from its stack slot.
                 let slot = ctx.slot_for_reg(reg).expect("reg slot");
                 if ctx.is_stack_address(reg) {
@@ -1802,28 +1886,6 @@ impl CompilerRv64 {
         let temp = self.emitter.alloc_float_temp_reg();
         match val {
             IrValue::Register(reg) => {
-                if ctx.preserve_param_registers()
-                    && let Some(index) = ctx.param_index(reg)
-                    && index < 8
-                {
-                    let ty = ctx
-                        .type_for_reg(reg)
-                        .unwrap_or(IrType::Float(hll_to_ir::FloatWidth::F32));
-                    match ty {
-                        IrType::Float(hll_to_ir::FloatWidth::F32) => {
-                            self.emitter.emit_fmv_s(temp, reg_for_arg(index));
-                        }
-                        IrType::Float(hll_to_ir::FloatWidth::F64) => {
-                            self.emitter.emit_inst(RealInstruction::FsgnjD(fmv_d(
-                                temp,
-                                reg_for_arg(index),
-                            )));
-                        }
-                        _ => panic!("Expected float type"),
-                    }
-                    return temp;
-                }
-
                 let slot = ctx.slot_for_reg(reg).expect("reg slot");
                 let ty = ctx
                     .type_for_reg(reg)
@@ -1865,21 +1927,11 @@ impl CompilerRv64 {
         reg: &hll_to_ir::IrRegister,
         ctx: &FunctionContext,
     ) -> Reg {
-        if !ctx.preserve_param_registers()
-            && let Some(phys) = ctx.phys_reg_for(reg)
-        {
+        if let Some(phys) = ctx.phys_reg_for(reg) {
             return phys;
         }
 
         let temp = self.emitter.alloc_temp_reg();
-        if ctx.preserve_param_registers()
-            && let Some(index) = ctx.param_index(reg)
-            && index < 8
-        {
-            self.emitter.emit_mv(temp, reg_for_arg(index));
-            return temp;
-        }
-
         let slot = ctx.slot_for_reg(reg).expect("reg slot");
         if ctx.is_stack_address(reg) {
             self.emitter.emit_add_imm(temp, SP, slot as i64);
@@ -2034,6 +2086,46 @@ mod tests {
         for e in out.line_table_iter() {
             assert_eq!(out.source_for_addr(e.addr), Some(("prog.hll", 7)));
         }
+    }
+
+    #[test]
+    fn inline_asm_bridges_lower_at_authored_width_and_preserve_scratch() {
+        let output = hll_to_ir::HllCompiler::new(hll_to_ir::CompileConfig {
+            strict: true,
+            ..hll_to_ir::CompileConfig::default()
+        })
+        .compile(
+            r#"
+global: u16 = 0
+main: (arg: u8) -> i32 {
+    result: u8 = 0
+    asm {
+        li t0, 77
+        mv a0, $arg
+        mv $global, a0
+        la a1, $global
+        mv $result, a0
+        mv a2, $result
+    }
+    return result as i32
+}
+"#,
+        )
+        .expect("valid bridge program");
+        let asm = CompilerRv64::new().compile(&output.ir).expect("valid IR");
+        assert!(
+            asm.contains("lb     a0"),
+            "u8 bridge load must use lb:\n{asm}"
+        );
+        assert!(
+            asm.contains("sh     a0"),
+            "u16 bridge store must use sh:\n{asm}"
+        );
+        let save = asm.find("sd     t0, 0(sp)").expect("scratch save");
+        let global_store = asm.find("sh     a0, 0(t0)").expect("global store");
+        let restore = asm.find("ld     t0, 0(sp)").expect("scratch restore");
+        assert!(save < global_store && global_store < restore, "{asm}");
+        assert!(asm.find("li t0, 77").unwrap() < save, "{asm}");
     }
 
     // Zext must mask the high bits a sign-extending load left behind (slli/srli,

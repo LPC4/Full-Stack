@@ -78,8 +78,8 @@ pub use token::Span;
 // Re-export IR types so downstream crates (ir-to-asm, visualizer) can import them
 // from hll_to_ir:: directly.
 pub use ir::{
-    FloatWidth, IntWidth, IrBlock, IrCastMode, IrCmpOp, IrFunction, IrGlobalString, IrGlobalVar,
-    IrInstruction, IrLabel, IrMathOp, IrParam, IrProgram, IrRegister, IrTerminator, IrType,
-    IrTypeAlias, IrUnaryOp, IrValue, TypeLayout, TypeLayoutError, type_layout,
-    type_resolves_to_void,
+    FloatWidth, IntWidth, IrAsmOp, IrAsmPlace, IrBlock, IrCastMode, IrCmpOp, IrFunction,
+    IrGlobalString, IrGlobalVar, IrInstruction, IrLabel, IrMathOp, IrParam, IrProgram, IrRegister,
+    IrTerminator, IrType, IrTypeAlias, IrUnaryOp, IrValue, TypeLayout, TypeLayoutError,
+    type_layout, type_resolves_to_void,
 };

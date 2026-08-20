@@ -466,6 +466,18 @@ fn push_inline_asm_code_part(out: &mut Out, base: usize, code_part: &str) {
             continue;
         }
 
+        if b == b'$' {
+            end = start + 1;
+            while end < len
+                && (bytes[end].is_ascii_alphanumeric() || matches!(bytes[end], b'_' | b'.'))
+            {
+                end += 1;
+            }
+            out.push(base + start, base + end, Class::Identifier);
+            start = end;
+            continue;
+        }
+
         if b.is_ascii_alphabetic() || b == b'_' || b == b'.' {
             while end < len
                 && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_' || bytes[end] == b'.')
@@ -737,5 +749,12 @@ main: () -> i32 {
         let source = "struct Box<T> { value: T }\nitem: Box<Widget>\n";
         assert_eq!(classes_for(source, "T"), [Class::Generic, Class::Generic]);
         assert_eq!(classes_for(source, "Widget"), [Class::Text]);
+    }
+
+    #[test]
+    fn inline_asm_places_are_hll_identifiers() {
+        let source = "main: () {\n    asm { mv a0, $slice.ptr }\n}\n";
+        assert_eq!(classes_for(source, "$slice.ptr"), [Class::Identifier]);
+        assert_eq!(classes_for(source, "a0"), [Class::Register]);
     }
 }

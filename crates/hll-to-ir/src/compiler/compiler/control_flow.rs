@@ -105,10 +105,40 @@ impl HighLevelCompiler {
             }
             Statement::Break => self.lower_break(),
             Statement::Continue => self.lower_continue(),
-            Statement::AsmBlock { lines } => {
-                self.push_instruction(IrInstruction::InlineAsm {
-                    lines: lines.clone(),
-                });
+            Statement::AsmBlock { ops } => {
+                let mut ir_ops = Vec::with_capacity(ops.len());
+                for op in ops {
+                    match op {
+                        crate::ast::AsmOp::Raw(line) => {
+                            ir_ops.push(crate::ir::IrAsmOp::Raw(line.clone()));
+                        }
+                        crate::ast::AsmOp::Load { reg, place } => {
+                            if let Some(resolved) = self.resolve_asm_place(place) {
+                                ir_ops.push(crate::ir::IrAsmOp::Load {
+                                    reg: reg.clone(),
+                                    place: resolved,
+                                });
+                            }
+                        }
+                        crate::ast::AsmOp::Store { place, reg } => {
+                            if let Some(resolved) = self.resolve_asm_place(place) {
+                                ir_ops.push(crate::ir::IrAsmOp::Store {
+                                    place: resolved,
+                                    reg: reg.clone(),
+                                });
+                            }
+                        }
+                        crate::ast::AsmOp::Addr { reg, place } => {
+                            if let Some(resolved) = self.resolve_asm_place(place) {
+                                ir_ops.push(crate::ir::IrAsmOp::Addr {
+                                    reg: reg.clone(),
+                                    place: resolved,
+                                });
+                            }
+                        }
+                    }
+                }
+                self.push_instruction(crate::ir::IrInstruction::InlineAsm { ops: ir_ops });
             }
             Statement::Defer(expr) => self.lower_defer(expr),
         }

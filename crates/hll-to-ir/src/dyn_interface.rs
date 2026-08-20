@@ -690,7 +690,6 @@ fn rewrite_expression(
             }
             PrimaryExpr::Identifier(_)
             | PrimaryExpr::Literal(_)
-            | PrimaryExpr::AsmReg { .. }
             | PrimaryExpr::AssociatedConst { .. } => {}
         },
     }

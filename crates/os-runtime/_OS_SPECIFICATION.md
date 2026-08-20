@@ -278,7 +278,9 @@ ready queue but is never misreported to its waiting parent as finished.
 288-byte frame on a dedicated kernel stack (switched in via `sscratch`), saves
 `x1..x31` and the S-mode CSRs (`sepc`/`scause`/`stval`/`sstatus` at frame offsets
 256/264/272/280), calls `trap_handler(frame)`, then restores and `sret`s. The frame
-doubles as the process context (5.1).
+doubles as the process context (5.1). Restore clears `sstatus.SIE` until `sret`
+atomically derives it from `SPIE`, preventing a nested scheduler switch from
+replacing a partially restored outer frame.
 
 ### 6.2 Dispatch by cause
 
@@ -327,7 +329,10 @@ catches cause 8, dispatches via `syscall_dispatch`, and advances `sepc` by 4.
 Standard numbers follow the Linux RISC-V ABI; the 100-range is project-specific.
 `stdlib/platform/hosted/sys.hll` provides the userspace `sys.*` wrappers and
 `stdlib/platform/hosted/cstr.hll` provides `cstr.*` helpers. Userspace programs
-import those modules. Hand-written `external` declarations are reserved for ABI/runtime edges.
+import those modules. Wrappers bridge parameters and slice fields into `a0`-`a5` at
+the authored syscall site and capture `a0` into a function-local result after
+`ecall`; they do not communicate through shared scratch globals. Hand-written
+`external` declarations are reserved for ABI/runtime edges.
 
 ### 7.2 Syscall table
 
@@ -544,7 +549,9 @@ The hosted userspace raw provider (`stdlib/platform/hosted/heap.hll`) is a bump
 allocator over the break: it queries the initial break with `brk(0)` and raises it
 with `brk(page_up(new_top))` whenever an allocation would cross the current
 ceiling, returning null only when `brk` fails to grow. This replaces the old fixed
-64 KB `.bss` buffer, so `malloc`/`new` can now grow past 64 KB. The kernel and
+64 KB `.bss` buffer, so `malloc`/`new` can now grow past 64 KB. Its private `brk`
+wrapper bridges the requested address and returned break through a local result,
+avoiding shared ABI scratch storage. The kernel and
 freestanding builds bump the bootstrap buffer plus any registered heap region
 (`stdlib/platform/baremetal/heap.hll`), since they have no syscalls. The bare-VM hosted
 path (no kernel) services the same `brk` in the M-mode firmware (`boot/trap.s`)

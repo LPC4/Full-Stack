@@ -1,15 +1,5 @@
-; Userspace syscall wrappers. Args go through globals because inline asm cannot reach locals.
+; Userspace syscall wrappers.
 ; Numbers and semantics: OS spec ch.7.
-
-; --- Syscall arguments ---
-
-_a0: u64 = 0
-_a1: u64 = 0
-_a2: u64 = 0
-_a3: u64 = 0
-_a4: u64 = 0
-_a5: u64 = 0
-_ret: i64 = 0
 
 struct ExecRequest {
 	path_ptr: u8*,
@@ -21,13 +11,13 @@ struct ExecRequest {
 }
 
 export sys_readchar: () -> i64 {
+	result: i64 = 0
 	asm {
 		li a7, 100
 		ecall
-		la t0, _ret
-		sd a0, 0(t0)
+		mv $result, a0
 	}
-	return _ret
+	return result
 }
 
 export sys_yield: () {
@@ -38,181 +28,125 @@ export sys_yield: () {
 }
 
 export sys_exit: (code: i64) {
-	_a0 = code as u64
 	asm {
-		la t0, _a0
-		ld a0, 0(t0)
+		mv a0, $code
 		li a7, 93
 		ecall
 	}
 }
 
 export sys_open: (path: u8[], flags: u64) -> i64 {
-	_a0 = path.ptr as u64
-	_a1 = path.len
-	_a2 = flags
+	result: i64 = 0
 	asm {
-		la t0, _a0
-		ld a0, 0(t0)
-		la t0, _a1
-		ld a1, 0(t0)
-		la t0, _a2
-		ld a2, 0(t0)
+		mv a0, $path.ptr
+		mv a1, $path.len
+		mv a2, $flags
 		li a7, 56
 		ecall
-		la t0, _ret
-		sd a0, 0(t0)
+		mv $result, a0
 	}
-	return _ret
+	return result
 }
 
 export sys_read: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
-	_a0 = fd as u64
-	_a1 = buf as u64
-	_a2 = offset
-	_a3 = len
+	result: i64 = 0
 	asm {
-		la t0, _a0
-		ld a0, 0(t0)
-		la t0, _a1
-		ld a1, 0(t0)
-		la t0, _a2
-		ld a2, 0(t0)
-		la t0, _a3
-		ld a3, 0(t0)
+		mv a0, $fd
+		mv a1, $buf
+		mv a2, $offset
+		mv a3, $len
 		li a7, 63
 		ecall
-		la t0, _ret
-		sd a0, 0(t0)
+		mv $result, a0
 	}
-	return _ret
+	return result
 }
 
 export sys_write: (fd: i64, buf: u8*, len: u64) -> i64 {
-	_a0 = fd as u64
-	_a1 = buf as u64
-	_a2 = len
+	result: i64 = 0
 	asm {
-		la t0, _a0
-		ld a0, 0(t0)
-		la t0, _a1
-		ld a1, 0(t0)
-		la t0, _a2
-		ld a2, 0(t0)
+		mv a0, $fd
+		mv a1, $buf
+		mv a2, $len
 		li a7, 64
 		ecall
-		la t0, _ret
-		sd a0, 0(t0)
+		mv $result, a0
 	}
-	return _ret
+	return result
 }
 
 export sys_close: (fd: i64) {
-	_a0 = fd as u64
 	asm {
-		la t0, _a0
-		ld a0, 0(t0)
+		mv a0, $fd
 		li a7, 57
 		ecall
 	}
 }
 
 export sys_ftruncate: (fd: i64, len: u64) -> i64 {
-	_a0 = fd as u64
-	_a1 = len
+	result: i64 = 0
 	asm {
-		la t0, _a0
-		ld a0, 0(t0)
-		la t0, _a1
-		ld a1, 0(t0)
+		mv a0, $fd
+		mv a1, $len
 		li a7, 46
 		ecall
-		la t0, _ret
-		sd a0, 0(t0)
+		mv $result, a0
 	}
-	return _ret
+	return result
 }
 
 export sys_lseek: (fd: i64, offset: i64, whence: u64) -> i64 {
-	_a0 = fd as u64
-	_a1 = offset as u64
-	_a2 = whence
+	result: i64 = 0
 	asm {
-		la t0, _a0
-		ld a0, 0(t0)
-		la t0, _a1
-		ld a1, 0(t0)
-		la t0, _a2
-		ld a2, 0(t0)
+		mv a0, $fd
+		mv a1, $offset
+		mv a2, $whence
 		li a7, 62
 		ecall
-		la t0, _ret
-		sd a0, 0(t0)
+		mv $result, a0
 	}
-	return _ret
+	return result
 }
 
 export sys_stat: (path: u8[]) -> i64 {
-	_a0 = path.ptr as u64
-	_a1 = path.len
+	result: i64 = 0
 	asm {
-		la t0, _a0
-		ld a0, 0(t0)
-		la t0, _a1
-		ld a1, 0(t0)
+		mv a0, $path.ptr
+		mv a1, $path.len
 		li a7, 102
 		ecall
-		la t0, _ret
-		sd a0, 0(t0)
+		mv $result, a0
 	}
-	return _ret
+	return result
 }
 
 export sys_readdir: (path: u8[], index: u64, name_buf: u8[]) -> i64 {
-	_a0 = path.ptr as u64
-	_a1 = path.len
-	_a2 = index
-	_a3 = name_buf.ptr as u64
-	_a4 = name_buf.len
+	result: i64 = 0
 	asm {
-		la t0, _a0
-		ld a0, 0(t0)
-		la t0, _a1
-		ld a1, 0(t0)
-		la t0, _a2
-		ld a2, 0(t0)
-		la t0, _a3
-		ld a3, 0(t0)
-		la t0, _a4
-		ld a4, 0(t0)
+		mv a0, $path.ptr
+		mv a1, $path.len
+		mv a2, $index
+		mv a3, $name_buf.ptr
+		mv a4, $name_buf.len
 		li a7, 101
 		ecall
-		la t0, _ret
-		sd a0, 0(t0)
+		mv $result, a0
 	}
-	return _ret
+	return result
 }
 
 export sys_exec_arg: (path: u8[], arg: u8[]) -> i64 {
-	_a0 = path.ptr as u64
-	_a1 = path.len
-	_a2 = arg.ptr as u64
-	_a3 = arg.len
+	result: i64 = 0
 	asm {
-		la t0, _a0
-		ld a0, 0(t0)
-		la t0, _a1
-		ld a1, 0(t0)
-		la t0, _a2
-		ld a2, 0(t0)
-		la t0, _a3
-		ld a3, 0(t0)
+		mv a0, $path.ptr
+		mv a1, $path.len
+		mv a2, $arg.ptr
+		mv a3, $arg.len
 		li a7, 103
 		ecall
-		la t0, _ret
-		sd a0, 0(t0)
+		mv $result, a0
 	}
-	return _ret
+	return result
 }
 
 export sys_exec: (path: u8[]) -> i64 {
@@ -229,166 +163,136 @@ export sys_exec_redir: (path: u8[], arg: u8[], out_fd: i64, in_fd: i64) -> i64 {
 		.out_fd = out_fd,
 		.in_fd = in_fd,
 	}
-	_a0 = (&request) as u64
+	result: i64 = 0
 	asm {
-		la t0, _a0
-		ld a0, 0(t0)
+		la a0, $request
 		li a7, 110
 		ecall
-		la t0, _ret
-		sd a0, 0(t0)
+		mv $result, a0
 	}
-	return _ret
+	return result
 }
 
 export sys_mkdir: (path: u8[]) -> i64 {
-	_a0 = path.ptr as u64
-	_a1 = path.len
+	result: i64 = 0
 	asm {
-		la t0, _a0
-		ld a0, 0(t0)
-		la t0, _a1
-		ld a1, 0(t0)
+		mv a0, $path.ptr
+		mv a1, $path.len
 		li a7, 83
 		ecall
-		la t0, _ret
-		sd a0, 0(t0)
+		mv $result, a0
 	}
-	return _ret
+	return result
 }
 
 export sys_rename: (old_path: u8[], new_path: u8[]) -> i64 {
-	_a0 = old_path.ptr as u64
-	_a1 = old_path.len
-	_a2 = new_path.ptr as u64
-	_a3 = new_path.len
+	result: i64 = 0
 	asm {
-		la t0, _a0
-		ld a0, 0(t0)
-		la t0, _a1
-		ld a1, 0(t0)
-		la t0, _a2
-		ld a2, 0(t0)
-		la t0, _a3
-		ld a3, 0(t0)
+		mv a0, $old_path.ptr
+		mv a1, $old_path.len
+		mv a2, $new_path.ptr
+		mv a3, $new_path.len
 		li a7, 82
 		ecall
-		la t0, _ret
-		sd a0, 0(t0)
+		mv $result, a0
 	}
-	return _ret
+	return result
 }
 
 export sys_unlink: (path: u8[]) -> i64 {
-	_a0 = path.ptr as u64
-	_a1 = path.len
+	result: i64 = 0
 	asm {
-		la t0, _a0
-		ld a0, 0(t0)
-		la t0, _a1
-		ld a1, 0(t0)
+		mv a0, $path.ptr
+		mv a1, $path.len
 		li a7, 105
 		ecall
-		la t0, _ret
-		sd a0, 0(t0)
+		mv $result, a0
 	}
-	return _ret
+	return result
 }
 
 export sys_rmdir: (path: u8[]) -> i64 {
-	_a0 = path.ptr as u64
-	_a1 = path.len
+	result: i64 = 0
 	asm {
-		la t0, _a0
-		ld a0, 0(t0)
-		la t0, _a1
-		ld a1, 0(t0)
+		mv a0, $path.ptr
+		mv a1, $path.len
 		li a7, 106
 		ecall
-		la t0, _ret
-		sd a0, 0(t0)
+		mv $result, a0
 	}
-	return _ret
+	return result
 }
 
 export sys_pidalive: (pid: u64) -> i64 {
-	_a0 = pid
+	result: i64 = 0
 	asm {
-		la t0, _a0
-		ld a0, 0(t0)
+		mv a0, $pid
 		li a7, 104
 		ecall
-		la t0, _ret
-		sd a0, 0(t0)
+		mv $result, a0
 	}
-	return _ret
+	return result
 }
 
 export sys_map_fb: () -> u64 {
+	result: u64 = 0
 	asm {
 		li a7, 107
 		ecall
-		la t0, _ret
-		sd a0, 0(t0)
+		mv $result, a0
 	}
-	return _ret as u64
+	return result
 }
 
 export sys_poll_key: () -> i64 {
+	result: i64 = 0
 	asm {
 		li a7, 108
 		ecall
-		la t0, _ret
-		sd a0, 0(t0)
+		mv $result, a0
 	}
-	return _ret
+	return result
 }
 
 export sys_fork: () -> i64 {
+	result: i64 = 0
 	asm {
 		li a7, 220
 		ecall
-		la t0, _ret
-		sd a0, 0(t0)
+		mv $result, a0
 	}
-	return _ret
+	return result
 }
 
 export sys_wait: () -> i64 {
+	result: i64 = 0
 	asm {
 		li a7, 260
 		ecall
-		la t0, _ret
-		sd a0, 0(t0)
+		mv $result, a0
 	}
-	return _ret
+	return result
 }
 
 export sys_waitpid: (pid: i64) -> i64 {
-	_a0 = pid as u64
+	result: i64 = 0
 	asm {
-		la t0, _a0
-		ld a0, 0(t0)
+		mv a0, $pid
 		li a7, 261
 		ecall
-		la t0, _ret
-		sd a0, 0(t0)
+		mv $result, a0
 	}
-	return _ret
+	return result
 }
 
 export sys_kill: (pid: i64, sig: i64) -> i64 {
-	_a0 = pid as u64
-	_a1 = sig as u64
+	result: i64 = 0
 	asm {
-		la t0, _a0
-		ld a0, 0(t0)
-		la t0, _a1
-		ld a1, 0(t0)
+		mv a0, $pid
+		mv a1, $sig
 		li a7, 129
 		ecall
-		la t0, _ret
-		sd a0, 0(t0)
+		mv $result, a0
 	}
-	return _ret
+	return result
 }

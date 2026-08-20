@@ -549,19 +549,137 @@ impl SemanticAnalyzer {
                 self.symbols.exit_scope();
                 Ok(())
             }
-            Statement::AsmBlock { lines } => {
-                for line in lines {
-                    let instr = line.split_whitespace().next().unwrap_or("");
-                    // Local labels (.Lname:) are fine; data directives (.section, .word) are not.
-                    if instr.starts_with('.') && !instr.ends_with(':') {
-                        self.error(format!(
-                            "data directives are not allowed in asm blocks: `{instr}`"
-                        ));
-                        return Err(());
+            Statement::AsmBlock { ops } => {
+                for op in ops {
+                    match op {
+                        crate::ast::AsmOp::Raw(line) => {
+                            if line.contains('$') {
+                                self.error(
+                                    "`$place` operands are only valid on `mv`/`la` bridge \
+                                     instructions",
+                                );
+                                return Err(());
+                            }
+                            let instr = line.split_whitespace().next().unwrap_or("");
+                            // Local labels (.Lname:) are fine; data directives (.section,
+                            // .word) are not.
+                            if instr.starts_with('.') && !instr.ends_with(':') {
+                                self.error(format!(
+                                    "data directives are not allowed in asm blocks: `{instr}`"
+                                ));
+                                return Err(());
+                            }
+                        }
+                        crate::ast::AsmOp::Load { reg, place } => {
+                            self.check_asm_bridge(reg, place, true, true)?;
+                        }
+                        crate::ast::AsmOp::Addr { reg, place } => {
+                            self.check_asm_bridge(reg, place, false, true)?;
+                        }
+                        crate::ast::AsmOp::Store { place, reg } => {
+                            self.check_asm_bridge(reg, place, true, false)?;
+                        }
                     }
                 }
                 Ok(())
             }
+        }
+    }
+
+    // `mv` bridges require an integer register and integer-like scalar storage.
+    fn check_asm_bridge(
+        &mut self,
+        reg: &str,
+        place: &crate::ast::AsmPlace,
+        requires_scalar: bool,
+        writes_register: bool,
+    ) -> Result<(), ()> {
+        let Some(register) = asm_to_binary::parse_integer_register(reg) else {
+            self.error(format!(
+                "asm bridge: `{reg}` is not an integer register (mv/la bridges move integer values)"
+            ));
+            return Err(());
+        };
+        if writes_register && matches!(register, 0 | 2) {
+            self.error(format!(
+                "asm bridge cannot write `{reg}`; zero discards values and sp owns the HLL frame"
+            ));
+            return Err(());
+        }
+        let name = &place.base;
+        let Some(info) = self.symbols.lookup(name).cloned() else {
+            if self.type_mapping.contains_key(name) {
+                self.error(format!(
+                    "asm place `${name}` has no storage: constants, types, and functions \
+                     cannot be asm operands"
+                ));
+            } else {
+                self.error(format!("asm place `${name}` is not in scope"));
+            }
+            return Err(());
+        };
+        let mut current = info.ty;
+        for field in &place.fields {
+            let Some(fields) = self.asm_place_fields(&current) else {
+                self.error(format!(
+                    "asm place `{}`: `{}` is not a struct or slice, so `.{}` is invalid",
+                    place.render(),
+                    self.context.get_type_name(&current),
+                    field
+                ));
+                return Err(());
+            };
+            let Some((_, field_ty)) = fields.iter().find(|(name, _)| name == field).cloned() else {
+                self.error(format!(
+                    "asm place `{}`: `{}` has no field `{}`",
+                    place.render(),
+                    self.context.get_type_name(&current),
+                    field
+                ));
+                return Err(());
+            };
+            current = field_ty;
+        }
+        if requires_scalar && !self.asm_place_scalar(&current) {
+            self.error(format!(
+                "asm place `{}` is `{}`, which is not integer-like scalar storage; \
+                 use `la` to take its address instead",
+                place.render(),
+                self.context.get_type_name(&current)
+            ));
+            return Err(());
+        }
+        Ok(())
+    }
+
+    // The { ptr, len }-shaped fields of an aggregate or slice storage type.
+    fn asm_place_fields(&self, ty: &IrType) -> Option<Vec<(String, IrType)>> {
+        match self.resolve_asm_type(ty) {
+            IrType::Aggregate(fields) => Some(fields),
+            IrType::Slice(elem) => Some(vec![
+                ("ptr".to_owned(), IrType::Pointer(elem)),
+                ("len".to_owned(), IrType::Integer(crate::ir::IntWidth::I64)),
+            ]),
+            _ => None,
+        }
+    }
+
+    // mv bridges carry booleans, integers, pointers, and function pointers.
+    fn asm_place_scalar(&self, ty: &IrType) -> bool {
+        matches!(
+            self.resolve_asm_type(ty),
+            IrType::Integer(_) | IrType::Pointer(_) | IrType::FunctionPointer { .. }
+        )
+    }
+
+    fn resolve_asm_type(&self, ty: &IrType) -> IrType {
+        match ty {
+            IrType::Named(name) => self
+                .context
+                .resolve(name)
+                .cloned()
+                .unwrap_or_else(|| ty.clone()),
+            other => other.clone(),
         }
     }
 
@@ -673,19 +791,6 @@ impl SemanticAnalyzer {
                     let ir_ty = self.ast_type_to_ir_type(ty);
                     let inner_name = self.context.get_type_name(&ir_ty);
                     Ok(format!("*{inner_name}"))
-                }
-                PrimaryExpr::AsmReg { reg } => {
-                    let allowed =
-                        asm_to_binary::parse_integer_register(reg).is_some_and(|number| {
-                            !matches!(number, 0 | 5..=7 | 28..=31) && !(number == 8 && reg == "s0")
-                        });
-                    if !allowed {
-                        self.error(format!(
-                            "asm_reg: `{reg}` is not an allowed ABI register (temp registers t0-t6 and s0/fp are excluded by name)"
-                        ));
-                        return Err(());
-                    }
-                    Ok("i64".to_owned())
                 }
                 PrimaryExpr::FunctionCall {
                     name,

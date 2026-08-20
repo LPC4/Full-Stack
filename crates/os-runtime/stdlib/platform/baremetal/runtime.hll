@@ -25,7 +25,7 @@ export _kpanic: () {
 export kpanic: (msg: u8*) {
 	asm {
 		li   t0, 268435456
-		mv   t1, a0
+		mv   t1, $msg
 	.Lkpanic_str:
 		lb   t2, 0(t1)
 		beqz t2, .Lkpanic_nl
