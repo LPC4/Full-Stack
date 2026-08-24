@@ -86,6 +86,12 @@ Regenerate committed figures after changing `guide/figures/figures.tex`:
 python guide/tools/tikz_to_svg.py
 ```
 
+List the available figure names without rendering them:
+
+```sh
+python guide/tools/tikz_to_svg.py --list
+```
+
 This requires `tectonic` and PyMuPDF.
 
 ## Layout

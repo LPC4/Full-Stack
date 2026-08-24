@@ -1903,3 +1903,52 @@ standard library implementations for you:
 
 All three targets share the exact same core algorithms. The build file just changes the underlying "backend"
 functions.
+
+Let's have a look at how the real allocator is implemented.
+
+```hll
+heap_backend := import("heap_backend")
+
+block: HeapBlock* = heap_backend.heap_raw_alloc(32) as HeapBlock*
+raw: u8* = heap_backend.heap_raw_alloc(padded)
+
+export malloc: (size: u64) -> u8* {
+	return heap_alloc_aligned(size, 8)
+}
+```
+
+
+```toml
+baremetal = [
+	"heap_backend=stdlib/platform/baremetal/heap.hll",
+]
+hosted_platform = [
+	"heap_backend=stdlib/platform/hosted/heap.hll",
+]
+```
+
+
+```hll
+if heap_cur == 0 {
+	base: u64 = heap_brk(0)
+	heap_cur = base
+	heap_top = base
+}
+
+if new_cur > heap_top {
+	new_top: u64 = ((new_cur + 4095) / 4096) * 4096
+	got: u64 = heap_brk(new_top)
+	if got < new_top { return null }
+	heap_top = new_top
+}
+```
+
+```hll
+new_bump: u64 = heap_bump + aligned
+if new_bump < heap_bump or new_bump > 65536 {
+	return null
+}
+ptr: u8* = &heap_buffer[heap_bump]
+heap_bump = new_bump
+return ptr
+```

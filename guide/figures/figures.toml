@@ -3,179 +3,323 @@
 [[figure]]
 source = "memory"
 name = "load_store_data_flow"
-source_line = 40
+source_line = 45
 caption = "Loads move data from RAM into registers; stores move it back."
 
 [[figure]]
 source = "the_stack_and_the_heap"
 name = "the_stack_and_the_heap"
-source_line = 61
+source_line = 66
 caption = ""
 
 [[figure]]
 source = "how_the_cpu_reads_instructions"
 name = "how_the_cpu_reads_instructions"
-source_line = 80
+source_line = 85
 caption = ""
 
 [[figure]]
 source = "how_the_cpu_reads_instructions_2"
 name = "how_the_cpu_reads_instructions_2"
-source_line = 102
+source_line = 107
 caption = ""
 
 [[figure]]
 source = "how_the_cpu_reads_instructions_3"
 name = "how_the_cpu_reads_instructions_3"
-source_line = 119
+source_line = 124
 caption = ""
 
 [[figure]]
 source = "how_the_cpu_reads_instructions_4"
 name = "how_the_cpu_reads_instructions_4"
-source_line = 135
+source_line = 140
 caption = ""
 
 [[figure]]
 source = "how_the_cpu_reads_instructions_5"
 name = "fetch_decode_execute_loop"
-source_line = 149
+source_line = 154
 caption = "The CPU repeats fetch, decode, execute, then advances the program counter."
 
 [[figure]]
 source = "endianness"
 name = "endianness"
-source_line = 166
+source_line = 171
 caption = ""
 
 [[figure]]
 source = "arrays_and_sections"
 name = "arrays_and_sections"
-source_line = 183
+source_line = 188
 caption = ""
 
 [[figure]]
 source = "breakpoints_and_the_memory_view"
 name = "reverse_array_two_pointer_swap"
-source_line = 209
+source_line = 214
 caption = "Two pointers move inward as the array is reversed in place."
 
 [[figure]]
 source = "functions"
 name = "function_call_and_return"
-source_line = 223
+source_line = 228
 caption = "jal transfers control to the function; ret returns to the saved address."
 
 [[figure]]
 source = "functions_2"
 name = "functions_2"
-source_line = 254
+source_line = 259
 caption = ""
 
 [[figure]]
 source = "the_frame_pointer"
 name = "the_frame_pointer"
-source_line = 272
+source_line = 277
 caption = ""
 
 [[figure]]
 source = "the_frame_pointer_2"
 name = "the_frame_pointer_2"
-source_line = 298
+source_line = 303
 caption = ""
 
 [[figure]]
 source = "the_frame_pointer_3"
 name = "the_frame_pointer_3"
-source_line = 321
+source_line = 326
 caption = ""
 
 [[figure]]
 source = "the_frame_pointer_4"
 name = "the_frame_pointer_4"
-source_line = 346
+source_line = 351
 caption = ""
 
 [[figure]]
 source = "bit_representations"
 name = "bit_representations"
-source_line = 371
+source_line = 376
 caption = ""
 
 [[figure]]
 source = "an_address_is_also_just_a_number"
 name = "an_address_is_also_just_a_number"
-source_line = 393
+source_line = 398
 caption = ""
 
 [[figure]]
 source = "uart"
 name = "uart_mmio_output"
-source_line = 432
+source_line = 437
 caption = "sb writes a byte to the UART transmit address, which appears in the console."
 
 [[figure]]
 source = "the_power_off_device"
 name = "i_type_immediate_range"
-source_line = 450
+source_line = 455
 caption = "An I-type immediate has 12 signed bits, so 0x3333 must be built in a register."
 
 [[figure]]
 source = "the_linker_script"
 name = "the_linker_script"
-source_line = 462
+source_line = 467
 caption = ""
 
 [[figure]]
 source = "the_linker_script_2"
 name = "linker_section_merge"
-source_line = 488
+source_line = 493
 caption = "The linker combines matching sections from multiple input files."
 
 [[figure]]
 source = "how_real_is_real_enough"
 name = "riscv_machine_comparison"
-source_line = 510
+source_line = 515
 caption = "The project VM, QEMU virt, and QEMU's sifive_u model share RV64 but expose different devices."
 
 [[figure]]
 source = "compilers_and_ir"
 name = "compiler_pipeline"
-source_line = 530
+source_line = 535
 caption = "HLL moves through IR and RISC-V assembly before becoming machine code."
 
 [[figure]]
 source = "from_hll_to_an_executable"
 name = "linking_hll_executable"
-source_line = 566
+source_line = 571
 caption = "The linker combines the program and its supporting code into one executable ELF."
 
 [[figure]]
 source = "watching_it_run"
 name = "stdlib_execution_path"
-source_line = 598
+source_line = 603
 caption = "Instruction stepping follows execution from the standard library into main and back again."
 
 [[figure]]
 source = "exit_function"
 name = "runtime_exit_path"
-source_line = 626
+source_line = 631
 caption = "Returning from main flows through the runtime, ecall handler, and SYSCON."
 
 [[figure]]
 source = "why_abstract_it"
 name = "privilege_service_path"
-source_line = 657
+source_line = 662
 caption = "U-mode requests kernel service; higher modes control which hardware it can reach."
 
 [[figure]]
 source = "dynamic_memory_allocation"
 name = "heap_allocation_lifetime"
-source_line = 693
+source_line = 698
 caption = "After free, a pointer keeps its old address even though that storage may be reused."
 
 [[figure]]
 source = "dynamic_memory_allocation_2"
 name = "heap_fragmentation"
-source_line = 732
+source_line = 737
 caption = "Allocations split one free region into gaps that cannot yet be recombined."
+
+[[figure]]
+source = "pipeline_stages"
+name = "pipeline_stages"
+source_line = 792
+caption = "The five pipeline stages overlap instructions, except when a load-use dependency inserts a bubble."
+
+[[figure]]
+source = "memory_hierarchy"
+name = "memory_hierarchy"
+source_line = 820
+caption = "The VM models progressively larger and slower storage from registers through three cache levels to DRAM."
+
+[[figure]]
+source = "toolchain_flow"
+name = "toolchain_flow"
+source_line = 837
+caption = "A source file becomes typed IR, assembly, a relocatable object, an executable ELF, and finally a process."
+
+[[figure]]
+source = "branch_mispredict"
+name = "branch_mispredict"
+source_line = 856
+caption = "A taken branch predicted not taken squashes younger instructions and redirects fetch to the target."
+
+[[figure]]
+source = "vm_memory_map"
+name = "vm_memory_map"
+source_line = 879
+caption = "The physical memory map routes addresses to ROM, interrupt controllers, devices, or RAM."
+
+[[figure]]
+source = "user_va_space"
+name = "user_va_space"
+source_line = 898
+caption = "Each process sees the same virtual layout while Sv39 maps it to different physical pages."
+
+[[figure]]
+source = "sv39_walk"
+name = "sv39_walk"
+source_line = 916
+caption = "Sv39 uses three nine-bit virtual-page indices to walk page tables before combining a physical page with the offset."
+
+[[figure]]
+source = "stack_frame"
+name = "stack_frame"
+source_line = 939
+caption = "Register allocation keeps temporary values in saved registers instead of adding spill slots to the stack frame."
+
+[[figure]]
+source = "elf_linking"
+name = "elf_linking"
+source_line = 959
+caption = "The linker lays out sections, resolves undefined symbols, patches relocations, and writes an executable ELF."
+
+[[figure]]
+source = "trap_flow"
+name = "trap_flow"
+source_line = 976
+caption = "A trap crosses into S-mode, saves state, dispatches the cause, and returns to user code with sret."
+
+[[figure]]
+source = "regalloc_coloring"
+name = "regalloc_coloring"
+source_line = 1001
+caption = "Register allocation turns overlapping live ranges into an interference graph whose neighbors require different registers."
+
+[[figure]]
+source = "allocator_zoo"
+name = "allocator_zoo"
+source_line = 1024
+caption = "Heap, arena, pool, and vector allocators share storage but offer different lifetime and layout tradeoffs."
+
+[[figure]]
+source = "vec_growth"
+name = "vec_growth"
+source_line = 1043
+caption = "A full vector reallocates into a larger buffer and copies its elements before the next push."
+
+[[figure]]
+source = "interp_flow"
+name = "interp_flow"
+source_line = 1067
+caption = "Buffer-based interpolation measures first, checks capacity, and writes only when the whole result fits."
+
+[[figure]]
+source = "cache_address_split"
+name = "cache_address_split"
+source_line = 1088
+caption = "The L1 cache splits an address into tag, set index, and byte offset before checking both ways."
+
+[[figure]]
+source = "predictor_fsm"
+name = "predictor_fsm"
+source_line = 1107
+caption = "A two-bit saturating branch predictor needs two opposite outcomes to move from one strong prediction to the other."
+
+[[figure]]
+source = "fb_double_buffer"
+name = "fb_double_buffer"
+source_line = 1127
+caption = "Double buffering lets the guest finish a frame off-screen before atomically publishing it to the GUI."
+
+[[figure]]
+source = "input_paths"
+name = "input_paths"
+source_line = 1148
+caption = "Text input travels through the UART while graphical key events use a separate non-blocking FIFO."
+
+[[figure]]
+source = "process_states"
+name = "process_states"
+source_line = 1168
+caption = "A process moves among ready, running, and blocked states before exit leaves a zombie for waitpid to reap."
+
+[[figure]]
+source = "user_heap_brk"
+name = "user_heap_brk"
+source_line = 1188
+caption = "The brk syscall advances a process-local boundary and maps zeroed heap pages behind it."
+
+[[figure]]
+source = "register_file"
+name = "register_file"
+source_line = 1205
+caption = "The RISC-V ABI assigns conventional jobs and preservation rules to the 32 integer registers."
+
+[[figure]]
+source = "stack_heap_growth"
+name = "stack_heap_growth"
+source_line = 1226
+caption = "The stack grows toward lower addresses while the heap grows toward higher addresses."
+
+[[figure]]
+source = "instruction_encoding"
+name = "instruction_encoding"
+source_line = 1244
+caption = "An R-type instruction encodes its operation and three registers into one 32-bit word."
+
+[[figure]]
+source = "load_store_addressing"
+name = "load_store_addressing"
+source_line = 1260
+caption = "A load adds its signed instruction offset to a base register, then copies the value at that effective address."

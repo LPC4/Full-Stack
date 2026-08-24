@@ -1,3 +1,5 @@
+.idea
+
 # Mac stuff:
 .DS_Store
 
@@ -14,17 +16,9 @@ target_wasm
 
 # Compiler artifact output directory
 out/
-# Publish the HLL lesson outputs used by the Guide.
-!programs/lessons/08_hll/out/
-programs/lessons/08_hll/out/*
-!programs/lessons/08_hll/out/asm/
-!programs/lessons/08_hll/out/asm/*.s
-!programs/lessons/08_hll/out/ir/
-!programs/lessons/08_hll/out/ir/*.ir
-.run
-.idea
+
+# Code highlight plugin
 plugin
-.ai/
 
 # Python benchmark tooling caches
 __pycache__/
@@ -33,7 +27,6 @@ __pycache__/
 
 # Benchmark results
 /benches/results/
-/teaching/
 
 # Guide generator output
 /guide/out/

@@ -30,13 +30,13 @@ pub enum QemuError {
 #[derive(Debug)]
 pub enum QemuUnavailable {
     MissingBinary(String),
-    #[cfg_attr(
-        target_os = "windows",
-        expect(dead_code, reason = "constructed on Linux")
-    )]
+    #[cfg(target_os = "linux")]
     SpawnFailed(String),
     TimedOut(u64),
+    #[cfg(target_os = "windows")]
     WslBroken(String),
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    UnsupportedPlatform(String),
 }
 
 impl fmt::Display for QemuUnavailable {
@@ -46,9 +46,13 @@ impl fmt::Display for QemuUnavailable {
                 f,
                 "qemu did not exit within {secs}s and was killed; is the program stuck?"
             ),
-            Self::MissingBinary(msg) | Self::SpawnFailed(msg) | Self::WslBroken(msg) => {
-                write!(f, "{msg}")
-            }
+            Self::MissingBinary(msg) => write!(f, "{msg}"),
+            #[cfg(target_os = "linux")]
+            Self::SpawnFailed(msg) => write!(f, "{msg}"),
+            #[cfg(target_os = "windows")]
+            Self::WslBroken(msg) => write!(f, "{msg}"),
+            #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+            Self::UnsupportedPlatform(msg) => write!(f, "{msg}"),
         }
     }
 }
@@ -112,9 +116,11 @@ fn platform_run_elf(elf: &[u8], timeout: Duration) -> Result<QemuResult, QemuErr
 
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
 fn platform_run_elf(_elf: &[u8], _timeout: Duration) -> Result<QemuResult, QemuError> {
-    Err(QemuError::Unavailable(QemuUnavailable::WslBroken(
-        "QEMU runs on Linux (direct) or Windows (WSL)".to_owned(),
-    )))
+    Err(QemuError::Unavailable(
+        QemuUnavailable::UnsupportedPlatform(
+            "QEMU runs on Linux (direct) or Windows (WSL)".to_owned(),
+        ),
+    ))
 }
 
 pub fn compile_hll_to_elf(source: &str) -> Vec<u8> {

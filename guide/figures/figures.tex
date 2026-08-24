@@ -32,6 +32,11 @@
   flowarrow/.style={-{Stealth[length=2.6mm]}, line width=1pt},
   cyclenode/.style={rounded corners=3pt, line width=0.8pt, minimum width=3.1cm,
                     minimum height=0.95cm, font=\small\bfseries, text=ink},
+  guidecard/.style={rounded corners=3pt, line width=0.8pt, minimum height=0.9cm,
+                    font=\small, align=center, text=ink},
+  guideedge/.style={-{Stealth[length=2.4mm]}, line width=0.9pt, draw=gray7},
+  guidelabel/.style={font=\footnotesize\color{gray7}, align=center},
+  guidemono/.style={font=\footnotesize\ttfamily, align=center},
 }
 \begin{document}
 \section*{Guide figures}
@@ -781,5 +786,493 @@
 
   \node[sidelbl, anchor=east] at (-1.75,4.75) {high addresses};
   \node[sidelbl, anchor=east] at (-1.75,0.15) {low addresses};
+\end{tikzpicture}
+
+\subsection*{pipeline_stages}
+\begin{tikzpicture}[x=1cm,y=1cm,
+  stage/.style={guidecard, minimum width=2.05cm, fill=gblue!9, draw=gblue!65},
+  pipe/.style={draw=gray5, minimum width=0.86cm, minimum height=0.48cm,
+               font=\scriptsize\ttfamily}]
+  \foreach \name/\detail/\id/\x in {IF/fetch/a/0,ID/decode/b/2.55,EX/execute/c/5.1,
+                                      MEM/cache/d/7.65,WB/write back/e/10.2} {
+    \node[stage] (s\id) at (\x,2.8) {\textbf{\name}\\[-1pt]\scriptsize\detail};
+  }
+  \draw[guideedge] (sa) -- (sb);
+  \draw[guideedge] (sb) -- (sc);
+  \draw[guideedge] (sc) -- (sd);
+  \draw[guideedge] (sd) -- (se);
+  \node[guidemono, anchor=east] at (-0.8,1.45) {load};
+  \node[guidemono, anchor=east] at (-0.8,0.85) {use};
+  \foreach \v/\c in {IF/0,ID/1,EX/2,MEM/3,WB/4}
+    \node[pipe, fill=gblue!8] at ({\c*0.86},1.45) {\v};
+  \node[pipe, fill=gblue!8] at (0.86,0.85) {IF};
+  \node[pipe, fill=gblue!8] at (1.72,0.85) {ID};
+  \node[pipe, fill=gred!8, draw=gred] at (2.58,0.85) {stall};
+  \node[pipe, fill=gblue!8] at (3.44,0.85) {EX};
+  \node[pipe, fill=gblue!8] at (4.30,0.85) {MEM};
+  \node[pipe, fill=gblue!8] at (5.16,0.85) {WB};
+  \draw[decorate, decoration={brace, amplitude=4pt}, gred]
+    (2.15,0.35) -- (3.01,0.35)
+    node[midway, below=5pt, guidelabel, text=red700] {load-use bubble};
+\end{tikzpicture}
+
+\subsection*{memory_hierarchy}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \foreach \name/\size/\lat/\w/\y/\col in {
+    registers/32 $\times$ 64-bit/0 cycles/3.0/4.8/gray5,
+    L1 cache/4 KiB (2-way)/4 cycles/4.6/3.7/gblue,
+    L2 cache/256 KiB (8-way)/12 cycles/6.2/2.6/gblue,
+    L3 cache/8 MiB (16-way)/40 cycles/7.8/1.5/blue700,
+    DRAM/128 MiB/200 cycles/9.4/0.4/ink} {
+    \draw[rounded corners=3pt, fill=\col!14, draw=\col!70, line width=0.8pt]
+      ({-\w/2},\y) rectangle ({\w/2},{\y+0.85});
+    \node[font=\small\bfseries] at (0,{\y+0.55}) {\name};
+    \node[font=\scriptsize\color{gray7}] at (0,{\y+0.20}) {\size};
+    \node[guidemono, anchor=west] at ({\w/2+0.35},{\y+0.42}) {\lat};
+  }
+  \node[guidelabel, anchor=west] at (5.1,5.22) {realistic hit latency};
+\end{tikzpicture}
+
+\subsection*{toolchain_flow}
+\begin{tikzpicture}[x=1cm,y=1cm,
+  artifact/.style={guidecard, minimum width=2.15cm, fill=gblue!8, draw=gblue!60},
+  tool/.style={font=\scriptsize\ttfamily\color{dirpurple}}]
+  \node[artifact] (hll) at (0,2.4) {\texttt{demo.hll}\\\scriptsize source};
+  \node[artifact] (ir) at (4.0,2.4) {typed IR\\\scriptsize blocks and values};
+  \node[artifact] (asm) at (8.0,2.4) {\texttt{demo.s}\\\scriptsize RV64 assembly};
+  \node[artifact] (obj) at (0,0) {\texttt{demo.o}\\\scriptsize relocatable ELF};
+  \node[artifact] (elf) at (4.0,0) {\texttt{demo.elf}\\\scriptsize executable ELF};
+  \node[artifact, fill=ggreen!8, draw=ggreen!60] (pid) at (8.0,0)
+    {process\\\scriptsize mapped by kernel};
+  \draw[guideedge] (hll) -- node[above,tool]{hll-to-ir} (ir);
+  \draw[guideedge] (ir) -- node[above,tool]{ir-to-asm} (asm);
+  \draw[guideedge] (asm.south) to[out=-90,in=90]
+    node[midway, right, tool]{as} (obj.north);
+  \draw[guideedge] (obj) -- node[above,tool]{ld} (elf);
+  \draw[guideedge] (elf) -- node[above,tool]{exec} (pid);
+\end{tikzpicture}
+
+\subsection*{branch_mispredict}
+\begin{tikzpicture}[x=1cm,y=1cm,
+  cell/.style={draw=gray5, minimum width=0.82cm, minimum height=0.48cm,
+               font=\scriptsize\ttfamily}]
+  \foreach \c in {1,...,8}
+    \node[font=\scriptsize\color{gray7}] at ({3.8+0.82*(\c-1)},3.35) {\c};
+  \node[guidemono, anchor=east] at (3.5,2.75) {beq target};
+  \node[guidemono, anchor=east, text=red700] at (3.5,2.15) {wrong + 1};
+  \node[guidemono, anchor=east, text=red700] at (3.5,1.55) {wrong + 2};
+  \node[guidemono, anchor=east] at (3.5,0.95) {target};
+  \foreach \v/\c in {IF/1,ID/2,EX/3,MEM/4,WB/5}
+    \node[cell, fill=gblue!8] at ({3.8+0.82*(\c-1)},2.75) {\v};
+  \foreach \v/\c in {IF/2,ID/3}
+    \node[cell, fill=gred!8, draw=gred] at ({3.8+0.82*(\c-1)},2.15) {\v};
+  \node[cell, fill=gred!8, draw=gred] at ({3.8+0.82*3},2.15) {squash};
+  \node[cell, fill=gred!8, draw=gred] at ({3.8+0.82*2},1.55) {IF};
+  \node[cell, fill=gred!8, draw=gred] at ({3.8+0.82*3},1.55) {squash};
+  \foreach \v/\c in {IF/4,ID/5,EX/6,MEM/7,WB/8}
+    \node[cell, fill=ggreen!8, draw=ggreen!60] at ({3.8+0.82*(\c-1)},0.95) {\v};
+  \node[guidelabel, text=red700] at (6.25,0.15)
+    {EX discovers the taken branch; younger work is discarded and fetch redirects};
+\end{tikzpicture}
+
+\subsection*{vm_memory_map}
+\begin{tikzpicture}[x=1cm,y=1cm,
+  region/.style={draw=gray5, minimum width=6.0cm, minimum height=0.62cm,
+                 font=\footnotesize, align=center}]
+  \node[region, fill=gblue!10] at (0,0.35) {ROM \quad 0x0000\_0000 \quad 256 MiB};
+  \node[region, fill=gyellow!12] at (0,1.10) {CLINT \quad 0x0200\_0000};
+  \node[region, fill=gyellow!12] at (0,1.85) {PLIC \quad 0x0C00\_0000};
+  \node[region, fill=purple!9] at (0,2.60) {UART \quad 0x1000\_0000};
+  \node[region, fill=purple!9] at (0,3.35) {SYSCON \quad 0x1001\_0000};
+  \node[region, fill=purple!9] at (0,4.10) {framebuffer \quad 0x1002\_0000};
+  \node[region, fill=purple!9] at (0,4.85) {keyboard \quad 0x1007\_0000};
+  \node[region, fill=ggreen!10, minimum height=1.0cm] at (0,5.82)
+    {RAM \quad 0x8000\_0000 \quad 128 MiB default};
+  \draw[guideedge] (-3.65,0.1) -- (-3.65,6.25);
+  \node[guidelabel, rotate=90] at (-4.05,3.15) {ascending physical address};
+  \node[guidelabel, anchor=west] at (3.4,2.95)
+    {unclaimed gaps fault; MMIO bypasses caches};
+\end{tikzpicture}
+
+\subsection*{user_va_space}
+\begin{tikzpicture}[x=1cm,y=1cm,
+  area/.style={draw=gray5, minimum width=5.6cm, minimum height=0.72cm,
+               font=\footnotesize, align=center}]
+  \node[area, fill=gblue!10] at (0,0.4) {code and read-only data};
+  \node[area, fill=purple!9] at (0,1.2) {writable data and BSS};
+  \node[area, fill=ggreen!10] at (0,2.0) {heap grows upward};
+  \node[area, fill=gray3!25, minimum height=2.0cm, dashed] at (0,3.45) {unmapped gap};
+  \node[area, fill=gyellow!12] at (0,4.9) {mapped framebuffer, when requested};
+  \node[area, fill=gblue!10] at (0,5.7) {stack grows downward};
+  \node[addrlbl, anchor=east] at (-3.05,0.4) {0x4000\_0000};
+  \node[addrlbl, anchor=east] at (-3.05,6.1) {0x8000\_0000};
+  \draw[flowarrow, ggreen] (2.0,2.35) -- (2.0,2.85);
+  \draw[flowarrow, gblue] (2.0,5.35) -- (2.0,4.85);
+  \node[guidelabel, anchor=west] at (3.2,3.45)
+    {Sv39 maps the same virtual layout\\to different physical pages per process};
+\end{tikzpicture}
+
+\subsection*{sv39_walk}
+\begin{tikzpicture}[node distance=0.75cm,
+  field/.style={draw=gray5, minimum height=0.85cm, font=\scriptsize\ttfamily,
+                align=center},
+  table/.style={guidecard, minimum width=2.6cm, fill=gblue!8, draw=gblue!60}]
+  \node[field, minimum width=2.0cm, fill=gray3!25] (vpn2) {VPN[2]\\9 bits};
+  \node[field, minimum width=2.0cm, fill=gblue!7, right=0cm of vpn2] (vpn1) {VPN[1]\\9 bits};
+  \node[field, minimum width=2.0cm, fill=gblue!12, right=0cm of vpn1] (vpn0) {VPN[0]\\9 bits};
+  \node[field, minimum width=2.4cm, fill=gyellow!12, right=0cm of vpn0] (off)
+    {page offset\\12 bits};
+  \node[table, below=1.15cm of vpn2] (l2) {root table\\\scriptsize SATP PPN + VPN[2]};
+  \node[table, right=0.8cm of l2] (l1) {level 1 table\\\scriptsize next PPN + VPN[1]};
+  \node[table, right=0.8cm of l1] (l0) {level 0 table\\\scriptsize leaf PPN + VPN[0]};
+  \node[guidecard, fill=ggreen!8, draw=ggreen!60, right=0.8cm of l0] (pa)
+    {physical address\\\scriptsize leaf PPN + offset};
+  \draw[guideedge] (vpn2) -- (l2);
+  \draw[guideedge] (l2) -- (l1);
+  \draw[guideedge] (l1) -- (l0);
+  \draw[guideedge] (l0) -- (pa);
+  \draw[guideedge] (off.south) to[out=-90,in=90] (pa.north);
+  \node[guidelabel, below=0.55cm of l1] {each table is one 4 KiB page with 512 PTEs};
+\end{tikzpicture}
+
+\subsection*{stack_frame}
+\begin{tikzpicture}[x=1cm,y=1cm,
+  framecell/.style={draw=gray5, minimum width=4.4cm, minimum height=0.55cm,
+                    font=\scriptsize\ttfamily}]
+  \node[font=\small\bfseries] at (-2.8,4.1) {register allocation on};
+  \node[font=\small\bfseries] at (3.0,4.1) {register allocation off};
+  \foreach \label/\y/\fill in {locals/0.4/ggreen!9,array/1.0/ggreen!9,
+      saved s2-s4/1.6/gblue!9,saved fp/2.2/gblue!9,saved ra/2.8/gblue!9}
+    \node[framecell, fill=\fill] at (-2.8,\y) {\label};
+  \foreach \label/\y/\fill in {locals/0.4/ggreen!9,array/1.0/ggreen!9,
+      temporary spills/1.6/gred!8,saved fp/2.2/gblue!9,saved ra/2.8/gblue!9}
+    \node[framecell, fill=\fill] at (3.0,\y) {\label};
+  \draw[flowarrow, blue700] (-5.7,3.1) -- (-5.0,3.1);
+  \node[addrlbl, anchor=east] at (-5.8,3.1) {fp};
+  \draw[flowarrow, red700] (-5.7,0.1) -- (-5.0,0.1);
+  \node[addrlbl, anchor=east] at (-5.8,0.1) {sp};
+  \node[guidelabel] at (0.1,-0.45)
+    {locals start at sp; save areas sit above them; frames stay 16-byte aligned};
+\end{tikzpicture}
+
+\subsection*{elf_linking}
+\begin{tikzpicture}[node distance=1.0cm,
+  object/.style={guidecard, minimum width=3.2cm, minimum height=2.45cm,
+                 fill=codebg, draw=gray5, font=\footnotesize\ttfamily},
+  linker/.style={guidecard, minimum width=1.8cm, fill=purple!10, draw=purple!65}]
+  \node[object] (main) {\textbf{main.o}\\.text + .rodata\\square: UND\\CALL relocation};
+  \node[object, below=0.7cm of main] (util)
+    {\textbf{util.o}\\.text\\square: GLOBAL\\no relocations};
+  \node[linker, right=1.2cm of $(main)!0.5!(util)$] (ld)
+    {\texttt{ld}\\\scriptsize layout\\resolve\\patch};
+  \node[object, right=1.2cm of ld, minimum height=3.3cm, draw=gblue!70] (elf)
+    {\textbf{program.elf}\\one load segment\\main + square\\relocation patched\\entry address set};
+  \draw[guideedge] (main) -- (ld);
+  \draw[guideedge] (util) -- (ld);
+  \draw[guideedge] (ld) -- (elf);
+\end{tikzpicture}
+
+\subsection*{trap_flow}
+\begin{tikzpicture}[node distance=0.85cm,
+  trapstep/.style={guidecard, minimum width=2.35cm},
+  lane/.style={font=\footnotesize\bfseries\color{gray7}}]
+  \node[lane] at (-1.2,1.4) {U-mode};
+  \node[lane] at (-1.2,-1.0) {S-mode};
+  \draw[gray5, dashed] (-0.5,0.2) -- (12.0,0.2);
+  \node[trapstep, fill=gblue!8, draw=gblue!60] (user) at (0,1.4) {user code};
+  \node[trapstep, fill=gyellow!10, draw=gyellow!70] (entry) at (2.8,-1.0)
+    {trap entry\\\scriptsize swap stack, save frame};
+  \node[trapstep, fill=purple!10, draw=purple!60] (dispatch) at (5.7,-1.0)
+    {dispatch\\\scriptsize syscall, IRQ, or fault};
+  \node[trapstep, fill=ggreen!8, draw=ggreen!60] (restore) at (8.6,-1.0)
+    {return path\\\scriptsize restore frame, sret};
+  \node[trapstep, fill=gblue!8, draw=gblue!60] (resume) at (11.4,1.4)
+    {resume at sepc};
+  \draw[guideedge] (user) to[out=-25,in=150]
+    node[guidelabel, left]{ecall, IRQ,\\or page fault} (entry);
+  \draw[guideedge] (entry) -- (dispatch);
+  \draw[guideedge] (dispatch) -- (restore);
+  \draw[guideedge] (restore) to[out=30,in=205] node[guidemono, right]{sret} (resume);
+  \node[guidelabel] at (5.7,-2.05)
+    {sscratch keeps the kernel stack pointer while user code runs};
+\end{tikzpicture}
+
+\subsection*{regalloc_coloring}
+\begin{tikzpicture}[x=1cm,y=1cm,
+  live/.style={rounded corners=2pt, minimum height=0.42cm, draw=gray5},
+  value/.style={circle, draw=gray5, minimum size=0.9cm, font=\small\ttfamily}]
+  \node[guidelabel] at (2.2,4.3) {live ranges};
+  \foreach \v/\y/\a/\b/\col in {a/3.5/0/4/gblue,b/2.8/1/6/ggreen,
+      c/2.1/3/7/gyellow,d/1.4/5/8/purple} {
+    \node[guidemono, anchor=east] at (-0.1,\y) {\v};
+    \draw[live, fill=\col!12, draw=\col!70] ({0.4+\a*0.48},{\y-0.2})
+      rectangle ({0.4+\b*0.48},{\y+0.2});
+  }
+  \node[value, fill=gblue!12] (a) at (6.4,3.2) {a};
+  \node[value, fill=ggreen!12] (b) at (8.0,3.7) {b};
+  \node[value, fill=gyellow!14] (c) at (8.2,2.1) {c};
+  \node[value, fill=purple!10] (d) at (6.5,1.5) {d};
+  \draw[gray7] (a) -- (b) -- (c) -- (a) -- (d) -- (c);
+  \node[guidemono, text=blue700] at (6.0,4.1) {s2};
+  \node[guidemono, text=green700] at (8.7,4.1) {s3};
+  \node[guidemono, text=yellow800] at (9.0,1.7) {s4};
+  \node[guidelabel] at (7.4,0.55)
+    {overlapping ranges share an edge; neighbors need different registers};
+\end{tikzpicture}
+
+\subsection*{allocator_zoo}
+\begin{tikzpicture}[x=1cm,y=1cm,
+  alloc/.style={guidecard, minimum width=2.75cm, minimum height=2.25cm}]
+  \node[alloc, fill=gblue!8, draw=gblue!60] at (0,1.4)
+    {\textbf{heap allocator}\\\scriptsize arbitrary sizes\\individual free\\general purpose};
+  \node[alloc, fill=ggreen!8, draw=ggreen!60] at (3.25,1.4)
+    {\textbf{arena}\\\scriptsize bump allocation\\free all at once\\phase lifetime};
+  \node[alloc, fill=gyellow!10, draw=gyellow!70] at (6.5,1.4)
+    {\textbf{pool}\\\scriptsize fixed-size slots\\stable addresses\\object reuse};
+  \node[alloc, fill=purple!10, draw=purple!60] at (9.75,1.4)
+    {\textbf{Vec<T>}\\\scriptsize contiguous items\\grows by reallocate\\owned sequence};
+  \draw[rounded corners=3pt, fill=gray3!25, draw=gray5]
+    (-1.4,-0.65) rectangle (11.15,0.0);
+  \node[font=\small\bfseries] at (4.88,-0.32)
+    {shared heap source: hosted brk or kernel allocator};
+  \foreach \x in {0,3.25,6.5,9.75}
+    \draw[guideedge] (\x,0.25) -- (\x,0.0);
+\end{tikzpicture}
+
+\subsection*{vec_growth}
+\begin{tikzpicture}[x=1cm,y=1cm,
+  item/.style={draw=gray5, minimum width=0.72cm, minimum height=0.55cm,
+               font=\scriptsize\ttfamily}]
+  \foreach \label/\y/\len/\cap in {capacity 2/2.8/2/2,capacity 4/1.8/3/4,capacity 8/0.8/5/8} {
+    \node[guidemono, anchor=east] at (1.1,\y) {\label};
+    \foreach \i in {1,...,8} {
+      \pgfmathparse{\i<=\cap ? 1 : 0}\let\inside\pgfmathresult
+      \ifnum\inside=1
+        \pgfmathparse{\i<=\len ? 1 : 0}\let\used\pgfmathresult
+        \ifnum\used=1
+          \node[item, fill=gblue!12] at ({1.6+0.72*(\i-1)},\y) {\i};
+        \else
+          \node[item, fill=gray3!20] at ({1.6+0.72*(\i-1)},\y) {};
+        \fi
+      \fi
+    }
+  }
+  \draw[guideedge, ggreen] (7.8,2.8) to[out=0,in=0]
+    node[right, guidelabel, text=green700]{push when full\\reallocate and copy} (7.8,1.8);
+  \draw[guideedge, ggreen] (8.5,1.8) to[out=0,in=0]
+    node[right, guidelabel, text=green700]{double again} (8.5,0.8);
+\end{tikzpicture}
+
+\subsection*{interp_flow}
+\begin{tikzpicture}[node distance=0.85cm,
+  phase/.style={guidecard, minimum width=2.65cm, minimum height=1.25cm}]
+  \node[phase, fill=gblue!8, draw=gblue!60] (parse)
+    {compile template\\\scriptsize literals + typed holes};
+  \node[phase, fill=gyellow!10, draw=gyellow!70, right=of parse] (measure)
+    {measure\\\scriptsize compute exact byte count};
+  \node[phase, fill=ggreen!8, draw=ggreen!60, right=of measure] (check)
+    {capacity check\\\scriptsize fail before any write};
+  \node[phase, fill=purple!10, draw=purple!60, right=of check] (write)
+    {write once\\\scriptsize return bytes used};
+  \draw[guideedge] (parse) -- (measure);
+  \draw[guideedge] (measure) -- (check);
+  \draw[guideedge] (check) -- (write);
+  \node[guidecard, fill=gred!8, draw=gred!60, below=1.0cm of check] (err)
+    {Err(buffer too small)\\\scriptsize destination remains untouched};
+  \draw[guideedge, gred] (check) -- node[right, guidelabel, text=red700]{too small} (err);
+  \node[guidelabel, below=0.55cm of measure]
+    {transactional formatting: no allocation and no partial output};
+\end{tikzpicture}
+
+\subsection*{cache_address_split}
+\begin{tikzpicture}[x=1cm,y=1cm,
+  bits/.style={draw=gray5, minimum height=0.9cm, font=\footnotesize\ttfamily,
+               align=center}]
+  \node[bits, minimum width=5.3cm, fill=gray3!25] at (0,3.5) {tag\\bits 63..11};
+  \node[bits, minimum width=2.5cm, fill=gblue!10] at (3.9,3.5) {set index\\bits 10..6};
+  \node[bits, minimum width=2.5cm, fill=gyellow!12] at (6.4,3.5) {byte offset\\bits 5..0};
+  \node[guidemono] at (3.9,2.55) {select set 13};
+  \draw[guideedge] (3.9,3.0) -- (3.9,2.8);
+  \node[guidecard, minimum width=3.5cm, fill=gblue!8, draw=gblue!60] (w0) at (1.8,1.35)
+    {way 0\\\scriptsize compare tag + valid};
+  \node[guidecard, minimum width=3.5cm, fill=gblue!8, draw=gblue!60] (w1) at (6.0,1.35)
+    {way 1\\\scriptsize compare tag + valid};
+  \draw[guideedge] (3.9,2.3) -- (w0);
+  \draw[guideedge] (3.9,2.3) -- (w1);
+  \node[guidelabel] at (3.9,0.25)
+    {hit returns one 64-byte line; miss fetches from L2 and evicts the LRU way};
+\end{tikzpicture}
+
+\subsection*{predictor_fsm}
+\begin{tikzpicture}[x=1cm,y=1cm,
+  state/.style={circle, minimum size=1.35cm, line width=0.9pt,
+                font=\small\ttfamily, align=center}]
+  \node[state, fill=gred!9, draw=gred] (sn) at (0,1.8) {00\\SN};
+  \node[state, fill=gred!9, draw=gred] (wn) at (3.0,1.8) {01\\WN};
+  \node[state, fill=ggreen!9, draw=ggreen] (wt) at (6.0,1.8) {10\\WT};
+  \node[state, fill=ggreen!9, draw=ggreen] (st) at (9.0,1.8) {11\\ST};
+  \foreach \a/\b in {sn/wn,wn/wt,wt/st}
+    \draw[guideedge, ggreen] (\a) to[bend left=22]
+      node[above, guidelabel, text=green700]{taken} (\b);
+  \foreach \a/\b in {st/wt,wt/wn,wn/sn}
+    \draw[guideedge, gred] (\a) to[bend left=22]
+      node[below, guidelabel, text=red700]{not taken} (\b);
+  \draw[guideedge, gred] (sn) to[loop left] node[left, guidelabel]{not taken} (sn);
+  \draw[guideedge, ggreen] (st) to[loop right] node[right, guidelabel]{taken} (st);
+  \node[guidelabel] at (4.5,0.1)
+    {00 and 01 predict not taken; 10 and 11 predict taken};
+\end{tikzpicture}
+
+\subsection*{fb_double_buffer}
+\begin{tikzpicture}[node distance=0.9cm,
+  fb/.style={guidecard, minimum width=2.65cm, minimum height=1.55cm}]
+  \node[fb, fill=gblue!8, draw=gblue!60] (guest)
+    {guest drawing\\\scriptsize pixel stores and FILL};
+  \node[fb, fill=gyellow!10, draw=gyellow!70, right=of guest] (back)
+    {back buffer\\\scriptsize 320 $\times$ 240 RGBA};
+  \node[fb, fill=ggreen!8, draw=ggreen!60, right=of back] (front)
+    {front buffer\\\scriptsize stable visible frame};
+  \node[fb, fill=codebg, draw=gray5, right=of front] (gui)
+    {host GUI\\\scriptsize samples each frame};
+  \draw[guideedge] (guest) -- (back);
+  \draw[guideedge, purple] (back) -- node[above, guidemono, text=dirpurple]{PRESENT} (front);
+  \draw[guideedge] (front) -- (gui);
+  \node[guidecard, fill=gray3!25, draw=gray5, below=1.0cm of back] (ctrl)
+    {control page: FILL +0, PRESENT +4, DBMODE +8};
+  \draw[guideedge] (ctrl) -- (back);
+  \node[guidelabel, below=0.55cm of front]
+    {publishing is atomic, so the GUI never sees a half-drawn frame};
+\end{tikzpicture}
+
+\subsection*{input_paths}
+\begin{tikzpicture}[node distance=0.85cm,
+  path/.style={guidecard, minimum width=2.6cm, minimum height=1.25cm}]
+  \node[path, fill=codebg, draw=gray5] (gui) {host keyboard};
+  \node[path, fill=ggreen!8, draw=ggreen!60, right=of gui, yshift=1.05cm] (uart)
+    {UART RX\\\scriptsize byte stream at 0x1000\_0000};
+  \node[path, fill=purple!10, draw=purple!60, right=of gui, yshift=-1.05cm] (fifo)
+    {key FIFO\\\scriptsize events at 0x1007\_0000};
+  \node[path, fill=ggreen!8, draw=ggreen!60, right=of uart] (read)
+    {readchar (100)\\\scriptsize blocking byte read};
+  \node[path, fill=purple!10, draw=purple!60, right=of fifo] (poll)
+    {poll\_key (108)\\\scriptsize non-blocking event pop};
+  \draw[guideedge] (gui) -- (uart);
+  \draw[guideedge] (gui) -- (fifo);
+  \draw[guideedge] (uart) -- (read);
+  \draw[guideedge] (fifo) -- (poll);
+  \node[guidelabel, right=0.8cm of read] {shell and editor};
+  \node[guidelabel, right=0.8cm of poll] {graphical programs};
+\end{tikzpicture}
+
+\subsection*{process_states}
+\begin{tikzpicture}[x=1cm,y=1cm,
+  proc/.style={guidecard, minimum width=2.5cm, minimum height=1.15cm}]
+  \node[proc, fill=gblue!8, draw=gblue!60] (ready) at (0,2.7)
+    {\textbf{READY}\\\scriptsize queued};
+  \node[proc, fill=ggreen!8, draw=ggreen!60] (running) at (4.4,2.7)
+    {\textbf{RUNNING}\\\scriptsize on the hart};
+  \node[proc, fill=gyellow!10, draw=gyellow!70] (blocked) at (4.4,0)
+    {\textbf{BLOCKED}\\\scriptsize waiting for input};
+  \node[proc, fill=gray3!25, draw=gray5] (exited) at (8.8,2.7)
+    {\textbf{EXITED}\\\scriptsize zombie with status};
+  \draw[guideedge, ggreen] (ready) to[bend left=18] node[above, guidelabel]{dispatch} (running);
+  \draw[guideedge, gblue] (running) to[bend left=18]
+    node[below, guidelabel]{preempt or yield} (ready);
+  \draw[guideedge, gyellow] (running) -- node[right, guidelabel]{readchar waits} (blocked);
+  \draw[guideedge, gred] (blocked) to[bend left=24] node[left, guidelabel]{UART IRQ wakes} (ready);
+  \draw[guideedge] (running) -- node[above, guidelabel]{exit} (exited);
+  \node[guidelabel, below=0.65cm of exited] {waitpid reaps and frees the PCB slot};
+\end{tikzpicture}
+
+\subsection*{user_heap_brk}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \draw[rounded corners=3pt, fill=ggreen!10, draw=ggreen!65, line width=0.8pt]
+    (0,1.2) rectangle (7.0,2.35);
+  \node[font=\small\bfseries] at (3.5,1.78) {mapped, zeroed heap pages};
+  \draw[rounded corners=3pt, fill=gray3!25, draw=gray5, dashed]
+    (7.0,1.2) rectangle (11.2,2.35);
+  \node[guidelabel] at (9.1,1.78) {unmapped: access faults};
+  \draw[gred, line width=1.4pt] (7.0,0.9) -- (7.0,2.65);
+  \node[guidemono, text=red700] at (7.0,2.95) {current break};
+  \draw[guideedge, gred] (7.0,3.45) -- (9.1,3.45);
+  \node[guidelabel, text=red700] at (8.05,3.85) {brk(addr) maps whole pages};
+  \node[addrlbl] at (0,0.8) {USER\_HEAP\_BASE};
+  \node[guidelabel] at (5.6,0.15)
+    {brk(0) queries the break; each process owns its mapping and break value};
+\end{tikzpicture}
+
+\subsection*{register_file}
+\begin{tikzpicture}[x=1cm,y=1cm,
+  reg/.style={draw=gray5, rounded corners=2pt, minimum width=1.35cm,
+              minimum height=0.7cm, font=\scriptsize\ttfamily, align=center}]
+  \foreach \abi/\xreg/\role/\i/\col in {
+    zero/x0/constant/0/gray5,ra/x1/return/1/gred,sp/x2/stack/2/gred,gp/x3/global/3/gray5,
+    tp/x4/thread/4/gray5,t0-t2/x5-x7/temp/5/gyellow,fp/x8/frame/6/gblue,s1/x9/saved/7/gblue,
+    a0-a7/x10-x17/args/8/ggreen,s2-s11/x18-x27/saved/9/gblue,t3-t6/x28-x31/temp/10/gyellow} {
+    \pgfmathtruncatemacro{\row}{mod(\i,4)}
+    \pgfmathtruncatemacro{\column}{floor(\i/4)}
+    \node[reg, fill=\col!11, draw=\col!70]
+      at ({2.15*\column},{3.15-0.92*\row}) {\abi\\\xreg\\\scriptsize\role};
+  }
+  \node[guidelabel, anchor=west] at (6.7,2.5)
+    {x0 is hardware: reads zero, writes vanish};
+  \node[guidelabel, anchor=west] at (6.7,1.45)
+    {all other roles come from the RISC-V ABI};
+  \node[guidelabel, anchor=west] at (6.7,0.4)
+    {saved registers survive calls; temporaries do not};
+\end{tikzpicture}
+
+\subsection*{stack_heap_growth}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \draw[gray5, line width=0.8pt] (0,0) rectangle (5.0,6.2);
+  \fill[gblue!12] (0.04,4.85) rectangle (4.96,6.16);
+  \fill[ggreen!12] (0.04,0.04) rectangle (4.96,1.45);
+  \node[font=\small\bfseries] at (2.5,5.55) {stack frames};
+  \node[font=\small\bfseries] at (2.5,0.75) {heap allocations};
+  \node[guidelabel] at (2.5,3.1) {free virtual address space};
+  \draw[flowarrow, gblue] (2.5,4.75) -- (2.5,3.75);
+  \draw[flowarrow, ggreen] (2.5,1.55) -- (2.5,2.55);
+  \node[guidelabel, anchor=west] at (5.35,4.25) {sp moves toward lower addresses};
+  \node[guidelabel, anchor=west] at (5.35,2.05) {the break moves toward higher addresses};
+  \node[guidelabel, text=red700, anchor=west] at (5.35,3.15)
+    {collision means exhaustion, not shared storage};
+  \node[addrlbl, anchor=east] at (-0.25,6.0) {high};
+  \node[addrlbl, anchor=east] at (-0.25,0.2) {low};
+\end{tikzpicture}
+
+\subsection*{instruction_encoding}
+\begin{tikzpicture}[x=1cm,y=1cm,
+  enc/.style={draw=gray5, minimum height=1.1cm, font=\scriptsize\ttfamily,
+              align=center}]
+  \node[font=\large\ttfamily\bfseries] at (6.4,2.45) {add t2, t0, t1};
+  \node[enc, minimum width=2.8cm, fill=gray3!25] at (1.4,1.0) {funct7\\0000000};
+  \node[enc, minimum width=2.0cm, fill=gred!9] at (3.8,1.0) {rs2\\00110};
+  \node[enc, minimum width=2.0cm, fill=gred!9] at (5.8,1.0) {rs1\\00101};
+  \node[enc, minimum width=1.4cm, fill=gray3!25] at (7.5,1.0) {f3\\000};
+  \node[enc, minimum width=2.0cm, fill=gblue!9] at (9.2,1.0) {rd\\00111};
+  \node[enc, minimum width=2.8cm, fill=ggreen!9] at (11.6,1.0) {opcode\\0110011};
+  \node[addrlbl] at (0,1.85) {31};
+  \node[addrlbl] at (13.0,1.85) {0};
+  \node[guidemono] at (6.4,0.0) {all 32 bits: 0x006283B3};
+\end{tikzpicture}
+
+\subsection*{load_store_addressing}
+\begin{tikzpicture}[x=1cm,y=1cm,
+  regbox/.style={guidecard, minimum width=2.2cm, fill=gblue!8, draw=gblue!60},
+  mem/.style={draw=gray5, minimum width=2.6cm, minimum height=0.62cm,
+              font=\footnotesize\ttfamily}]
+  \node[font=\large\ttfamily] at (4.9,4.0)
+    {ld \textcolor{gblue}{t5}, \textcolor{green700}{8(t4)}};
+  \node[regbox] (base) at (0,2.3) {t4\\\scriptsize 0x2000};
+  \node[guidecard, fill=ggreen!8, draw=ggreen!60] (add) at (3.2,2.3) {+ 8};
+  \node[mem, fill=gray3!20] at (6.2,3.1) {0x2000 \quad 3};
+  \node[mem, fill=ggreen!10, draw=ggreen!65] (target) at (6.2,2.3) {0x2008 \quad 7};
+  \node[mem, fill=gray3!20] at (6.2,1.5) {0x2010 \quad 9};
+  \node[regbox, fill=purple!10, draw=purple!60] (dest) at (9.5,2.3) {t5\\\scriptsize 7};
+  \draw[guideedge] (base) -- (add);
+  \draw[guideedge] (add) -- (target);
+  \draw[guideedge, purple] (target) -- node[above, guidelabel]{load value} (dest);
+  \node[guidelabel] at (4.8,0.45)
+    {effective address = base register + signed instruction offset};
 \end{tikzpicture}
 \end{document}
