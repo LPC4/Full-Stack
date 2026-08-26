@@ -18,7 +18,6 @@
     clippy::too_many_lines,
     clippy::unnecessary_wraps,
     clippy::unused_self,
-    clippy::unwrap_used,
     reason = "legacy compiler structure; keep new lint categories enforced while refactoring incrementally"
 )]
 #![cfg_attr(
@@ -28,6 +27,7 @@
         clippy::ref_patterns,
         clippy::single_char_pattern,
         clippy::str_to_string,
+        clippy::unwrap_used,
         reason = "compiler unit tests use direct diagnostics and compact fixture assertions"
     )
 )]

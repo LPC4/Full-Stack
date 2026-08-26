@@ -120,25 +120,39 @@ fn test_identity_mapping_in_bare_mode() {
     assert_eq!(result.expect("address translation should succeed"), 0x12345);
 }
 
-#[test]
-fn test_sv39_noncanonical_address_faults() {
-    let mut mem = MockMemory::new();
+fn translate_sv39(
+    mem: &mut MockMemory,
+    vaddr: u64,
+    access: mmu::AccessKind,
+) -> Result<u64, VmError> {
+    let satp = (8u64 << 60) | (0x1000 >> 12);
+    let ctx = mmu::TranslationContext::without_pmp(satp, PrivilegeMode::Supervisor, 0);
+    mmu::translate_with_pmp(vaddr, mem, ctx, access, &mut mmu::Tlb::new())
+}
 
+fn assert_access_specific_page_faults(mem: &mut MockMemory, vaddr: u64) {
+    assert_eq!(
+        translate_sv39(mem, vaddr, mmu::AccessKind::Execute),
+        Err(VmError::InstructionPageFault(vaddr)),
+        "execute faults must retain their access kind"
+    );
+    assert_eq!(
+        translate_sv39(mem, vaddr, mmu::AccessKind::Load),
+        Err(VmError::LoadPageFault(vaddr)),
+        "load faults must retain their access kind"
+    );
+    assert_eq!(
+        translate_sv39(mem, vaddr, mmu::AccessKind::Store),
+        Err(VmError::StorePageFault(vaddr)),
+        "store faults must retain their access kind"
+    );
+}
+
+#[test]
+fn test_sv39_noncanonical_address_faults_preserve_access_kind() {
     // Bit 38 is set, but the upper bits are not sign-extended, so this is not canonical.
     let vaddr = 0x0000_0040_0000_0000u64;
-    let satp = (8u64 << 60) | (0x1000 >> 12);
-
-    let result = mmu::translate(
-        vaddr,
-        satp,
-        PrivilegeMode::Supervisor,
-        0,
-        &mut mem,
-        false,
-        false,
-    );
-
-    assert!(matches!(result, Err(VmError::PageFault(addr)) if addr == vaddr));
+    assert_access_specific_page_faults(&mut MockMemory::new(), vaddr);
 }
 
 #[test]
@@ -233,7 +247,7 @@ fn test_sv39_permission_check_no_execute() {
         false,
         true,
     );
-    assert!(matches!(result, Err(VmError::InstructionAccessFault(_))));
+    assert!(matches!(result, Err(VmError::InstructionPageFault(_))));
 }
 
 #[test]
@@ -284,11 +298,31 @@ fn test_sv39_permission_check_no_write() {
         true,
         false,
     );
-    assert!(matches!(result, Err(VmError::StoreAccessFault(_))));
+    assert!(matches!(result, Err(VmError::StorePageFault(_))));
 }
 
 #[test]
-fn test_sv39_invalid_pte() {
+fn test_sv39_permission_check_no_read() {
+    let mut mem = MockMemory::new();
+
+    let l2_pte = ((0x2000 >> 12) << 10) | 0x1;
+    mem.write_doubleword(0x1000, l2_pte);
+    let l1_pte = ((0x3000 >> 12) << 10) | 0x1;
+    mem.write_doubleword(0x2000, l1_pte);
+    // V|X|A|D=1, R=0 and MXR=0.
+    let l0_pte = 0xC9;
+    mem.write_doubleword(0x3000, l0_pte);
+
+    let result = translate_sv39(&mut mem, 0, mmu::AccessKind::Load);
+    assert_eq!(
+        result,
+        Err(VmError::LoadPageFault(0)),
+        "missing read permission must produce a load page fault"
+    );
+}
+
+#[test]
+fn test_sv39_invalid_pte_faults_preserve_access_kind() {
     let mut mem = MockMemory::new();
 
     let l2_pte = ((0x2000 >> 12) << 10) | 0x1;
@@ -298,16 +332,5 @@ fn test_sv39_invalid_pte() {
     let l0_pte = 0x0; // V=0
     mem.write_doubleword(0x3000, l0_pte);
 
-    let satp = (8u64 << 60) | (0x1000 >> 12);
-
-    let result = mmu::translate(
-        0x0,
-        satp,
-        PrivilegeMode::Supervisor,
-        0,
-        &mut mem,
-        false,
-        false,
-    );
-    assert!(matches!(result, Err(VmError::PageFault(_))));
+    assert_access_specific_page_faults(&mut mem, 0);
 }

@@ -158,7 +158,7 @@ mod tests {
         }
     }
 
-    // Multi-byte input used to be able to split a char and panic on slicing.
+    // Every scanner boundary must remain a valid UTF-8 boundary for renderer slicing.
     #[test]
     fn multibyte_text_never_splits_a_char() {
         let sources = [

@@ -55,11 +55,19 @@ impl AccessKind {
         matches!(self, Self::Execute)
     }
 
-    const fn fault(self, vaddr: u64) -> VmError {
+    const fn access_fault(self, vaddr: u64) -> VmError {
         match self {
             Self::Load => VmError::LoadAccessFault(vaddr),
             Self::Store => VmError::StoreAccessFault(vaddr),
             Self::Execute => VmError::InstructionAccessFault(vaddr),
+        }
+    }
+
+    const fn page_fault(self, vaddr: u64) -> VmError {
+        match self {
+            Self::Load => VmError::LoadPageFault(vaddr),
+            Self::Store => VmError::StorePageFault(vaddr),
+            Self::Execute => VmError::InstructionPageFault(vaddr),
         }
     }
 }
@@ -159,15 +167,15 @@ pub(crate) fn finalize_leaf(
 
     // Permission checks.
     if access.is_execute() && x == 0 {
-        return Err(VmError::InstructionAccessFault(vaddr));
+        return Err(access.page_fault(vaddr));
     }
     if access.is_write() && w == 0 {
-        return Err(VmError::StoreAccessFault(vaddr));
+        return Err(access.page_fault(vaddr));
     }
     if matches!(access, AccessKind::Load) && r == 0 {
         // MXR=1: executable pages are also readable.
         if mxr == 0 || x == 0 {
-            return Err(VmError::LoadAccessFault(vaddr));
+            return Err(access.page_fault(vaddr));
         }
     }
 
@@ -175,12 +183,12 @@ pub(crate) fn finalize_leaf(
     match ctx.priv_mode {
         PrivilegeMode::User => {
             if u_bit == 0 {
-                return Err(VmError::PageFault(vaddr));
+                return Err(access.page_fault(vaddr));
             }
         }
         PrivilegeMode::Supervisor => {
             if u_bit == 1 && sum == 0 {
-                return Err(VmError::PageFault(vaddr));
+                return Err(access.page_fault(vaddr));
             }
         }
         PrivilegeMode::Machine => {}
@@ -190,7 +198,7 @@ pub(crate) fn finalize_leaf(
     if level > 0 {
         let lower_mask = (1u64 << (level as u64 * VPN_BITS)) - 1;
         if ((pte >> 10) & lower_mask) != 0 {
-            return Err(VmError::PageFault(vaddr));
+            return Err(access.page_fault(vaddr));
         }
     }
 
@@ -219,7 +227,7 @@ pub(crate) fn finalize_leaf(
                 return Err(VmError::LoadAccessFault(vaddr));
             }
         } else {
-            return Err(VmError::PageFault(vaddr));
+            return Err(access.access_fault(vaddr));
         }
     }
 
@@ -261,7 +269,7 @@ pub fn translate_with_pmp(
                     return Err(VmError::LoadAccessFault(vaddr));
                 }
             } else {
-                return Err(access.fault(vaddr));
+                return Err(access.access_fault(vaddr));
             }
         }
         return Ok(phys_addr);
@@ -269,12 +277,12 @@ pub fn translate_with_pmp(
 
     // Only Sv39 (mode = 8) is supported.
     if mode != 8 {
-        return Err(VmError::PageFault(vaddr));
+        return Err(access.page_fault(vaddr));
     }
 
     // Sv39 canonical check: bits [63:39] must all equal bit 38 (sign extension).
     if !is_sv39_canonical(vaddr) {
-        return Err(VmError::PageFault(vaddr));
+        return Err(access.page_fault(vaddr));
     }
 
     // TLB fast path. A write to a page with a clean cached D bit re-walks so the
@@ -297,16 +305,16 @@ pub fn translate_with_pmp(
 
         let pte = bus
             .read_doubleword(pte_addr)
-            .map_err(|_| VmError::PageFault(vaddr))?;
+            .map_err(|_| access.page_fault(vaddr))?;
 
         // Valid bit must be set.
         if pte & 0x1 == 0 {
-            return Err(VmError::PageFault(vaddr));
+            return Err(access.page_fault(vaddr));
         }
 
         // Reserved bits [63:54] must be zero.
         if (pte >> 54) != 0 {
-            return Err(VmError::PageFault(vaddr));
+            return Err(access.page_fault(vaddr));
         }
 
         let r = (pte >> 1) & 1;
@@ -327,7 +335,7 @@ pub fn translate_with_pmp(
             if new_pte != pte {
                 // If we cannot update the PTE, raise a page fault.
                 bus.write_doubleword(pte_addr, new_pte)
-                    .map_err(|_| VmError::PageFault(vaddr))?;
+                    .map_err(|_| access.page_fault(vaddr))?;
             }
 
             // Cache the post-update leaf so later accesses to this page skip the walk.
@@ -337,13 +345,13 @@ pub fn translate_with_pmp(
         } else {
             // Non-leaf PTE: W=1 is reserved for non-leaf entries.
             if w == 1 {
-                return Err(VmError::PageFault(vaddr));
+                return Err(access.page_fault(vaddr));
             }
             current_ppn = (pte >> 10) & 0x0000_0FFF_FFFF_FFFF;
         }
     }
 
-    Err(VmError::PageFault(vaddr))
+    Err(access.page_fault(vaddr))
 }
 
 /// Backwards-compatible wrapper keeping the original `translate()` signature.
@@ -426,5 +434,41 @@ mod tests {
             res,
             Err(crate::error::VmError::InstructionAccessFault(_))
         ));
+    }
+
+    #[test]
+    fn pmp_denials_preserve_access_kind() {
+        let mut bus = SystemBus::new(vec![]);
+        let addr = crate::bus::RAM_BASE;
+        let ctx = TranslationContext {
+            satp: 0,
+            priv_mode: PrivilegeMode::Supervisor,
+            mstatus: 0,
+            pmpcfg0: 0x0,
+            pmpaddr0: u64::MAX,
+        };
+
+        for (access, config, expected) in [
+            (
+                AccessKind::Execute,
+                0x3,
+                VmError::InstructionAccessFault(addr),
+            ),
+            (AccessKind::Load, 0x6, VmError::LoadAccessFault(addr)),
+            (AccessKind::Store, 0x5, VmError::StoreAccessFault(addr)),
+        ] {
+            let mut tlb = Tlb::new();
+            let result = translate_with_pmp(
+                addr,
+                &mut bus,
+                TranslationContext {
+                    pmpcfg0: config,
+                    ..ctx
+                },
+                access,
+                &mut tlb,
+            );
+            assert_eq!(result, Err(expected));
+        }
     }
 }

@@ -2,8 +2,8 @@
 
 use super::{Class, Lang};
 
-/// CSS class for a token, or `None` for text that takes the default color.
-pub fn class_name(class: Class) -> Option<&'static str> {
+// Plain text needs no CSS class.
+fn class_name(class: Class) -> Option<&'static str> {
     match class {
         Class::Plain | Class::Text => None,
         Class::Keyword => Some("tk-kw"),
@@ -38,8 +38,8 @@ pub fn escape(text: &str) -> String {
     out
 }
 
-/// The language a fence tag or file extension selects, if any.
-pub fn lang_for(tag: &str) -> Option<Lang> {
+// Fence tags and file extensions share the same short aliases.
+fn lang_for(tag: &str) -> Option<Lang> {
     match tag {
         "asm" | "s" | "riscv" => Some(Lang::Asm),
         "hll" => Some(Lang::Hll),

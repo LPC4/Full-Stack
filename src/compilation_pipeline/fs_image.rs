@@ -312,7 +312,7 @@ pub fn build_fs_image(entries: &[FsEntry<'_>]) -> Vec<u8> {
 }
 
 #[cfg(test)]
-mod fs_image_tests {
+mod tests {
     use super::*;
 
     // Parse a `const FS_NAME = <int>` declaration out of fs.hll. Handles decimal

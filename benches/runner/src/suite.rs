@@ -17,35 +17,34 @@ impl Knobs {
         regalloc: true,
         omit_frame_pointer: true,
     };
-    pub const fn ir_opt_on() -> Self {
+    const fn ir_opt_on() -> Self {
         Self {
             ir_opt: true,
             ..Self::DEFAULT
         }
     }
-    pub const fn regalloc_off() -> Self {
+    const fn regalloc_off() -> Self {
         Self {
             regalloc: false,
             ..Self::DEFAULT
         }
     }
-    /// Peephole folds stack-slot reloads, so its A/B runs with regalloc off;
-    /// with regalloc on the pass finds nothing (values never touch the stack).
-    pub const fn noreg_peephole_off() -> Self {
+    // Peephole A/B runs disable regalloc so values reach stack slots.
+    const fn noreg_peephole_off() -> Self {
         Self {
             regalloc: false,
             peephole: false,
             ..Self::DEFAULT
         }
     }
-    pub const fn noreg_peephole_on() -> Self {
+    const fn noreg_peephole_on() -> Self {
         Self {
             regalloc: false,
             peephole: true,
             ..Self::DEFAULT
         }
     }
-    pub const fn fp_kept() -> Self {
+    const fn fp_kept() -> Self {
         Self {
             omit_frame_pointer: false,
             ..Self::DEFAULT

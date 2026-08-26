@@ -14,32 +14,25 @@ pub enum CatalogBadge {
     Fragment,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ProgramKind {
     Example,
-    Custom,
     Stdlib, // Read-only stdlib programs
     Os,     // Read-only OS / kernel programs
     User,   // Read-only userspace programs (shell, editor, assembler, demos)
 }
 
-#[derive(Clone, serde::Deserialize, serde::Serialize, Debug)]
+#[derive(Clone, Debug)]
 pub struct ProgramFile {
     pub id: String,
     pub name: String,
     pub kind: ProgramKind,
     pub source: String,
-    #[serde(default)]
     pub source_path: Option<String>,
-    #[serde(default)]
     pub build_path: Option<String>,
-    #[serde(default)]
     pub standalone: bool, // compile without linking stdlib (set for runtime/stdlib reference files)
-    #[serde(default)]
     pub parent_id: Option<String>, // set for helper modules and kernel fragments; their owner's id
-    #[serde(default)]
-    pub layout: String, // shared HLL header prepended before compile (empty if none)
-    #[serde(skip)]
+    pub layout: String,   // shared HLL header prepended before compile (empty if none)
     pub description: String,
 }
 
@@ -140,10 +133,6 @@ impl ProgramFile {
             layout: String::new(),
             description: description.to_owned(),
         }
-    }
-
-    fn is_custom(&self) -> bool {
-        matches!(self.kind, ProgramKind::Custom)
     }
 
     fn is_stdlib(&self) -> bool {
@@ -460,102 +449,26 @@ fn built_in_programs() -> Vec<ProgramFile> {
     programs
 }
 
-#[derive(Clone, serde::Deserialize, serde::Serialize, Debug)]
+#[derive(Clone, Debug)]
 pub struct ProgramCatalog {
     programs: Vec<ProgramFile>,
-    pub selected_program_id: String,
-    pub next_custom_program_id: u32,
 }
 
 impl Default for ProgramCatalog {
     fn default() -> Self {
-        let programs = built_in_programs();
-        let selected_program_id = programs
-            .first()
-            .map(|program| program.id.clone())
-            .unwrap_or_default();
-
         Self {
-            programs,
-            selected_program_id,
-            next_custom_program_id: 1,
+            programs: built_in_programs(),
         }
     }
 }
 
 impl ProgramCatalog {
-    pub fn ensure_consistency(&mut self) {
-        let mut merged_programs = Vec::with_capacity(self.programs.len().max(1) + 8);
-
-        for built_in in built_in_programs() {
-            if let Some(existing) = self
-                .programs
-                .iter()
-                .find(|program| program.id == built_in.id)
-            {
-                let mut updated = existing.clone();
-                if built_in.kind == ProgramKind::Custom {
-                    // Custom programs: preserve everything - user-managed
-                } else {
-                    // Stdlib, Example, Os: always refresh from embedded (read-only)
-                    updated.name = built_in.name;
-                    updated.kind = built_in.kind;
-                    updated.source = built_in.source;
-                    updated.description = built_in.description;
-                    updated.source_path = built_in.source_path;
-                    updated.build_path = built_in.build_path;
-                    updated.standalone = built_in.standalone;
-                    updated.parent_id = built_in.parent_id;
-                    updated.layout = built_in.layout;
-                }
-                merged_programs.push(updated);
-            } else {
-                merged_programs.push(built_in);
-            }
-        }
-
-        merged_programs.extend(
-            self.programs
-                .iter()
-                .filter(|program| program.is_custom())
-                .cloned(),
-        );
-
-        self.programs = merged_programs;
-
-        if self.next_custom_program_id == 0 {
-            self.next_custom_program_id = 1;
-        }
-
-        if self.selected_program_id.is_empty()
-            || !self
-                .programs
-                .iter()
-                .any(|program| program.id == self.selected_program_id)
-        {
-            self.selected_program_id = self
-                .programs
-                .first()
-                .map(|program| program.id.clone())
-                .unwrap_or_default();
-        }
-    }
-
     pub fn all_programs(&self) -> &[ProgramFile] {
         &self.programs
     }
 
     pub fn get_programs_by_kind(&self, kind: ProgramKind) -> Vec<&ProgramFile> {
         self.programs.iter().filter(|p| p.kind == kind).collect()
-    }
-
-    /// The shared layout header for the program `id`, or `""` if it has none.
-    pub fn layout_of(&self, id: &str) -> &str {
-        self.programs
-            .iter()
-            .find(|p| p.id == id)
-            .map(|p| p.layout.as_str())
-            .unwrap_or("")
     }
 }
 
@@ -635,44 +548,5 @@ mod tests {
             assert_eq!(module.badge(), CatalogBadge::Fragment);
             assert_eq!(module.source, module_source);
         }
-    }
-
-    // A persisted catalog from before the `layout` field defaults it to empty;
-    // ensure_consistency must restore it for read-only split tools (cc/as).
-    #[test]
-    fn ensure_consistency_restores_layout_for_read_only_programs() {
-        let mut catalog = ProgramCatalog::default();
-        for program in &mut catalog.programs {
-            program.layout.clear();
-        }
-        catalog.ensure_consistency();
-        assert_eq!(catalog.layout_of("user-cc"), crate::userspace::CC_LAYOUT);
-        assert_eq!(catalog.layout_of("user-as"), crate::userspace::AS_LAYOUT);
-    }
-
-    // Persisted app state from before `source_path` existed left bundled examples
-    // without a filesystem base, which broke `import("./modules/mathlib.hll")`.
-    #[test]
-    fn ensure_consistency_restores_source_path_for_read_only_examples() {
-        let mut catalog = ProgramCatalog::default();
-        let hll2 = catalog
-            .programs
-            .iter_mut()
-            .find(|program| program.id == "example-hll2-completion-showcase")
-            .expect("hll2 showcase entry");
-        hll2.source_path = None;
-
-        catalog.ensure_consistency();
-
-        let hll2 = find(&catalog.programs, "example-hll2-completion-showcase");
-        let source_path = hll2.source_path.as_deref().expect("restored source path");
-        assert!(
-            source_path.ends_with(
-                "programs\\example\\hll2_completion_showcase\\hll2_completion_showcase.hll"
-            ) || source_path.ends_with(
-                "programs/example/hll2_completion_showcase/hll2_completion_showcase.hll"
-            ),
-            "unexpected source path: {source_path}"
-        );
     }
 }

@@ -1315,10 +1315,11 @@ impl CompilerRv64 {
     }
 
     fn asm_scratch_registers(protected: Reg) -> [Reg; 2] {
-        let mut registers = [5, 6, 7, 28, 29, 30, 31]
-            .into_iter()
-            .filter(|reg| *reg != protected);
-        [registers.next().unwrap(), registers.next().unwrap()]
+        match protected {
+            5 => [6, 7],
+            6 => [5, 7],
+            _ => [5, 6],
+        }
     }
 
     fn lower_function_addr(

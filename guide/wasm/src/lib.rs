@@ -46,8 +46,8 @@ impl Outcome {
     }
 }
 
-/// Gives a fragment an entry point and a register-neutral completion marker.
-pub fn wrap_snippet(source: &str) -> String {
+// The completion loop lets the runner stop before guest register state drifts.
+fn wrap_snippet(source: &str) -> String {
     format!(
         ".globl _start\n_start:\n{source}\n\
          {SNIPPET_DONE}:\n\
@@ -377,8 +377,8 @@ pub fn run_hll(source: &str, max_steps: u64) -> Outcome {
     outcome_from_result(&vm, result)
 }
 
-/// Runs one of the source languages supported by editable Guide examples.
-pub fn run_source(lang: &str, source: &str, max_steps: u64, bare: bool) -> Outcome {
+#[cfg(any(test, target_arch = "wasm32"))]
+fn run_source(lang: &str, source: &str, max_steps: u64, bare: bool) -> Outcome {
     match lang {
         "asm" => run(source, max_steps, bare),
         "hll" => run_hll(source, max_steps),

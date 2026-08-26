@@ -134,21 +134,21 @@ The MMU enforces the following permission checks:
 
 **Execute Access (`is_execute=true`):**
 - X bit must be 1
-- Returns `InstructionAccessFault` if X=0
+- Returns `InstructionPageFault` if X=0
 
 **Write Access (`is_write=true`):**
 - W bit must be 1
-- Returns `StoreAccessFault` if W=0
+- Returns `StorePageFault` if W=0
 
 **Read Access (`is_write=false`, `is_execute=false`):**
 - R bit must be 1
-- Returns `LoadAccessFault` if R=0
+- Returns `LoadPageFault` if R=0
 
 **Privilege Mode Checks:**
 - In M-mode: Bypass all translation (identity mapping)
 - In S/U-mode with U=0: Supervisor-only page
 - In U-mode with U=1: User-accessible page
-- In U-mode with U=0: Returns `PageFault`
+- Privilege failures return the instruction, load, or store page fault matching the access.
 
 ### 2.1.6 Canonical Address Validation
 Sv39 requires that virtual addresses be "canonical": bits [63:39] must all equal bit 38.
@@ -157,6 +157,7 @@ Sv39 requires that virtual addresses be "canonical": bits [63:39] must all equal
 - Invalid: Any address where bits [63:39] are neither all-0 nor all-1 (i.e. not 0 and not 0x1FFFFF)
 
 Non-canonical addresses trigger a Page Fault before translation begins.
+The fault retains the access kind so trap conversion selects cause 12, 13, or 15.
 
 ### 2.1.7 Translation Cache (TLB)
 The MMU keeps a 256-entry direct-mapped TLB of Sv39 leaf mappings to avoid a full
@@ -889,9 +890,9 @@ enum VmError {
 
 ### 8.2 Error Propagation
 - **Pipeline stages** return `Result<T, VmError>`
-- **Fetch errors** -> `InstructionAccessFault` trap
+- **Fetch errors** -> instruction access or instruction page-fault trap
 - **Decode errors** -> `IllegalInstruction` trap
-- **Memory errors** -> `LoadAccessFault` or `StoreAccessFault` trap
+- **Memory errors** -> access or page-fault trap matching the load/store operation
 - **Ecall/Ebreak** -> Special trap (not an error, but a controlled exit)
 
 ### 8.3 Trap vs. Error

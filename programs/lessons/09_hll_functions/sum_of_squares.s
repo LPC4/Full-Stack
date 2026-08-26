@@ -44,6 +44,7 @@ square__entry:
 	jalr   zero, 0(ra)
 ; --- End Epilogue ---
 ; End of function
+
 ; Function: sum_of_squares
 sum_of_squares:
 ; --- Function Prologue ---

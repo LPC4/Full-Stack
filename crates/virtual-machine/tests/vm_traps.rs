@@ -85,6 +85,23 @@ mod tests {
         assert_eq!(cause, traps::CAUSE_LOAD_ACCESS_FAULT);
         assert_eq!(tval, 0x5678);
 
+        let page_faults = [
+            (
+                VmError::InstructionPageFault(0x1234),
+                traps::CAUSE_PAGE_FAULT_INST,
+            ),
+            (VmError::LoadPageFault(0x5678), traps::CAUSE_PAGE_FAULT_LOAD),
+            (
+                VmError::StorePageFault(0x9ABC),
+                traps::CAUSE_PAGE_FAULT_STORE,
+            ),
+        ];
+        for (error, expected_cause) in page_faults {
+            let (cause, _) =
+                traps::error_to_trap_cause(&error).expect("page fault should map to a trap");
+            assert_eq!(cause, expected_cause, "page-fault cause must match access");
+        }
+
         // Test that ecall cannot be trapped
         let err = VmError::Ecall;
         assert!(traps::error_to_trap_cause(&err).is_none());

@@ -106,7 +106,9 @@ pub fn error_to_trap_cause(e: &VmError) -> Option<(u64, u64)> {
             Some((CAUSE_LOAD_ACCESS_FAULT, *addr))
         }
         VmError::StoreAccessFault(addr) => Some((CAUSE_STORE_ACCESS_FAULT, *addr)),
-        VmError::PageFault(addr) => Some((CAUSE_PAGE_FAULT_LOAD, *addr)),
+        VmError::InstructionPageFault(addr) => Some((CAUSE_PAGE_FAULT_INST, *addr)),
+        VmError::LoadPageFault(addr) => Some((CAUSE_PAGE_FAULT_LOAD, *addr)),
+        VmError::StorePageFault(addr) => Some((CAUSE_PAGE_FAULT_STORE, *addr)),
         _ => None,
     }
 }

@@ -1213,9 +1213,8 @@ pub fn extract_interface(source: &str) -> Result<String, String> {
     extract_interface_prefixed(source, "")
 }
 
-/// As [`extract_interface`], but mangling exported `fn`/global names to `prefix__name` so an
-/// importer's mangled references resolve to the target module's mangled definitions.
-pub fn extract_interface_prefixed(source: &str, prefix: &str) -> Result<String, String> {
+// Mangle exported link symbols while leaving source-level types and constants scoped normally.
+fn extract_interface_prefixed(source: &str, prefix: &str) -> Result<String, String> {
     extract_interface_prefixed_with_aliases(source, prefix, &HashMap::new())
 }
 

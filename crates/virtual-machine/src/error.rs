@@ -12,7 +12,9 @@ pub enum VmError {
     IllegalInstruction(u32),
     Ecall,
     Ebreak,
-    PageFault(u64),
+    InstructionPageFault(u64),
+    LoadPageFault(u64),
+    StorePageFault(u64),
     Mret,
     Sret,
     /// Other runtime error with a descriptive message.
@@ -32,7 +34,11 @@ impl fmt::Display for VmError {
             Self::IllegalInstruction(word) => write!(f, "illegal instruction {word:#010x}"),
             Self::Ecall => write!(f, "environment call"),
             Self::Ebreak => write!(f, "breakpoint"),
-            Self::PageFault(addr) => write!(f, "page fault at {addr:#010x}"),
+            Self::InstructionPageFault(addr) => {
+                write!(f, "instruction page fault at {addr:#010x}")
+            }
+            Self::LoadPageFault(addr) => write!(f, "load page fault at {addr:#010x}"),
+            Self::StorePageFault(addr) => write!(f, "store page fault at {addr:#010x}"),
             Self::Mret => write!(f, "return from machine-mode trap (MRET)"),
             Self::Sret => write!(f, "return from supervisor-mode trap (SRET)"),
             Self::Other(msg) => write!(f, "{msg}"),

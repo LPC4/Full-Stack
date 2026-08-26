@@ -1163,15 +1163,11 @@ impl<'a> Parser<'a> {
                 let ptr_ty = Type::Pointer(Box::new(base_ty));
 
                 self.advance(); // consume LParen
-                let arguments = self.parse_argument_list_after_open_paren()?;
-
-                if arguments.len() != 1 {
-                    return Err(self.error("type cast expects exactly one argument"));
-                }
+                let argument = self.parse_cast_argument()?;
 
                 expr = Expression::Cast {
                     target_ty: ptr_ty,
-                    expr: Box::new(arguments.into_iter().next().unwrap()),
+                    expr: Box::new(argument),
                 };
 
                 expr = self.parse_postfix(expr)?;
@@ -1439,13 +1435,10 @@ impl<'a> Parser<'a> {
                     if !type_arguments.is_empty() {
                         return Err(self.error("type casts do not accept type arguments"));
                     }
-                    let arguments = self.parse_argument_list_after_open_paren()?;
-                    if arguments.len() != 1 {
-                        return Err(self.error("type cast expects exactly one argument"));
-                    }
+                    let argument = self.parse_cast_argument()?;
                     expr = Expression::Cast {
                         target_ty,
-                        expr: Box::new(arguments.into_iter().next().unwrap()),
+                        expr: Box::new(argument),
                     };
                 } else {
                     let arguments = self.parse_argument_list_after_open_paren()?;
@@ -1881,6 +1874,14 @@ impl<'a> Parser<'a> {
         self.consume_terminators(); // before ')'
         self.expect_rparen()?;
         Ok(args)
+    }
+
+    fn parse_cast_argument(&mut self) -> Result<Expression, ParserError> {
+        let mut arguments = self.parse_argument_list_after_open_paren()?;
+        if arguments.len() != 1 {
+            return Err(self.error("type cast expects exactly one argument"));
+        }
+        Ok(arguments.remove(0))
     }
 
     fn parse_type_name_as_cast(&self, name: &str) -> Option<Type> {
