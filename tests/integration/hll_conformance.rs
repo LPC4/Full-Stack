@@ -2,20 +2,20 @@
 // execution gate: each surface must also link and exit with the right code.
 
 use full_stack::compilation_pipeline::CompilationPipeline;
-use virtual_machine::virtual_machine::StepOutcome;
+use virtual_machine::virtual_machine::RunOutcome;
 
 #[path = "../common/hosted_hll.rs"]
 mod hosted_hll;
 
 // Compile a user program, link it against the cached stdlib, and run it in the VM.
-fn run_hll(src: &str) -> StepOutcome {
-    hosted_hll::run(src, hosted_hll::HostedOptions::default()).outcome
+fn run_hll(src: &str) -> RunOutcome {
+    hosted_hll::run(src, hosted_hll::HostedOptions::default()).termination
 }
 
 fn assert_exit(src: &str, code: i64) {
     let outcome = run_hll(src);
     assert!(
-        matches!(outcome, StepOutcome::Halted(c) if c == code),
+        matches!(outcome, RunOutcome::Halted(c) if c == code),
         "expected Halted({code}), got {outcome:?}"
     );
 }

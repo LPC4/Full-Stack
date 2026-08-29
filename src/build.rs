@@ -853,11 +853,11 @@ export value: () -> i32 {
         let result = vm.run(10_000);
         assert!(
             matches!(
-                result.outcome,
-                virtual_machine::virtual_machine::StepOutcome::Continue
+                result.termination,
+                virtual_machine::virtual_machine::RunOutcome::TimedOut
             ),
             "sum.s should still be spinning at done: {:?}",
-            result.outcome
+            result.termination
         );
         assert_eq!(vm.peek_reg(5), 55, "t0 should hold the sum 1..10");
     }
@@ -877,11 +877,11 @@ export value: () -> i32 {
         let result = vm.run(10_000);
         assert!(
             matches!(
-                result.outcome,
-                virtual_machine::virtual_machine::StepOutcome::Continue
+                result.termination,
+                virtual_machine::virtual_machine::RunOutcome::TimedOut
             ),
             "array_sum.s should still be spinning at done: {:?}",
-            result.outcome
+            result.termination
         );
         assert_eq!(vm.peek_reg(5), 100, "t0 should hold the array sum");
     }
@@ -902,11 +902,11 @@ export value: () -> i32 {
         let result = vm.run(10_000);
         assert!(
             matches!(
-                result.outcome,
-                virtual_machine::virtual_machine::StepOutcome::Continue
+                result.termination,
+                virtual_machine::virtual_machine::RunOutcome::TimedOut
             ),
             "reverse_array.s should still be spinning at done: {:?}",
-            result.outcome
+            result.termination
         );
         let bytes = vm.peek_bytes_raw(virtual_machine::bus::RAM_BASE + array, 32);
         let values: Vec<u64> = bytes
@@ -928,11 +928,11 @@ export value: () -> i32 {
         let result = vm.run(1_000);
         assert!(
             matches!(
-                result.outcome,
-                virtual_machine::virtual_machine::StepOutcome::Continue
+                result.termination,
+                virtual_machine::virtual_machine::RunOutcome::TimedOut
             ),
             "reverse_array_template.s should be spinning at done: {:?}",
-            result.outcome
+            result.termination
         );
     }
 
@@ -948,11 +948,11 @@ export value: () -> i32 {
         let result = vm.run(10_000);
         assert!(
             matches!(
-                result.outcome,
-                virtual_machine::virtual_machine::StepOutcome::Continue
+                result.termination,
+                virtual_machine::virtual_machine::RunOutcome::TimedOut
             ),
             "max.s should still be spinning at done: {:?}",
-            result.outcome
+            result.termination
         );
         assert_eq!(vm.peek_reg(10), 12, "a0 should hold max(max(7, 12), 3)");
     }
@@ -969,11 +969,11 @@ export value: () -> i32 {
         let result = vm.run(10_000);
         assert!(
             matches!(
-                result.outcome,
-                virtual_machine::virtual_machine::StepOutcome::Continue
+                result.termination,
+                virtual_machine::virtual_machine::RunOutcome::TimedOut
             ),
             "max3.s should still be spinning at done: {:?}",
-            result.outcome
+            result.termination
         );
         assert_eq!(vm.peek_reg(10), 9, "a0 should hold max3(4, 9, 6)");
     }
@@ -990,11 +990,11 @@ export value: () -> i32 {
         let result = vm.run(10_000);
         assert!(
             matches!(
-                result.outcome,
-                virtual_machine::virtual_machine::StepOutcome::Continue
+                result.termination,
+                virtual_machine::virtual_machine::RunOutcome::TimedOut
             ),
             "factorial_stack.s should still be spinning at done: {:?}",
-            result.outcome
+            result.termination
         );
         assert_eq!(vm.peek_reg(10), 120, "a0 should hold 5!");
     }
@@ -1011,11 +1011,11 @@ export value: () -> i32 {
         let result = vm.run(10_000);
         assert!(
             matches!(
-                result.outcome,
-                virtual_machine::virtual_machine::StepOutcome::Continue
+                result.termination,
+                virtual_machine::virtual_machine::RunOutcome::TimedOut
             ),
             "sum_of_squares.s should still be spinning at done: {:?}",
-            result.outcome
+            result.termination
         );
         assert_eq!(vm.peek_reg(10), 25, "a0 should hold sos(3, 4)");
     }
@@ -1032,11 +1032,11 @@ export value: () -> i32 {
         let result = vm.run(1_000);
         assert!(
             matches!(
-                result.outcome,
-                virtual_machine::virtual_machine::StepOutcome::Continue
+                result.termination,
+                virtual_machine::virtual_machine::RunOutcome::TimedOut
             ),
             "sum_of_squares_template.s should be spinning at done: {:?}",
-            result.outcome
+            result.termination
         );
     }
 

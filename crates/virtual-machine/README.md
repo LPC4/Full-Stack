@@ -13,7 +13,7 @@ devices (UART, CLINT, PLIC, SYSCON, Keyboard, Framebuffer).
 AssembledOutput / ELF bytes
   -> VirtualMachine::new() | new_kernel() | from_elf()
   -> step() repeatedly, or run(max_steps)
-  -> RunResult { steps, uart_output, outcome }
+  -> RunResult { steps, uart_output, termination }
 ```
 
 Each `step()` advances the pipeline by one cycle. `new()` loads a flat program and starts
@@ -23,12 +23,17 @@ boot stub so firmware runs first and `mret`s into S-mode.
 ## Public API
 
 ```rust
-use virtual_machine::{VirtualMachine, RunResult, StepOutcome};
+use virtual_machine::{RunOutcome, RunResult, StepOutcome, VirtualMachine};
 use asm_to_binary::AssembledOutput;
 
 let mut vm = VirtualMachine::new(&assembled);
 let result: RunResult = vm.run(1_000_000);
 print!("{}", result.uart_output);
+match result.termination {
+    RunOutcome::Halted(code) => println!("exit code: {code}"),
+    RunOutcome::TimedOut => println!("step budget exhausted"),
+    RunOutcome::Fault(error) => eprintln!("VM fault: {error}"),
+}
 
 // Or drive it manually and inspect state:
 vm.uart_receive(b'a');                 // feed UART input

@@ -7,7 +7,7 @@ use hll_to_ir::{OptOptions, TargetMode};
 use std::sync::OnceLock;
 use std::time::Instant;
 use virtual_machine::bus::MemoryLatencyConfig;
-use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
+use virtual_machine::virtual_machine::{RunOutcome, VirtualMachine};
 
 // Stdlib stays constant so measured deltas come only from the benchmark module.
 fn cached_stdlib_objs() -> &'static [(String, AssembledOutput)] {
@@ -96,9 +96,10 @@ pub fn run_sample(
     let run = vm.run(max_steps);
     let wall_time_ms = start.elapsed().as_secs_f64() * 1000.0;
 
-    let (halted, exit_code) = match run.outcome {
-        StepOutcome::Halted(code) => (true, code),
-        StepOutcome::Continue => (false, -1),
+    let (halted, exit_code) = match run.termination {
+        RunOutcome::Halted(code) => (true, code),
+        RunOutcome::TimedOut => (false, -1),
+        RunOutcome::Fault(error) => panic!("benchmark VM fault: {error}"),
     };
     let stats = vm.pipeline_stats();
     let (l1, l2, l3) = vm.get_cache_stats();

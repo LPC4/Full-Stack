@@ -7,7 +7,7 @@ use full_stack::compilation_pipeline::{FsEntry, assembled_to_elf_file, build_fs_
 use full_stack::userspace as user;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
-use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
+use virtual_machine::virtual_machine::{RunOutcome, VirtualMachine};
 
 // Physical layout constants matching the OS spec.
 const FS_META_PA: u64 = 0x87BFF000;
@@ -108,10 +108,10 @@ fn boot_kernel(
     fs_image: Option<&[u8]>,
     input: &str,
     max_steps: u64,
-) -> (VirtualMachine, StepOutcome, String) {
+) -> (VirtualMachine, RunOutcome, String) {
     let mut vm = setup_kernel_vm(kernel, user, fs_image, input);
     let run = vm.run(max_steps);
-    (vm, run.outcome, run.uart_output)
+    (vm, run.termination, run.uart_output)
 }
 
 // Run in chunks until `done(uart_so_far)`, a halt, or the step cap. An idle
@@ -120,17 +120,17 @@ fn run_until(
     vm: &mut VirtualMachine,
     cap: u64,
     done: impl Fn(&str) -> bool,
-) -> (StepOutcome, String) {
+) -> (RunOutcome, String) {
     const CHUNK: u64 = 1_000_000;
     let mut uart = String::new();
-    let mut outcome = StepOutcome::Continue;
+    let mut outcome = RunOutcome::TimedOut;
     let mut steps = 0u64;
     while steps < cap && !done(&uart) {
         let r = vm.run(CHUNK.min(cap - steps));
         uart.push_str(&r.uart_output);
         steps += CHUNK;
-        outcome = r.outcome;
-        if matches!(outcome, StepOutcome::Halted(_)) {
+        outcome = r.termination;
+        if !matches!(outcome, RunOutcome::TimedOut) {
             break;
         }
     }
@@ -138,7 +138,7 @@ fn run_until(
 }
 
 // A hosted user program injected as pid 1 must spawn and exit with code 0.
-fn assert_user_exit_ok(uart: &str, outcome: &StepOutcome, label: &str) {
+fn assert_user_exit_ok(uart: &str, outcome: &RunOutcome, label: &str) {
     assert!(
         !uart.contains("PANIC!"),
         "{label}: kernel panicked; uart={uart:?}"
@@ -153,7 +153,7 @@ fn assert_user_exit_ok(uart: &str, outcome: &StepOutcome, label: &str) {
     );
     // A pid-1 program exiting cleanly calls kshutdown(0), halting the VM with 0.
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "{label}: user process did not exit cleanly with code 0; got {outcome:?}, uart={uart:?}"
     );
 }
@@ -187,7 +187,7 @@ fn run_tool_session(
     files: &[(&str, &[u8])],
     session: &str,
     max_steps: u64,
-) -> (StepOutcome, String) {
+) -> (RunOutcome, String) {
     let shell = compile_hosted_program("shell");
     let tool_elfs: Vec<(&str, Vec<u8>)> = tools
         .iter()
@@ -247,8 +247,9 @@ fn kernel_boot_full_sequence() {
     let (_, outcome, uart) = boot_kernel(cached_kernel(), Some(&user), None, "", 10_000_000);
 
     match outcome {
-        StepOutcome::Continue => {} // idle loop, expected
-        StepOutcome::Halted(c) => panic!("unexpected halt with code {c}; uart={uart:?}"),
+        RunOutcome::TimedOut => {} // idle loop, expected
+        RunOutcome::Halted(c) => panic!("unexpected halt with code {c}; uart={uart:?}"),
+        RunOutcome::Fault(error) => panic!("VM fault: {error}; uart={uart:?}"),
     }
 
     // Banner and init order: console -> device tree -> memory diagnostics.
@@ -309,7 +310,7 @@ fn kernel_boot_no_user_binary() {
     let (_, outcome, uart) = boot_kernel(cached_kernel(), None, None, "", 10_000_000);
     // Without a user binary the kernel calls kshutdown(0) after spawn returns.
     match outcome {
-        StepOutcome::Halted(0) => {}
+        RunOutcome::Halted(0) => {}
         other => panic!("expected clean shutdown, got {other:?}; uart={uart:?}"),
     }
     assert!(
@@ -585,7 +586,7 @@ fn cube_demo_drives_framebuffer() {
     );
     // It never exits, so the bounded run must still be ticking, not halted.
     assert!(
-        matches!(outcome, StepOutcome::Continue),
+        matches!(outcome, RunOutcome::TimedOut),
         "cube should run continuously, got {outcome:?}"
     );
 
@@ -627,7 +628,7 @@ fn life_demo_drives_framebuffer() {
         "life did not reach its render loop; uart={uart:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Continue),
+        matches!(outcome, RunOutcome::TimedOut),
         "life should run continuously, got {outcome:?}"
     );
 
@@ -728,7 +729,7 @@ main: () -> i32 {
         "run did not execute the program; uart={uart:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "exit did not halt the VM cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -780,7 +781,7 @@ main: () -> i32 {
         "array global initializer did not survive exec; uart={uart:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "exit did not halt cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -835,7 +836,7 @@ loop:
     );
     // The shell survived the run and processed the trailing `exit`.
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "shell did not survive the run and exit cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -867,7 +868,7 @@ fn kernel_shell_and_chains_on_success() {
         "second stage did not run after `&&`; uart={uart:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "shell did not exit cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -896,7 +897,7 @@ fn kernel_shell_and_stops_on_failure() {
         "second stage ran despite the first failing; uart={uart:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "shell did not exit cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -935,7 +936,7 @@ msg:
         "assembler did not report writing the object; uart={uart:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "shell did not survive object emission; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -1034,7 +1035,7 @@ fail:
         "expanded-subset program did not exit 42 (a wrong encoding jumps to fail/1); uart={uart:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "shell did not survive the run and exit cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -1095,7 +1096,7 @@ fail:
         "M-extension program did not exit 42 (a wrong encoding jumps to fail/1); uart={uart:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "shell did not survive the run and exit cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -1129,7 +1130,7 @@ fn kernel_shell_run_rejects_non_executable() {
         "run did not report a missing file; uart={uart:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "exit did not halt cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -1184,7 +1185,7 @@ main: () -> i32 {
         "bare-name/relative/background launches did not all run (got {runs}); uart={uart:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "exit did not halt cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -1410,7 +1411,7 @@ fn example_array_assembles_and_runs() {
         "shell did not report the array sum (42) as the exit code; uart={uart:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "shell did not survive the run and exit cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -1465,7 +1466,7 @@ msg:
         "call/ret did not produce exit 42; uart={uart:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "shell did not survive the run and exit cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -1537,7 +1538,7 @@ zeroed:
         "section or data directive encoding changed; uart={uart:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "shell did not exit cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -1586,7 +1587,7 @@ fn kernel_loads_and_runs_elf() {
         "ELF program did not exit 7 through the loader; uart={uart:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "shell did not survive the ELF run and exit cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -1628,7 +1629,7 @@ fn kernel_cc_target_roundtrips() {
         "source and target did not both exit 36; uart={uart:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "shell did not survive the runs and exit cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -1693,7 +1694,7 @@ val:
         "linked program did not exit 42 (relocations wrong?); uart={uart:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "shell did not survive and exit cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -1752,7 +1753,7 @@ ld /stdlib.o /client.o /hello\nrun /hello\nexit\n",
         "linked program did not exit 42 (relocations wrong?); uart={uart:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "shell did not survive and exit cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -1794,7 +1795,7 @@ ld /stdlib.o /prog.o /prog\nrun /prog\nexit\n",
         "compiled program did not exit 36; uart={uart:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "shell did not survive the run and exit cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -1828,7 +1829,7 @@ ld stdlib.o hello.o hello\nhello\nexit\n",
         "compiled program did not exit 36; uart={uart:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "shell did not survive and exit cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -1863,7 +1864,7 @@ ld stdlib.o hello.o hello \nhello\nexit\n",
         "compiled program did not exit 36; uart={uart:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "shell did not survive and exit cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -1912,7 +1913,7 @@ main: () -> i32 {
     );
     // The VM halts only on the shell's own `exit`, not on a child's exit code.
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "shell did not exit cleanly after the runs; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -1957,7 +1958,7 @@ main: () -> i32 {
     // The shell survived the interrupt and processed the trailing `exit`. If Ctrl-C
     // had not worked, the shell would still be blocked on the looping child.
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "Ctrl-C did not return control to the shell; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -2014,7 +2015,7 @@ main: () -> i32 {
     assert!(uart.contains("[1] pid 2"), "job 1 missing; uart={uart:?}");
     assert!(uart.contains("[2] pid 3"), "job 2 missing; uart={uart:?}");
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "shell did not exit cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -2067,7 +2068,7 @@ main: () -> i32 {
         "job still listed after kill; uart={uart:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "shell did not exit cleanly after kill; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -2117,7 +2118,7 @@ main: () -> i32 {
         "job still listed after kill %1; uart={uart:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "shell did not exit cleanly after kill; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -2163,7 +2164,7 @@ main: () -> i32 {
         "marker appeared before `cat`, so stdout was NOT redirected; uart={uart:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "shell did not exit cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -2210,7 +2211,7 @@ main: () -> i32 {
         "append did not accumulate two lines; found {lines} in {after:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "shell did not exit cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -2265,7 +2266,7 @@ main: () -> i32 {
         "stdin redirection did not feed the file to the program; uart={uart:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "shell did not exit cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -2302,7 +2303,7 @@ fn kernel_ls_dir_lists_target() {
         "ls <dir> did not list the target directory; uart={uart:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "shell did not exit cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -2332,7 +2333,7 @@ fn kernel_echo_redirect_to_file() {
         "echo output was not captured into the file; uart={uart:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "shell did not exit cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -2367,7 +2368,7 @@ fn kernel_cat_append_builtin() {
         "builtin append did not accumulate two copies; found {lines} in {after:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "shell did not exit cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -2439,7 +2440,7 @@ main: () -> i32 {
         "payload did not travel through the pipe; uart={uart:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "shell did not exit cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -2513,7 +2514,7 @@ main: () -> i32 {
         "piped output was not captured into the file; uart={uart:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "shell did not exit cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -2570,7 +2571,7 @@ main: () -> i32 {
         "builtin cat output did not travel through the pipe; uart={uart:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "shell did not exit cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -2600,7 +2601,7 @@ fn kernel_pipe_echo_into_cat() {
         "echo did not pipe into cat; saw CAT_STDIN {n} time(s); uart={uart:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "shell did not exit cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -2639,7 +2640,7 @@ fn kernel_pipe_ls_hides_temp_file() {
         "pipe temp leaked into ls output; uart={uart:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "shell did not exit cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -2671,7 +2672,7 @@ fn kernel_cat_stdin_redirect() {
         "cat did not read redirected stdin; uart={uart:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "shell did not exit cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -2824,7 +2825,7 @@ main: () -> i32 {
     );
 
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "shell did not exit cleanly after the job; outcome={outcome:?} uart={uart:?}"
     );
 }
@@ -3276,7 +3277,7 @@ fn kernel_shell_file_management() {
         "shell did not start; uart={uart:?}"
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "exit did not halt the VM cleanly; outcome={outcome:?} uart={uart:?}"
     );
 
@@ -3331,7 +3332,7 @@ fn kernel_shell_rmdir_empty_and_nonempty() {
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "exit did not halt cleanly; outcome={outcome:?} uart={uart:?}"
     );
     // rmdir /full must fail (non-empty); rmdir /empty must succeed.

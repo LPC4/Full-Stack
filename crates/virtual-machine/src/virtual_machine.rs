@@ -5,10 +5,10 @@ use crate::bus::{
     SystemBus,
 };
 use crate::cpu::Cpu;
-pub use crate::cpu::StepOutcome;
 pub use crate::cpu::csr::CsrSnapshot;
 use crate::cpu::pipeline::TickOutcome;
 pub use crate::cpu::pipeline::{CpuPipelineFeed, PipelineStats, StageEntry};
+pub use crate::cpu::{ArchitecturalState, StepOutcome};
 use crate::elf_parser::{ParsedElf, align_up};
 use crate::error::VmError;
 use crate::memory::MemoryAccess as _;
@@ -21,22 +21,10 @@ pub enum RunOutcome {
     Fault(VmError),
 }
 
-impl RunOutcome {
-    pub const fn legacy_step_outcome(&self) -> StepOutcome {
-        match self {
-            Self::Halted(code) => StepOutcome::Halted(*code),
-            Self::TimedOut => StepOutcome::Continue,
-            Self::Fault(_) => StepOutcome::Halted(-1),
-        }
-    }
-}
-
 pub struct RunResult {
     pub steps: u64,
     pub uart_output: String,
     pub termination: RunOutcome,
-    // Remove after callers no longer depend on faults appearing as exit -1.
-    pub outcome: StepOutcome,
 }
 
 pub struct VirtualMachine {
@@ -44,8 +32,8 @@ pub struct VirtualMachine {
     bus: SystemBus,
 }
 
-/// A captured architectural state: CPU + MMIO devices (small) plus the RAM image
-/// (the bulk term, delta-compressed by the session via `without_bulk`/`with_bulk`).
+/// A machine checkpoint: CPU pipeline, MMIO devices, and the RAM image. The session
+/// delta-compresses bulk RAM and framebuffer data via `without_bulk`/`with_bulk`.
 #[derive(Clone)]
 pub struct VmSnapshot {
     cpu: Cpu,
@@ -193,13 +181,11 @@ impl VirtualMachine {
 
         let uart_bytes = self.bus.uart_mut().drain_output();
         let uart_output = String::from_utf8_lossy(&uart_bytes).into_owned();
-        let outcome = termination.legacy_step_outcome();
 
         RunResult {
             steps,
             uart_output,
             termination,
-            outcome,
         }
     }
 }
@@ -239,6 +225,10 @@ impl VirtualMachine {
 
     pub fn peek_pc(&self) -> u64 {
         self.cpu.peek_pc()
+    }
+
+    pub fn architectural_state(&self) -> &ArchitecturalState {
+        self.cpu.architectural_state()
     }
 
     pub fn peek_csr_mcause(&self) -> u64 {
@@ -464,22 +454,6 @@ mod tests {
         assert_eq!(
             run_steps(3, || Err(VmError::BusError(0x1234))),
             (1, RunOutcome::Fault(VmError::BusError(0x1234)))
-        );
-    }
-
-    #[test]
-    fn run_outcome_has_a_legacy_step_projection() {
-        assert_eq!(
-            RunOutcome::Halted(7).legacy_step_outcome(),
-            StepOutcome::Halted(7)
-        );
-        assert_eq!(
-            RunOutcome::TimedOut.legacy_step_outcome(),
-            StepOutcome::Continue
-        );
-        assert_eq!(
-            RunOutcome::Fault(VmError::BusError(0x1234)).legacy_step_outcome(),
-            StepOutcome::Halted(-1)
         );
     }
 

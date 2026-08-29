@@ -1,7 +1,7 @@
 use asm_to_binary::AssembledOutput;
 use full_stack::build::BuildManifest;
 use full_stack::compilation_pipeline::{CompilationPipeline, TargetMode};
-use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
+use virtual_machine::virtual_machine::{RunOutcome, VirtualMachine};
 
 // Minimal test kernel that tests external interrupt delivery without full VMM setup
 const TEST_KERNEL_WITH_UART_IRQ: &str = r#"
@@ -89,9 +89,10 @@ fn compile_and_run_kernel(kernel_src: &str) -> (String, Option<i64>, u64) {
     let csrs = vm.peek_csrs();
     let scause = csrs.scause;
 
-    let exit = match run.outcome {
-        StepOutcome::Halted(code) => Some(code),
-        _ => None,
+    let exit = match run.termination {
+        RunOutcome::Halted(code) => Some(code),
+        RunOutcome::TimedOut => None,
+        RunOutcome::Fault(error) => panic!("VM fault: {error}"),
     };
 
     (

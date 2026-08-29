@@ -31,9 +31,12 @@ fn run_hll(src: &str) -> (String, i64) {
             ..hosted_hll::HostedOptions::default()
         },
     );
-    let code = match result.outcome {
-        virtual_machine::virtual_machine::StepOutcome::Halted(c) => c,
-        virtual_machine::virtual_machine::StepOutcome::Continue => panic!("program timed out"),
+    let code = match result.termination {
+        virtual_machine::virtual_machine::RunOutcome::Halted(c) => c,
+        virtual_machine::virtual_machine::RunOutcome::TimedOut => panic!("program timed out"),
+        virtual_machine::virtual_machine::RunOutcome::Fault(error) => {
+            panic!("program faulted: {error}")
+        }
     };
     (result.uart_output, code)
 }

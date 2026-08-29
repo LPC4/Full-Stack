@@ -1,6 +1,5 @@
 #![expect(
     clippy::explicit_iter_loop,
-    clippy::match_wildcard_for_single_variants,
     clippy::print_stderr,
     clippy::unwrap_used,
     reason = "manual VM diagnostic test emits traces and unwraps controlled fixtures"
@@ -73,7 +72,7 @@ fn kernel_asm_diag() {
 // The canonical link path the GUI also uses: stdlib and user compile separately,
 // then link as objects. Swap the stdlib objects to link a different runtime.
 fn link_stdlib_and_run(user_src: &str) -> (String, Option<i64>) {
-    use virtual_machine::virtual_machine::StepOutcome;
+    use virtual_machine::virtual_machine::RunOutcome;
 
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
@@ -93,9 +92,10 @@ fn link_stdlib_and_run(user_src: &str) -> (String, Option<i64>) {
     let mut vm = VirtualMachine::from_elf(&elf).expect("load elf");
     let run = vm.run(5_000_000);
 
-    let exit = match run.outcome {
-        StepOutcome::Halted(code) => Some(code),
-        _ => None,
+    let exit = match run.termination {
+        RunOutcome::Halted(code) => Some(code),
+        RunOutcome::TimedOut => None,
+        RunOutcome::Fault(error) => panic!("VM fault: {error}"),
     };
     (run.uart_output, exit)
 }

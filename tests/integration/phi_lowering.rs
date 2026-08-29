@@ -9,7 +9,7 @@ use hll_to_ir::{
     IrRegister, IrTerminator, IrType, IrValue,
 };
 use std::sync::OnceLock;
-use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
+use virtual_machine::virtual_machine::{RunOutcome, VirtualMachine};
 
 fn cached_stdlib_objs() -> &'static [(String, AssembledOutput)] {
     static STDLIB: OnceLock<Vec<(String, AssembledOutput)>> = OnceLock::new();
@@ -37,9 +37,10 @@ fn run_ir(program: &IrProgram, regalloc: bool) -> i64 {
         .expect("link failed");
     let mut vm = VirtualMachine::new(&assembled);
     let run = vm.run(5_000_000);
-    match run.outcome {
-        StepOutcome::Halted(code) => code,
-        StepOutcome::Continue => panic!("program did not halt; uart: {}", run.uart_output),
+    match run.termination {
+        RunOutcome::Halted(code) => code,
+        RunOutcome::TimedOut => panic!("program did not halt; uart: {}", run.uart_output),
+        RunOutcome::Fault(error) => panic!("program faulted: {error}; uart: {}", run.uart_output),
     }
 }
 

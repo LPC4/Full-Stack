@@ -7,7 +7,7 @@ use hll_to_ir::TargetMode;
 use hll_to_ir::stdlib::get_stdlib_modules_for_mode;
 use os_runtime::kernel;
 use virtual_machine::rom::generate_rom_image;
-use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
+use virtual_machine::virtual_machine::{RunOutcome, VirtualMachine};
 
 const KLOG_SRC: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -29,9 +29,10 @@ fn run_hll(src: &str) -> (String, Option<i64>) {
     let assembled = pipeline.link_assembled_objects(&modules).expect("link");
     let mut vm = VirtualMachine::new(&assembled);
     let run = vm.run(5_000_000);
-    let exit = match run.outcome {
-        StepOutcome::Halted(code) => Some(code),
-        _ => None,
+    let exit = match run.termination {
+        RunOutcome::Halted(code) => Some(code),
+        RunOutcome::TimedOut => None,
+        RunOutcome::Fault(error) => panic!("VM fault: {error}"),
     };
     (run.uart_output, exit)
 }
@@ -120,8 +121,8 @@ fn kernel_boot_runs_with_separate_stdlib_objects() {
     let mut vm = VirtualMachine::new_kernel(&final_assembled);
     let run = vm.run(10_000_000);
     // When no user binary is present the kernel shuts down cleanly.
-    match run.outcome {
-        StepOutcome::Halted(0) => {}
+    match run.termination {
+        RunOutcome::Halted(0) => {}
         other => panic!(
             "kernel must halt with code 0, got {other:?}; uart={:?}",
             run.uart_output
@@ -1074,9 +1075,10 @@ fn run_kernel_hll_with_layout_prelude(
         .expect("link");
     let mut vm = VirtualMachine::new_kernel(&assembled);
     let run = vm.run(5_000_000);
-    let exit = match run.outcome {
-        StepOutcome::Halted(code) => Some(code),
-        _ => None,
+    let exit = match run.termination {
+        RunOutcome::Halted(code) => Some(code),
+        RunOutcome::TimedOut => None,
+        RunOutcome::Fault(error) => panic!("VM fault: {error}"),
     };
     (run.uart_output, exit)
 }
@@ -1301,9 +1303,10 @@ fn cross_module_call_works() {
 
     let mut vm = VirtualMachine::new(&linked);
     let run = vm.run(5_000_000);
-    let exit = match run.outcome {
-        StepOutcome::Halted(code) => Some(code),
-        _ => None,
+    let exit = match run.termination {
+        RunOutcome::Halted(code) => Some(code),
+        RunOutcome::TimedOut => None,
+        RunOutcome::Fault(error) => panic!("VM fault: {error}"),
     };
     assert_eq!(exit, Some(42), "cross-module call should return 42");
 }
@@ -1351,9 +1354,10 @@ fn cross_module_la_works() {
 
     let mut vm = VirtualMachine::new(&linked);
     let run = vm.run(5_000_000);
-    let exit = match run.outcome {
-        StepOutcome::Halted(code) => Some(code),
-        _ => None,
+    let exit = match run.termination {
+        RunOutcome::Halted(code) => Some(code),
+        RunOutcome::TimedOut => None,
+        RunOutcome::Fault(error) => panic!("VM fault: {error}"),
     };
     assert_eq!(
         exit,
@@ -1410,9 +1414,10 @@ fn cross_module_tail_works() {
 
     let mut vm = VirtualMachine::new(&linked);
     let run = vm.run(5_000_000);
-    let exit = match run.outcome {
-        StepOutcome::Halted(code) => Some(code),
-        _ => None,
+    let exit = match run.termination {
+        RunOutcome::Halted(code) => Some(code),
+        RunOutcome::TimedOut => None,
+        RunOutcome::Fault(error) => panic!("VM fault: {error}"),
     };
     // -58 + 100 = 42
     assert_eq!(exit, Some(42), "cross-module tail call should return 42");
@@ -1472,9 +1477,10 @@ fn cross_module_chain_three_works() {
 
     let mut vm = VirtualMachine::new(&linked);
     let run = vm.run(5_000_000);
-    let exit = match run.outcome {
-        StepOutcome::Halted(code) => Some(code),
-        _ => None,
+    let exit = match run.termination {
+        RunOutcome::Halted(code) => Some(code),
+        RunOutcome::TimedOut => None,
+        RunOutcome::Fault(error) => panic!("VM fault: {error}"),
     };
     // 10 + 20 + 12 = 42
     assert_eq!(exit, Some(42), "3-module chain should return 42");
@@ -1528,9 +1534,10 @@ fn cross_module_external_global_shared_storage() {
 
     let mut vm = VirtualMachine::new(&linked);
     let run = vm.run(5_000_000);
-    let exit = match run.outcome {
-        StepOutcome::Halted(code) => Some(code),
-        _ => None,
+    let exit = match run.termination {
+        RunOutcome::Halted(code) => Some(code),
+        RunOutcome::TimedOut => None,
+        RunOutcome::Fault(error) => panic!("VM fault: {error}"),
     };
     assert_eq!(
         exit,

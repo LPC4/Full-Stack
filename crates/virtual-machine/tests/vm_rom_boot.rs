@@ -3,9 +3,9 @@
 
 use asm_to_binary::assembler::Assembler;
 use asm_to_binary::rv_instruction::RvInstruction;
+use virtual_machine::RunOutcome;
 use virtual_machine::VirtualMachine;
 use virtual_machine::bus::{RAM_BASE, SystemBus};
-use virtual_machine::cpu::StepOutcome;
 use virtual_machine::cpu::pipeline::Pipeline;
 use virtual_machine::rom::{M_TRAP_ADDR, ROM_BASE, generate_rom_image};
 
@@ -32,9 +32,10 @@ fn run_kernel(src: &str, max_steps: u64) -> (String, i64) {
     let output = Assembler::assemble(&tokens).expect("kernel assembly failed");
     let mut vm = VirtualMachine::new_kernel(&output);
     let result = vm.run(max_steps);
-    let code = match result.outcome {
-        StepOutcome::Halted(c) => c,
-        StepOutcome::Continue => i64::MIN,
+    let code = match result.termination {
+        RunOutcome::Halted(c) => c,
+        RunOutcome::TimedOut => i64::MIN,
+        RunOutcome::Fault(error) => panic!("VM fault: {error}"),
     };
     (result.uart_output, code)
 }
@@ -175,9 +176,10 @@ fn hosted_program_mtvec_still_works_after_rom_change() {
     let output = Assembler::assemble(&tokens).expect("assembly failed");
     let mut vm = VirtualMachine::new(&output);
     let result = vm.run(500);
-    let code = match result.outcome {
-        StepOutcome::Halted(c) => c,
-        StepOutcome::Continue => i64::MIN,
+    let code = match result.termination {
+        RunOutcome::Halted(c) => c,
+        RunOutcome::TimedOut => i64::MIN,
+        RunOutcome::Fault(error) => panic!("VM fault: {error}"),
     };
     assert_eq!(
         code, 7,

@@ -39,6 +39,19 @@ the VM's observable behavior.
 - **Atomic Operations:** Load-reserved/store-conditional (LR/SC) via reservation
   set, plus AMO read-modify-write
 
+### 1.3 CPU State Ownership
+
+`ArchitecturalState` owns the integer and floating-point registers, architectural PC and
+privilege mode, CSRs and counters, and the LR/SC reservation. These values define the CPU state
+that instruction semantics and future functional execution compare.
+
+The pipeline separately owns fetch PC, stage latches, pending memory latency, branch-predictor
+state, TLB contents, and pipeline statistics. Devices, caches, and RAM remain machine state rather
+than CPU architectural state. Pipeline code reaches architectural values through the
+`ArchitecturalState` boundary; reset code must not infer them from pipeline latches.
+`VirtualMachine::architectural_state` exposes that CPU-only view, while `VmSnapshot` remains a
+machine checkpoint containing pipeline, device, and RAM state for time travel.
+
 
 ## 2. Memory Map
 
@@ -917,9 +930,8 @@ enum RunOutcome {
 ```
 
 `Fault` retains the error that escaped CPU trap handling, and `TimedOut` means the supplied step
-budget was exhausted. `RunResult::outcome` is a temporary compatibility projection: timeouts map
-to `StepOutcome::Continue`, and faults map to `StepOutcome::Halted(-1)`. Remove that field after
-all non-VM callers consume `RunResult::termination`.
+budget was exhausted. `RunResult::termination` is the sole run termination status. Cycle-level
+callers use `VirtualMachine::step` and its `StepOutcome` separately.
 
 
 ## 9. Performance Counters & Timing

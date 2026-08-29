@@ -11,7 +11,8 @@ pub mod registers;
 pub mod writeback;
 
 use crate::bus::SystemBus;
-use crate::cpu::csr::{CsrFile, CsrSnapshot};
+use crate::cpu::architectural::ArchitecturalState;
+use crate::cpu::csr::CsrSnapshot;
 use crate::cpu::decoder::{DecodedInsn, decode as decode_insn};
 use crate::cpu::hazard_unit::{
     compute_forwarding, insn_is_atomic, insn_is_fp_dest, insn_is_load, insn_rd, insn_rs1, insn_rs2,
@@ -22,7 +23,7 @@ use crate::cpu::pipeline::execute::ExecResult;
 use crate::cpu::pipeline::memory::MemResult;
 use crate::cpu::pipeline::registers::{EXMEMReg, IDEXReg, IFIDReg, MEMWBReg};
 use crate::cpu::predictor::BranchPredictor;
-use crate::cpu::registers::{PrivilegeMode, Registers};
+use crate::cpu::registers::PrivilegeMode;
 use crate::cpu::traps;
 use crate::error::VmError;
 
@@ -66,9 +67,7 @@ pub struct CpuPipelineFeed {
 
 #[derive(Clone)]
 pub struct Pipeline {
-    regs: Registers,
-    csrs: CsrFile,
-    reservation: Option<u64>,
+    architectural: ArchitecturalState,
     /// PC of the next instruction to fetch.
     fetch_pc: u64,
 
@@ -93,17 +92,8 @@ pub struct Pipeline {
 
 impl Pipeline {
     pub fn new(start_pc: u64, stack_ptr: u64) -> Self {
-        let mut regs = Registers::new();
-        regs.pc = start_pc;
-        regs.write_x(2, stack_ptr);
-
-        let mut csrs = CsrFile::new();
-        csrs.mtvec = crate::rom::M_TRAP_ADDR; // _m_trap at ROM_BASE + 0x100
-        csrs.mscratch = stack_ptr - 4096; // M-mode stack top, 4 KB below user stack
         Self {
-            regs,
-            csrs,
-            reservation: None,
+            architectural: ArchitecturalState::new(start_pc, stack_ptr),
             fetch_pc: start_pc,
             if_id: None,
             id_ex: None,
@@ -124,13 +114,13 @@ impl Pipeline {
     }
 
     pub fn set_return_addr(&mut self, ra: u64) {
-        self.regs.write_x(1, ra);
+        self.architectural.registers_mut().write_x(1, ra);
     }
 
     /// Reset the program counter and flush the pipeline. `new_kernel` uses this to
     /// redirect to `ROM_BASE` after loading the ELF, so the boot stub runs first.
     pub fn reset_pc(&mut self, pc: u64) {
-        self.regs.pc = pc;
+        self.architectural.set_pc(pc);
         self.fetch_pc = pc;
         self.if_id = None;
         self.id_ex = None;
@@ -144,52 +134,56 @@ impl Pipeline {
     /// Set register a0 (x10) to the kernel entry point so ROM `_start` can
     /// `csrw mepc, a0` without knowing the address at assembly time.
     pub fn set_boot_entry(&mut self, entry: u64) {
-        self.regs.write_x(10, entry);
+        self.architectural.registers_mut().write_x(10, entry);
     }
 
     pub fn write_csr_mtvec(&mut self, val: u64) {
-        self.csrs.mtvec = val;
+        self.architectural.csrs_mut().mtvec = val;
     }
 
     pub fn peek_reg(&self, r: usize) -> u64 {
-        self.regs.read_x(r)
+        self.architectural.registers().read_x(r)
     }
 
     pub fn peek_fp_reg(&self, r: usize) -> u64 {
-        self.regs.read_f_bits(r)
+        self.architectural.registers().read_f_bits(r)
     }
 
     pub fn peek_pc(&self) -> u64 {
-        self.regs.pc
+        self.architectural.pc()
     }
 
     pub fn peek_csr_mcause(&self) -> u64 {
-        self.csrs.mcause
+        self.architectural.csrs().mcause
     }
 
     pub fn peek_csr_mtvec(&self) -> u64 {
-        self.csrs.mtvec
+        self.architectural.csrs().mtvec
     }
 
     pub fn peek_all_xregs(&self) -> [u64; 32] {
-        std::array::from_fn(|i| self.regs.read_x(i))
+        std::array::from_fn(|i| self.architectural.registers().read_x(i))
     }
 
     pub fn peek_all_fregs(&self) -> [u64; 32] {
-        std::array::from_fn(|i| self.regs.read_f_bits(i))
+        std::array::from_fn(|i| self.architectural.registers().read_f_bits(i))
     }
 
     pub fn peek_csrs(&self) -> CsrSnapshot {
-        self.csrs.snapshot()
+        self.architectural.csrs().snapshot()
     }
 
     /// Current privilege mode, for debug inspection.
     pub fn peek_priv_mode(&self) -> crate::cpu::registers::PrivilegeMode {
-        self.regs.priv_mode
+        self.architectural.privilege_mode()
     }
 
     pub fn predictor_stats(&self) -> &crate::cpu::predictor::PredictorStats {
         self.predictor.stats()
+    }
+
+    pub fn architectural_state(&self) -> &ArchitecturalState {
+        &self.architectural
     }
 
     // --- Main tick, advance the pipeline by one clock cycle ---
@@ -198,29 +192,30 @@ impl Pipeline {
     /// (WB -> MEM -> EX -> ID -> IF) so results pass forward within the cycle.
     pub fn tick(&mut self, bus: &mut SystemBus) -> Result<TickOutcome, VmError> {
         self.stats.cycles += 1;
-        self.csrs.increment_cycle();
+        self.architectural.csrs_mut().increment_cycle();
 
         // Advance CLINT timer and sync hardware interrupt bits into mip.
         {
             let clint = bus.clint_mut();
             clint.tick();
+            let csrs = self.architectural.csrs_mut();
             if clint.timer_irq_pending() {
                 // With mideleg[5]=1 the CLINT timer is delivered straight as STIP
                 // (bit 5), bypassing M-mode. Otherwise it takes the MTIP (bit 7) path.
-                if (self.csrs.mideleg >> 5) & 1 == 1 {
-                    self.csrs.mip |= 1u64 << 5; // STIP - S-mode timer pending
-                    self.csrs.mip &= !(1u64 << 7); // no MTIP when using delegation
+                if (csrs.mideleg >> 5) & 1 == 1 {
+                    csrs.mip |= 1u64 << 5; // STIP - S-mode timer pending
+                    csrs.mip &= !(1u64 << 7); // no MTIP when using delegation
                 } else {
-                    self.csrs.mip |= 1u64 << 7; // MTIP - M-mode timer pending
+                    csrs.mip |= 1u64 << 7; // MTIP - M-mode timer pending
                 }
             } else {
-                self.csrs.mip &= !(1u64 << 7); // clear MTIP
-                self.csrs.mip &= !(1u64 << 5); // clear STIP
+                csrs.mip &= !(1u64 << 7); // clear MTIP
+                csrs.mip &= !(1u64 << 5); // clear STIP
             }
             if clint.software_irq_pending() {
-                self.csrs.mip |= 1u64 << 3; // MSIP
+                csrs.mip |= 1u64 << 3; // MSIP
             } else {
-                self.csrs.mip &= !(1u64 << 3);
+                csrs.mip &= !(1u64 << 3);
             }
         }
 
@@ -235,16 +230,17 @@ impl Pipeline {
             }
 
             // Check if any PLIC interrupt is pending
+            let csrs = self.architectural.csrs_mut();
             if bus.plic_mut().next_irq(0).is_some() {
                 // PLIC has a pending interrupt for hart 0 (context 1)
-                if (self.csrs.mideleg >> 9) & 1 == 1 {
-                    self.csrs.mip |= 1u64 << 9; // SEIP - S-mode external interrupt pending
+                if (csrs.mideleg >> 9) & 1 == 1 {
+                    csrs.mip |= 1u64 << 9; // SEIP - S-mode external interrupt pending
                 } else {
-                    self.csrs.mip |= 1u64 << 11; // MEIP - M-mode external interrupt pending
+                    csrs.mip |= 1u64 << 11; // MEIP - M-mode external interrupt pending
                 }
             } else {
-                self.csrs.mip &= !(1u64 << 11); // clear MEIP
-                self.csrs.mip &= !(1u64 << 9); // clear SEIP
+                csrs.mip &= !(1u64 << 11); // clear MEIP
+                csrs.mip &= !(1u64 << 9); // clear SEIP
             }
         }
 
@@ -328,10 +324,10 @@ impl Pipeline {
             self.id_ex = old_id_ex.map(|mut entry| {
                 // WB already ran this cycle. A blocked younger instruction loses
                 // that cycle's forwarding source, so refresh its captured operands.
-                entry.rs1_val = self.regs.read_x(entry.rs1);
-                entry.rs2_val = self.regs.read_x(entry.rs2);
-                entry.frs1_val = self.regs.read_f_bits(entry.frs1);
-                entry.frs2_val = self.regs.read_f_bits(entry.frs2);
+                entry.rs1_val = self.architectural.registers().read_x(entry.rs1);
+                entry.rs2_val = self.architectural.registers().read_x(entry.rs2);
+                entry.frs1_val = self.architectural.registers().read_f_bits(entry.frs1);
+                entry.frs2_val = self.architectural.registers().read_f_bits(entry.frs2);
                 entry
             });
             self.last_cycle = CpuPipelineFeed {
@@ -422,12 +418,13 @@ impl Pipeline {
 
     fn stage_if(&mut self, bus: &mut SystemBus) -> Result<Option<IFIDReg>, VmError> {
         let pc = self.fetch_pc;
+        let csrs = self.architectural.csrs();
         let translate = mmu::TranslationContext {
-            satp: self.csrs.satp,
-            priv_mode: self.regs.priv_mode,
-            mstatus: self.csrs.mstatus,
-            pmpcfg0: self.csrs.pmpcfg0,
-            pmpaddr0: self.csrs.pmpaddr0,
+            satp: csrs.satp,
+            priv_mode: self.architectural.privilege_mode(),
+            mstatus: csrs.mstatus,
+            pmpcfg0: csrs.pmpcfg0,
+            pmpaddr0: csrs.pmpaddr0,
         };
 
         let raw = match fetch::fetch_with_pmp(bus, pc, translate, &mut self.tlb) {
@@ -499,10 +496,10 @@ impl Pipeline {
         Ok(Some(IDEXReg {
             pc: if_id.pc,
             mnemonic,
-            rs1_val: self.regs.read_x(rs1),
-            rs2_val: self.regs.read_x(rs2),
-            frs1_val: self.regs.read_f_bits(frs1),
-            frs2_val: self.regs.read_f_bits(frs2),
+            rs1_val: self.architectural.registers().read_x(rs1),
+            rs2_val: self.architectural.registers().read_x(rs2),
+            frs1_val: self.architectural.registers().read_f_bits(frs1),
+            frs2_val: self.architectural.registers().read_f_bits(frs2),
             insn,
             rs1,
             rs2,
@@ -530,21 +527,42 @@ impl Pipeline {
 
         let fwd = compute_forwarding(old_ex_mem, old_mem_wb, id_ex);
 
-        let save_x_rs1 = self.regs.read_x(id_ex.rs1);
-        let save_x_rs2 = self.regs.read_x(id_ex.rs2);
-        let save_f_rs1 = self.regs.read_f_bits(id_ex.frs1);
-        let save_f_rs2 = self.regs.read_f_bits(id_ex.frs2);
-        self.regs.write_x(id_ex.rs1, fwd.rs1);
-        self.regs.write_x(id_ex.rs2, fwd.rs2);
-        self.regs.write_f_bits(id_ex.frs1, fwd.frs1);
-        self.regs.write_f_bits(id_ex.frs2, fwd.frs2);
+        let save_x_rs1 = self.architectural.registers().read_x(id_ex.rs1);
+        let save_x_rs2 = self.architectural.registers().read_x(id_ex.rs2);
+        let save_f_rs1 = self.architectural.registers().read_f_bits(id_ex.frs1);
+        let save_f_rs2 = self.architectural.registers().read_f_bits(id_ex.frs2);
+        self.architectural
+            .registers_mut()
+            .write_x(id_ex.rs1, fwd.rs1);
+        self.architectural
+            .registers_mut()
+            .write_x(id_ex.rs2, fwd.rs2);
+        self.architectural
+            .registers_mut()
+            .write_f_bits(id_ex.frs1, fwd.frs1);
+        self.architectural
+            .registers_mut()
+            .write_f_bits(id_ex.frs2, fwd.frs2);
 
-        let exec_result = execute::execute(&id_ex.insn, &self.regs, &self.csrs, id_ex.pc);
+        let exec_result = execute::execute(
+            &id_ex.insn,
+            self.architectural.registers(),
+            self.architectural.csrs(),
+            id_ex.pc,
+        );
 
-        self.regs.write_x(id_ex.rs1, save_x_rs1);
-        self.regs.write_x(id_ex.rs2, save_x_rs2);
-        self.regs.write_f_bits(id_ex.frs1, save_f_rs1);
-        self.regs.write_f_bits(id_ex.frs2, save_f_rs2);
+        self.architectural
+            .registers_mut()
+            .write_x(id_ex.rs1, save_x_rs1);
+        self.architectural
+            .registers_mut()
+            .write_x(id_ex.rs2, save_x_rs2);
+        self.architectural
+            .registers_mut()
+            .write_f_bits(id_ex.frs1, save_f_rs1);
+        self.architectural
+            .registers_mut()
+            .write_f_bits(id_ex.frs2, save_f_rs2);
 
         let exec_result = match exec_result {
             Ok(r) => r,
@@ -606,18 +624,19 @@ impl Pipeline {
             Some(r) => r,
             None => return Ok(None),
         };
+        let csrs = self.architectural.csrs();
         let translate = mmu::TranslationContext {
-            satp: self.csrs.satp,
-            priv_mode: self.regs.priv_mode,
-            mstatus: self.csrs.mstatus,
-            pmpcfg0: self.csrs.pmpcfg0,
-            pmpaddr0: self.csrs.pmpaddr0,
+            satp: csrs.satp,
+            priv_mode: self.architectural.privilege_mode(),
+            mstatus: csrs.mstatus,
+            pmpcfg0: csrs.pmpcfg0,
+            pmpaddr0: csrs.pmpaddr0,
         };
 
         let mem_result = match memory::memory_stage_with_pmp(
             ex_mem.exec_result.clone(),
             bus,
-            &mut self.reservation,
+            self.architectural.reservation_mut(),
             translate,
             &mut self.tlb,
         ) {
@@ -658,12 +677,13 @@ impl Pipeline {
             self.tlb.flush();
         }
 
-        let next_pc =
-            match writeback::writeback(mem_wb.mem_result.clone(), &mut self.regs, &mut self.csrs) {
+        let next_pc = {
+            let (registers, csrs) = self.architectural.registers_and_csrs_mut();
+            match writeback::writeback(mem_wb.mem_result.clone(), registers, csrs) {
                 Ok(pc) => pc,
                 Err(VmError::Ecall) => return self.handle_ecall(bus),
                 Err(VmError::Ebreak) => {
-                    let pc = self.regs.pc;
+                    let pc = self.architectural.pc();
                     self.flush_pipeline();
                     self.take_trap(traps::CAUSE_EBREAK, 0, pc);
                     return Ok(TickOutcome::Continue);
@@ -677,14 +697,15 @@ impl Pipeline {
                     return Ok(TickOutcome::EcallSquash);
                 }
                 Err(e) => {
-                    let pc = self.regs.pc;
+                    let pc = self.architectural.pc();
                     self.flush_and_trap(e, pc);
                     return Ok(TickOutcome::Continue);
                 }
-            };
+            }
+        };
 
-        self.regs.pc = next_pc;
-        self.csrs.increment_instret();
+        self.architectural.set_pc(next_pc);
+        self.architectural.csrs_mut().increment_instret();
         self.stats.insns_retired += 1;
         Ok(TickOutcome::Continue)
     }
@@ -749,43 +770,46 @@ impl Pipeline {
     }
 
     fn take_trap(&mut self, cause: u64, tval: u64, pc: u64) {
-        let new_pc = traps::take_trap(&mut self.regs, &mut self.csrs, cause, tval, pc);
+        let (registers, csrs) = self.architectural.registers_and_csrs_mut();
+        let new_pc = traps::take_trap(registers, csrs, cause, tval, pc);
         self.fetch_pc = new_pc;
-        self.regs.pc = new_pc;
+        self.architectural.set_pc(new_pc);
     }
 
     fn handle_mret(&mut self) {
-        let new_pc = traps::handle_mret(&mut self.regs, &mut self.csrs);
+        let (registers, csrs) = self.architectural.registers_and_csrs_mut();
+        let new_pc = traps::handle_mret(registers, csrs);
         self.fetch_pc = new_pc;
-        self.regs.pc = new_pc;
+        self.architectural.set_pc(new_pc);
         self.flush_pipeline();
         self.mret_in_flight = false; // Clear the flag after MRET completes
-        self.csrs.increment_instret();
+        self.architectural.csrs_mut().increment_instret();
         self.stats.insns_retired += 1;
     }
 
     fn handle_sret(&mut self) {
-        match traps::handle_sret(&mut self.regs, &mut self.csrs) {
+        let (registers, csrs) = self.architectural.registers_and_csrs_mut();
+        match traps::handle_sret(registers, csrs) {
             Ok(new_pc) => {
                 self.fetch_pc = new_pc;
-                self.regs.pc = new_pc;
+                self.architectural.set_pc(new_pc);
                 self.flush_pipeline();
                 self.mret_in_flight = false; // Clear the flag after SRET completes
-                self.csrs.increment_instret();
+                self.architectural.csrs_mut().increment_instret();
                 self.stats.insns_retired += 1;
             }
             Err(e) => {
                 self.flush_pipeline();
                 if let Some((cause, tval)) = traps::error_to_trap_cause(&e) {
-                    self.take_trap(cause, tval, self.regs.pc);
+                    self.take_trap(cause, tval, self.architectural.pc());
                 }
             }
         }
     }
 
     fn handle_ecall(&mut self, _bus: &mut SystemBus) -> Result<TickOutcome, VmError> {
-        let ecall_pc = self.regs.pc;
-        let cause = match self.regs.priv_mode {
+        let ecall_pc = self.architectural.pc();
+        let cause = match self.architectural.privilege_mode() {
             PrivilegeMode::User => traps::CAUSE_ECALL_U,
             PrivilegeMode::Supervisor => traps::CAUSE_ECALL_S,
             PrivilegeMode::Machine => traps::CAUSE_ECALL_M,
@@ -798,19 +822,21 @@ impl Pipeline {
     // Returns Some((cause, tval, pc)) when an interrupt is ready to fire right now.
     // Priority order per spec: MEI(11) > MSI(3) > MTI(7), then SEI(9) > SSI(1) > STI(5).
     fn check_pending_interrupt(&self) -> Option<(u64, u64, u64)> {
-        let pending = self.csrs.mip & self.csrs.mie;
+        let csrs = self.architectural.csrs();
+        let pending = csrs.mip & csrs.mie;
         if pending == 0 {
             return None;
         }
 
-        let in_m = self.regs.priv_mode == PrivilegeMode::Machine;
-        let in_s = self.regs.priv_mode == PrivilegeMode::Supervisor;
-        let mie_global = (self.csrs.mstatus >> 3) & 1; // mstatus.MIE
-        let sie_global = (self.csrs.mstatus >> 1) & 1; // mstatus.SIE
+        let privilege_mode = self.architectural.privilege_mode();
+        let in_m = privilege_mode == PrivilegeMode::Machine;
+        let in_s = privilege_mode == PrivilegeMode::Supervisor;
+        let mie_global = (csrs.mstatus >> 3) & 1; // mstatus.MIE
+        let sie_global = (csrs.mstatus >> 1) & 1; // mstatus.SIE
 
         // M-mode interrupts: not delegated to S-mode.
         // Taken if: not in M-mode (lower modes are always preempted), or MIE=1 in M-mode.
-        let m_pending = pending & !self.csrs.mideleg;
+        let m_pending = pending & !csrs.mideleg;
         if m_pending != 0 && (!in_m || mie_global == 1) {
             let cause_idx = if m_pending & (1 << 11) != 0 {
                 11u64
@@ -821,11 +847,11 @@ impl Pipeline {
             } else {
                 m_pending.trailing_zeros() as u64
             };
-            return Some(((1u64 << 63) | cause_idx, 0, self.regs.pc));
+            return Some(((1u64 << 63) | cause_idx, 0, self.architectural.pc()));
         }
 
         // S-mode interrupts: delegated; only relevant when not in M-mode.
-        let s_pending = pending & self.csrs.mideleg;
+        let s_pending = pending & csrs.mideleg;
         if s_pending != 0 && !in_m && (!in_s || sie_global == 1) {
             let cause_idx = if s_pending & (1 << 9) != 0 {
                 9u64
@@ -836,7 +862,7 @@ impl Pipeline {
             } else {
                 s_pending.trailing_zeros() as u64
             };
-            return Some(((1u64 << 63) | cause_idx, 0, self.regs.pc));
+            return Some(((1u64 << 63) | cause_idx, 0, self.architectural.pc()));
         }
 
         None

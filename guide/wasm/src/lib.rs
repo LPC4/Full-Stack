@@ -84,12 +84,10 @@ fn run_to_marker(vm: &mut VirtualMachine, marker_pc: u64, max_steps: u64) -> Run
     }
 
     let uart_output = String::from_utf8_lossy(&vm.uart_output()).into_owned();
-    let outcome = termination.legacy_step_outcome();
     RunResult {
         steps,
         uart_output,
         termination,
-        outcome,
     }
 }
 

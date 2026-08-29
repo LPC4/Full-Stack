@@ -6,7 +6,7 @@ use ir_to_asm::CompilerRv64;
 use os_runtime::kernel;
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
-use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
+use virtual_machine::virtual_machine::{RunOutcome, VirtualMachine};
 
 // --- Helpers ---
 
@@ -270,9 +270,10 @@ fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
 
     let mut vm = VirtualMachine::new_kernel(&assembled);
     let run = vm.run(10_000_000);
-    let exit = match run.outcome {
-        StepOutcome::Halted(code) => Some(code),
-        StepOutcome::Continue => None,
+    let exit = match run.termination {
+        RunOutcome::Halted(code) => Some(code),
+        RunOutcome::TimedOut => None,
+        RunOutcome::Fault(error) => panic!("VM fault: {error}"),
     };
     (run.uart_output, exit)
 }

@@ -9,7 +9,7 @@ use full_stack::compilation_pipeline::CompilationPipeline;
 use hll_to_ir::TargetMode;
 use hll_to_ir::stdlib::get_stdlib_modules_for_mode;
 use std::sync::OnceLock;
-use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
+use virtual_machine::virtual_machine::{RunOutcome, VirtualMachine};
 
 // Stdlib compiled once per flag setting (the flag changes its codegen too).
 // Each module is its own object (no source concatenation).
@@ -35,7 +35,7 @@ fn cached_stdlib_objs(regalloc: bool) -> &'static [(String, AssembledOutput)] {
 
 // Returns the VM outcome, UART output, emitted user-code instruction count,
 // and executed cycles.
-fn run_with_regalloc(src: &str, regalloc: bool) -> (StepOutcome, String, usize, u64) {
+fn run_with_regalloc(src: &str, regalloc: bool) -> (RunOutcome, String, usize, u64) {
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     pipeline.set_register_allocation(regalloc);
@@ -58,7 +58,7 @@ fn run_with_regalloc(src: &str, regalloc: bool) -> (StepOutcome, String, usize, 
     let mut vm = VirtualMachine::new(&assembled);
     let run = vm.run(20_000_000);
     let cycles = vm.pipeline_stats().cycles;
-    (run.outcome, run.uart_output.clone(), code_lines, cycles)
+    (run.termination, run.uart_output.clone(), code_lines, cycles)
 }
 
 // Asserts identical behaviour with allocation off and on, and returns the
@@ -67,7 +67,7 @@ fn assert_equivalent(src: &str) -> ((usize, u64), (usize, u64)) {
     let (base_outcome, base_uart, base_lines, base_cycles) = run_with_regalloc(src, false);
     let (alloc_outcome, alloc_uart, alloc_lines, alloc_cycles) = run_with_regalloc(src, true);
     assert!(
-        matches!(base_outcome, StepOutcome::Halted(_)),
+        matches!(base_outcome, RunOutcome::Halted(_)),
         "baseline did not finish: {base_outcome:?}"
     );
     assert_eq!(
@@ -186,7 +186,7 @@ main: () -> i32 {
 "#;
     let (outcome, _, _, _) = run_with_regalloc(src, false);
     assert!(
-        matches!(outcome, StepOutcome::Halted(126)),
+        matches!(outcome, RunOutcome::Halted(126)),
         "expected Halted(126) = 3*(10+20+12), got {outcome:?}"
     );
     assert_equivalent(src);
@@ -360,7 +360,7 @@ main: () -> i32 {
 
     assert_eq!(
         format!("{base_outcome:?}"),
-        format!("{:?}", run.outcome),
+        format!("{:?}", run.termination),
         "combined optimization flags changed the exit outcome"
     );
     assert_eq!(

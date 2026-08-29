@@ -3,7 +3,7 @@
 use full_stack::compilation_pipeline::CompilationPipeline;
 use hll_to_ir::TargetMode;
 use hll_to_ir::stdlib::get_stdlib_modules_for_mode;
-use virtual_machine::virtual_machine::StepOutcome;
+use virtual_machine::virtual_machine::RunOutcome;
 
 #[path = "../common/hosted_hll.rs"]
 mod hosted_hll;
@@ -15,7 +15,7 @@ fn stdlib_preludes_resolve() {
     assert!(!get_stdlib_modules_for_mode(TargetMode::Hosted).is_empty());
 }
 
-fn run_hll(src: &str, max_steps: u64) -> (StepOutcome, String) {
+fn run_hll(src: &str, max_steps: u64) -> (RunOutcome, String) {
     let run = hosted_hll::run(
         src,
         hosted_hll::HostedOptions {
@@ -23,13 +23,13 @@ fn run_hll(src: &str, max_steps: u64) -> (StepOutcome, String) {
             ..hosted_hll::HostedOptions::default()
         },
     );
-    (run.outcome, run.uart_output)
+    (run.termination, run.uart_output)
 }
 
 fn assert_exit_zero_with_uart(src: &str, expected_uart: &str) {
     let (outcome, uart) = run_hll(src, 50_000_000);
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "program did not exit 0 ({outcome:?}); uart:\n{uart}"
     );
     assert_eq!(uart, expected_uart, "unexpected uart output");
@@ -325,7 +325,7 @@ main: () -> i32 {
 "#;
     let (outcome, uart) = run_hll(src, 50_000_000);
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "helper mismatch ({outcome:?}); uart:\n{uart}"
     );
 }

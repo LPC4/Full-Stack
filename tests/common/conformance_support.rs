@@ -7,7 +7,7 @@ use hll_to_ir::{OptOptions, TargetMode};
 use std::fmt::Write as _;
 use std::sync::OnceLock;
 use virtual_machine::bus::ELF_LOAD_BASE;
-use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
+use virtual_machine::virtual_machine::{RunOutcome, VirtualMachine};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Feature {
@@ -642,12 +642,13 @@ pub fn run_source_vm(
         .link_assembled_objects(&modules)
         .map_err(|e| format!("link failed: {e}"))?;
     let run = VirtualMachine::new(&linked).run(step_limit);
-    match run.outcome {
-        StepOutcome::Halted(code) => Ok(VmOutcome {
+    match run.termination {
+        RunOutcome::Halted(code) => Ok(VmOutcome {
             halted: Some(code),
             uart: run.uart_output,
         }),
-        StepOutcome::Continue => Err(format!("timeout: did not halt within {} steps", step_limit)),
+        RunOutcome::TimedOut => Err(format!("timeout: did not halt within {} steps", step_limit)),
+        RunOutcome::Fault(error) => Err(format!("VM fault: {error}")),
     }
 }
 

@@ -12,7 +12,7 @@ use hll_to_ir::{
     IrRegister, IrTerminator, IrType, IrUnaryOp, IrValue,
 };
 use std::sync::OnceLock;
-use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
+use virtual_machine::virtual_machine::{RunOutcome, VirtualMachine};
 
 // --- Full HLL pipeline helpers ---
 
@@ -37,7 +37,7 @@ fn link_with_stdlib<'a>(user: &'a AssembledOutput) -> Vec<(&'a str, &'a Assemble
 }
 
 // Compile user HLL, link it against the cached stdlib object, and run in the VM.
-fn run_hll_with_limit(src: &str, max_steps: u64) -> (VirtualMachine, StepOutcome, String) {
+fn run_hll_with_limit(src: &str, max_steps: u64) -> (VirtualMachine, RunOutcome, String) {
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
 
@@ -53,11 +53,11 @@ fn run_hll_with_limit(src: &str, max_steps: u64) -> (VirtualMachine, StepOutcome
     let mut vm = VirtualMachine::new(&assembled);
     let run = vm.run(max_steps);
     let uart = run.uart_output.clone();
-    (vm, run.outcome, uart)
+    (vm, run.termination, uart)
 }
 
 // Runs a directly-constructed IR program, for ops the HLL surface cannot spell.
-fn run_ir(program: &IrProgram) -> (VirtualMachine, StepOutcome, String) {
+fn run_ir(program: &IrProgram) -> (VirtualMachine, RunOutcome, String) {
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
 
@@ -72,7 +72,7 @@ fn run_ir(program: &IrProgram) -> (VirtualMachine, StepOutcome, String) {
     let mut vm = VirtualMachine::new(&assembled);
     let run = vm.run(5_000_000);
     let uart = run.uart_output.clone();
-    (vm, run.outcome, uart)
+    (vm, run.termination, uart)
 }
 
 // Wraps an entry block, which must not yet have a terminator, in a branch to a
@@ -101,7 +101,7 @@ fn pass_fail_ir(module: &str, mut entry: IrBlock, cond: IrValue) -> IrProgram {
     program
 }
 
-fn run_hll_file(path: &str) -> (VirtualMachine, StepOutcome, String) {
+fn run_hll_file(path: &str) -> (VirtualMachine, RunOutcome, String) {
     let manifest = env!("CARGO_MANIFEST_DIR");
     let full_path = std::path::Path::new(manifest).join(path);
     let src = std::fs::read_to_string(&full_path)
@@ -109,7 +109,7 @@ fn run_hll_file(path: &str) -> (VirtualMachine, StepOutcome, String) {
     run_hll_with_limit(&src, 50_000_000)
 }
 
-fn run_hll(src: &str) -> (VirtualMachine, StepOutcome, String) {
+fn run_hll(src: &str) -> (VirtualMachine, RunOutcome, String) {
     run_hll_with_limit(src, 5_000_000)
 }
 
@@ -119,7 +119,7 @@ fn run_hll_closure_with_path(
     src: &str,
     source_path: Option<&str>,
     max_steps: u64,
-) -> (StepOutcome, String) {
+) -> (RunOutcome, String) {
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     pipeline.set_current_source_path(source_path.map(str::to_owned));
@@ -139,7 +139,7 @@ fn run_hll_closure_with_path(
         .expect("link failed");
     let mut vm = VirtualMachine::new(&assembled);
     let run = vm.run(max_steps);
-    (run.outcome, run.uart_output.clone())
+    (run.termination, run.uart_output.clone())
 }
 
 // A qualified `alias := import("path")` program links and runs its imported module: the
@@ -179,9 +179,9 @@ main: () -> i32 {
     let mut vm = VirtualMachine::new(&assembled);
     let run = vm.run(5_000_000);
     assert!(
-        matches!(run.outcome, StepOutcome::Halted(42)),
+        matches!(run.termination, RunOutcome::Halted(42)),
         "expected Halted(42), got {:?}; uart: {}",
-        run.outcome,
+        run.termination,
         run.uart_output
     );
 }
@@ -227,9 +227,9 @@ main: () -> i32 {
     let run = vm.run(5_000_000);
     // primary add(2,0) = 2*10 = 20; mathlib.add(1,1) = (1+1)+1 = 3; total 23.
     assert!(
-        matches!(run.outcome, StepOutcome::Halted(23)),
+        matches!(run.termination, RunOutcome::Halted(23)),
         "expected Halted(23), got {:?}; uart: {}",
-        run.outcome,
+        run.termination,
         run.uart_output
     );
 }
@@ -281,9 +281,9 @@ main: () -> i32 {
     let mut vm = VirtualMachine::new(&assembled);
     let run = vm.run(5_000_000);
     assert!(
-        matches!(run.outcome, StepOutcome::Halted(42)),
+        matches!(run.termination, RunOutcome::Halted(42)),
         "expected Halted(42), got {:?}; uart: {}",
-        run.outcome,
+        run.termination,
         run.uart_output
     );
 }
@@ -336,9 +336,9 @@ main: () -> i32 {
     let run = vm.run(5_000_000);
     // left: 6*2 = 12, right: 10*3 = 30, total 42.
     assert!(
-        matches!(run.outcome, StepOutcome::Halted(42)),
+        matches!(run.termination, RunOutcome::Halted(42)),
         "expected Halted(42), got {:?}; uart: {}",
-        run.outcome,
+        run.termination,
         run.uart_output
     );
 }
@@ -382,9 +382,9 @@ main: () -> i32 {
     let mut vm = VirtualMachine::new(&assembled);
     let run = vm.run(5_000_000);
     assert!(
-        matches!(run.outcome, StepOutcome::Halted(42)),
+        matches!(run.termination, RunOutcome::Halted(42)),
         "expected Halted(42), got {:?}; uart: {}",
-        run.outcome,
+        run.termination,
         run.uart_output
     );
 }
@@ -440,16 +440,16 @@ main: () -> i32 {
     let mut vm = VirtualMachine::new(&assembled);
     let run = vm.run(5_000_000);
     assert!(
-        matches!(run.outcome, StepOutcome::Halted(42)),
+        matches!(run.termination, RunOutcome::Halted(42)),
         "expected Halted(42), got {:?}; uart: {}",
-        run.outcome,
+        run.termination,
         run.uart_output
     );
 }
 
 // Returns the VM run plus the emitted instruction count, so a caller can
 // compare peephole on against off.
-fn run_hll_peephole(src: &str, peephole: bool) -> (StepOutcome, String, usize) {
+fn run_hll_peephole(src: &str, peephole: bool) -> (RunOutcome, String, usize) {
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     pipeline.set_peephole(peephole);
@@ -466,7 +466,7 @@ fn run_hll_peephole(src: &str, peephole: bool) -> (StepOutcome, String, usize) {
         .expect("link failed");
     let mut vm = VirtualMachine::new(&assembled);
     let run = vm.run(5_000_000);
-    (run.outcome, run.uart_output.clone(), code_lines)
+    (run.termination, run.uart_output.clone(), code_lines)
 }
 
 // A program with disjoint branches and locals: lots of per-vreg store/reload
@@ -515,7 +515,7 @@ fn peephole_preserves_behavior_and_shrinks_code() {
 
 // Returns the VM run plus the emitted instruction count, so a caller can
 // compare an omitted frame pointer against a kept one.
-fn run_hll_omit_fp(src: &str, omit_fp: bool) -> (StepOutcome, String, usize) {
+fn run_hll_omit_fp(src: &str, omit_fp: bool) -> (RunOutcome, String, usize) {
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     pipeline.set_omit_frame_pointer(omit_fp);
@@ -532,7 +532,7 @@ fn run_hll_omit_fp(src: &str, omit_fp: bool) -> (StepOutcome, String, usize) {
         .expect("link failed");
     let mut vm = VirtualMachine::new(&assembled);
     let run = vm.run(5_000_000);
-    (run.outcome, run.uart_output.clone(), code_lines)
+    (run.termination, run.uart_output.clone(), code_lines)
 }
 
 // A nine-arg callee exercises the stack-passed argument path (caller_sp),
@@ -570,7 +570,7 @@ fn omit_frame_pointer_preserves_behavior() {
 
 // Returns the VM run plus the emitted instruction count, so a caller can
 // compare IR optimization on against off.
-fn run_hll_optimize(src: &str, opts: hll_to_ir::OptOptions) -> (StepOutcome, String, usize) {
+fn run_hll_optimize(src: &str, opts: hll_to_ir::OptOptions) -> (RunOutcome, String, usize) {
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     pipeline.set_optimize(opts);
@@ -587,7 +587,7 @@ fn run_hll_optimize(src: &str, opts: hll_to_ir::OptOptions) -> (StepOutcome, Str
         .expect("link failed");
     let mut vm = VirtualMachine::new(&assembled);
     let run = vm.run(5_000_000);
-    (run.outcome, run.uart_output.clone(), code_lines)
+    (run.termination, run.uart_output.clone(), code_lines)
 }
 
 // Constant-heavy program with a dead local: const folding collapses the
@@ -610,7 +610,7 @@ fn ir_opt_preserves_behavior_and_shrinks_code() {
         run_hll_optimize(OPT_CONST_PROGRAM, hll_to_ir::OptOptions::all());
 
     assert!(
-        matches!(base_outcome, StepOutcome::Halted(140)),
+        matches!(base_outcome, RunOutcome::Halted(140)),
         "expected Halted(140) unoptimized, got {base_outcome:?}"
     );
     assert_eq!(
@@ -654,7 +654,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(42)),
+        matches!(outcome, RunOutcome::Halted(42)),
         "expected Halted(42), got {outcome:?}"
     );
 }
@@ -673,7 +673,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(42)),
+        matches!(outcome, RunOutcome::Halted(42)),
         "expected Halted(42), got {outcome:?}"
     );
 }
@@ -701,7 +701,7 @@ main: () -> i32 {
     );
     // 10 +5=15 -3=12 *2=24 /4=6 %4=2 <<3=16 >>1=8 |1=9 &12=8 ^2=10.
     assert!(
-        matches!(outcome, StepOutcome::Halted(10)),
+        matches!(outcome, RunOutcome::Halted(10)),
         "expected Halted(10), got {outcome:?}"
     );
 }
@@ -725,7 +725,7 @@ main: () -> i32 {
     );
     // a[0]=5*4=20, a[1]=0+7=7 -> 27.
     assert!(
-        matches!(outcome, StepOutcome::Halted(27)),
+        matches!(outcome, RunOutcome::Halted(27)),
         "expected Halted(27), got {outcome:?}"
     );
 }
@@ -740,7 +740,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "expected Halted(0), got {outcome:?}"
     );
 }
@@ -766,7 +766,7 @@ main: () -> i32 {
     );
     // a=-42, b=-1, c=42, d=-1, e=41.
     assert!(
-        matches!(outcome, StepOutcome::Halted(41)),
+        matches!(outcome, RunOutcome::Halted(41)),
         "expected Halted(41), got {outcome:?}"
     );
 }
@@ -783,7 +783,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(42)),
+        matches!(outcome, RunOutcome::Halted(42)),
         "expected Halted(42), got {outcome:?}"
     );
 }
@@ -801,7 +801,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(42)),
+        matches!(outcome, RunOutcome::Halted(42)),
         "expected Halted(42), got {outcome:?}"
     );
 }
@@ -819,7 +819,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(42)),
+        matches!(outcome, RunOutcome::Halted(42)),
         "expected Halted(42), got {outcome:?}"
     );
 }
@@ -840,7 +840,7 @@ main: () -> i32 {
     );
     assert_eq!(uart, "ABC", "expected UART='ABC', got {uart:?}");
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "expected Halted(0), got {outcome:?}"
     );
 }
@@ -864,7 +864,7 @@ main: () -> i32 {
     );
     assert_eq!(uart, "AB", "expected UART='AB', got {uart:?}");
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "expected Halted(0), got {outcome:?}"
     );
 }
@@ -919,9 +919,9 @@ main: () -> i32 {
         run.uart_output
     );
     assert!(
-        matches!(run.outcome, StepOutcome::Halted(0)),
+        matches!(run.termination, RunOutcome::Halted(0)),
         "expected Halted(0), got {:?}",
-        run.outcome
+        run.termination
     );
 }
 
@@ -932,11 +932,11 @@ fn ri(i: RealInstruction) -> RvInstruction {
 }
 
 // Returns the VM itself so a caller can peek at registers after the run.
-fn assemble_and_run(insns: Vec<RvInstruction>) -> (VirtualMachine, StepOutcome) {
+fn assemble_and_run(insns: Vec<RvInstruction>) -> (VirtualMachine, RunOutcome) {
     let assembled = Assembler::assemble(&insns).expect("assembly failed");
     let mut vm = VirtualMachine::new(&assembled);
     let result = vm.run(100_000);
-    (vm, result.outcome)
+    (vm, result.termination)
 }
 
 // --- Tests ---
@@ -949,7 +949,7 @@ fn test_exit_zero() {
         ri(RealInstruction::Ecall(Ecall::new())),
     ]);
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "expected Halted(0), got {outcome:?}"
     );
 }
@@ -962,7 +962,7 @@ fn test_exit_code_42() {
         ri(RealInstruction::Ecall(Ecall::new())),
     ]);
     assert!(
-        matches!(outcome, StepOutcome::Halted(42)),
+        matches!(outcome, RunOutcome::Halted(42)),
         "expected Halted(42), got {outcome:?}"
     );
 }
@@ -978,7 +978,7 @@ fn test_add_two_numbers() {
         ri(RealInstruction::Ecall(Ecall::new())),
     ]);
     assert!(
-        matches!(outcome, StepOutcome::Halted(30)),
+        matches!(outcome, RunOutcome::Halted(30)),
         "expected Halted(30), got {outcome:?}"
     );
 }
@@ -994,7 +994,7 @@ fn test_subtract() {
         ri(RealInstruction::Ecall(Ecall::new())),
     ]);
     assert!(
-        matches!(outcome, StepOutcome::Halted(63)),
+        matches!(outcome, RunOutcome::Halted(63)),
         "expected Halted(63), got {outcome:?}"
     );
 }
@@ -1012,7 +1012,7 @@ fn test_memory_store_load() {
         ri(RealInstruction::Ecall(Ecall::new())),
     ]);
     assert!(
-        matches!(outcome, StepOutcome::Halted(99)),
+        matches!(outcome, RunOutcome::Halted(99)),
         "expected Halted(99), got {outcome:?}"
     );
 }
@@ -1030,7 +1030,7 @@ fn test_branch_loop() {
         ri(RealInstruction::Ecall(Ecall::new())),
     ]);
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "expected Halted(0), got {outcome:?}"
     );
 }
@@ -1046,7 +1046,7 @@ fn test_multiply() {
         ri(RealInstruction::Ecall(Ecall::new())),
     ]);
     assert!(
-        matches!(outcome, StepOutcome::Halted(42)),
+        matches!(outcome, RunOutcome::Halted(42)),
         "expected Halted(42), got {outcome:?}"
     );
 }
@@ -1062,7 +1062,7 @@ fn test_divide() {
         ri(RealInstruction::Ecall(Ecall::new())),
     ]);
     assert!(
-        matches!(outcome, StepOutcome::Halted(25)),
+        matches!(outcome, RunOutcome::Halted(25)),
         "expected Halted(25), got {outcome:?}"
     );
 }
@@ -1096,9 +1096,9 @@ fn test_ecall_write_uart() {
     let result = vm.run(100_000);
     assert_eq!(result.uart_output, "hi\n", "UART output mismatch");
     assert!(
-        matches!(result.outcome, StepOutcome::Halted(0)),
+        matches!(result.termination, RunOutcome::Halted(0)),
         "expected Halted(0), got {:?}",
-        result.outcome
+        result.termination
     );
 }
 
@@ -1138,7 +1138,7 @@ fn test_csr_instret() {
     ]);
     // instret should be >= 3 (the 3 nops have retired; csrrs reads the count before incrementing)
     assert!(
-        matches!(outcome, StepOutcome::Halted(n) if n >= 3),
+        matches!(outcome, RunOutcome::Halted(n) if n >= 3),
         "expected instret >= 3, got {outcome:?}"
     );
 }
@@ -1149,7 +1149,7 @@ fn test_csr_instret() {
 fn qemu_01_arithmetic_and_types() {
     let (_, outcome, _) = run_hll_file("programs/test/qemu/01_arithmetic_and_types.hll");
     assert!(
-        matches!(outcome, StepOutcome::Halted(42)),
+        matches!(outcome, RunOutcome::Halted(42)),
         "expected Halted(42), got {outcome:?}"
     );
 }
@@ -1158,7 +1158,7 @@ fn qemu_01_arithmetic_and_types() {
 fn qemu_02_control_flow() {
     let (_, outcome, _) = run_hll_file("programs/test/qemu/02_control_flow.hll");
     assert!(
-        matches!(outcome, StepOutcome::Halted(100)),
+        matches!(outcome, RunOutcome::Halted(100)),
         "expected Halted(100), got {outcome:?}"
     );
 }
@@ -1167,7 +1167,7 @@ fn qemu_02_control_flow() {
 fn qemu_03_structs_and_destructuring() {
     let (_, outcome, _) = run_hll_file("programs/test/qemu/03_structs_and_destructuring.hll");
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "expected Halted(0), got {outcome:?}"
     );
 }
@@ -1176,7 +1176,7 @@ fn qemu_03_structs_and_destructuring() {
 fn qemu_04_pointers_and_memory() {
     let (_, outcome, _) = run_hll_file("programs/test/qemu/04_pointers_and_memory.hll");
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "expected Halted(0), got {outcome:?}"
     );
 }
@@ -1196,7 +1196,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(42)),
+        matches!(outcome, RunOutcome::Halted(42)),
         "expected Halted(42), got {outcome:?}"
     );
 }
@@ -1227,7 +1227,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "expected reused allocation to be zeroed, got {outcome:?}"
     );
 }
@@ -1246,7 +1246,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(42)),
+        matches!(outcome, RunOutcome::Halted(42)),
         "expected Halted(42), got {outcome:?}"
     );
 }
@@ -1256,7 +1256,7 @@ fn qemu_05_functions_and_io() {
     let (_, outcome, uart) = run_hll_file("programs/test/qemu/05_functions_and_io.hll");
     assert_eq!(uart, "PASS\n", "expected UART='PASS\\n', got {uart:?}");
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "expected Halted(0), got {outcome:?}"
     );
 }
@@ -1275,7 +1275,7 @@ fn examples_exit_zero_in_vm() {
         let (outcome, uart) =
             run_hll_closure_with_path(&program.source, program.source_path.as_deref(), 50_000_000);
         assert!(
-            matches!(outcome, StepOutcome::Halted(0)),
+            matches!(outcome, RunOutcome::Halted(0)),
             "{}: expected Halted(0), got {outcome:?}\nuart:\n{uart}",
             program.name
         );
@@ -1302,7 +1302,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "struct fn-pointer field call should pass, got {outcome:?}"
     );
 }
@@ -1324,7 +1324,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "indexed fn-pointer call should pass, got {outcome:?}"
     );
 }
@@ -1350,7 +1350,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "sum of 1..8 = 36, got {outcome:?}"
     );
 }
@@ -1373,7 +1373,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "sum of 1..9 = 45 (9th arg via stack), got {outcome:?}"
     );
 }
@@ -1399,7 +1399,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "value alive across call must be preserved; inner result must be 7, got {outcome:?}"
     );
 }
@@ -1424,7 +1424,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "17 / 5 = 3 remainder 2 (struct return), got {outcome:?}"
     );
 }
@@ -1448,7 +1448,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "double(21) = 42, used in expression, got {outcome:?}"
     );
 }
@@ -1472,7 +1472,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "li 42 should load 42, got {outcome:?}"
     );
 }
@@ -1492,7 +1492,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "li 2047 should load 2047, got {outcome:?}"
     );
 }
@@ -1512,7 +1512,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "li 2048 should load 2048 (LUI+ADDI path), got {outcome:?}"
     );
 }
@@ -1534,7 +1534,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "li 0x7FFF_FFFF should load 2147483647, got {outcome:?}"
     );
 }
@@ -1557,7 +1557,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "li 0x8000_0000 should load 2147483648 (zero-extended), got {outcome:?}"
     );
 }
@@ -1579,7 +1579,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "li 0x8010_0000 should load 2148532224, got {outcome:?}"
     );
 }
@@ -1602,7 +1602,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "li 0xFFFF_FFFF should load 4294967295, got {outcome:?}"
     );
 }
@@ -1624,7 +1624,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "li 0x1_0000_0000 should load 4294967296 (true 64-bit path), got {outcome:?}"
     );
 }
@@ -1649,7 +1649,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "global i32 write 42 then read should return 42, got {outcome:?}"
     );
 }
@@ -1674,7 +1674,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "global i64 should hold 0x8010_0000 (2148532224), got {outcome:?}"
     );
 }
@@ -1702,7 +1702,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "two globals must be independent; alpha=10 beta=20, got {outcome:?}"
     );
 }
@@ -1724,7 +1724,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "BSS global must start at 0, got {outcome:?}"
     );
 }
@@ -1753,7 +1753,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "counter bumped 3 times should equal 3, got {outcome:?}"
     );
 }
@@ -1780,7 +1780,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "i8 store 127 -> load should read 127, got {outcome:?}"
     );
 }
@@ -1805,7 +1805,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "i8 store -1 -> load should read -1 (sign-extended), got {outcome:?}"
     );
 }
@@ -1830,7 +1830,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "i16 store 1000 -> load should read 1000, got {outcome:?}"
     );
 }
@@ -1855,7 +1855,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "i32 store 1234567 -> load should read 1234567, got {outcome:?}"
     );
 }
@@ -1882,7 +1882,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "i64 store 0x8010_0000 -> load should read same value, got {outcome:?}"
     );
 }
@@ -1908,7 +1908,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "second write should overwrite first; expected 42, got {outcome:?}"
     );
 }
@@ -1938,7 +1938,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "struct fields x=3 y=7 must be readable at correct offsets, got {outcome:?}"
     );
 }
@@ -1963,7 +1963,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "23 / 7 = 3 remainder 2; quotient + remainder = 5, got {outcome:?}"
     );
 }
@@ -1995,7 +1995,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "minmax(10,3) -> lo=3,hi=10 -> span=7, got {outcome:?}"
     );
 }
@@ -2026,7 +2026,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "two heap i32 slots must be independent (p=100, q=200), got {outcome:?}"
     );
 }
@@ -2052,7 +2052,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "middle field b=99 must be readable at offset 4, got {outcome:?}"
     );
 }
@@ -2082,7 +2082,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "mixed struct: small=7 big=0x8010_0000, got {outcome:?}"
     );
 }
@@ -2106,7 +2106,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "signed -8 / 2 should equal -4, got {outcome:?}"
     );
 }
@@ -2128,7 +2128,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "unsigned 100 / 3 = 33, got {outcome:?}"
     );
 }
@@ -2149,7 +2149,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "-1 < 0 should be true (signed), got {outcome:?}"
     );
 }
@@ -2170,7 +2170,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "0xFFFF_FFFF > 1 should be true (unsigned), got {outcome:?}"
     );
 }
@@ -2191,7 +2191,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "0 - 5 = -5, got {outcome:?}"
     );
 }
@@ -2212,7 +2212,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "bitwise all-ones check, got {outcome:?}"
     );
 }
@@ -2240,7 +2240,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "two separate heap i32 values sum to 30, got {outcome:?}"
     );
 }
@@ -2271,7 +2271,7 @@ fn ir_math_shr_signed() {
     );
     let (_, outcome, _) = run_ir(&program);
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "sra: -8 >> 2 == -2, got {outcome:?}"
     );
 }
@@ -2302,7 +2302,7 @@ fn ir_math_shl() {
     );
     let (_, outcome, _) = run_ir(&program);
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "sll: 1 << 10 == 1024, got {outcome:?}"
     );
 }
@@ -2332,7 +2332,7 @@ fn ir_unary_neg_ir() {
     );
     let (_, outcome, _) = run_ir(&program);
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "neg 7 == -7, got {outcome:?}"
     );
 }
@@ -2356,7 +2356,7 @@ fn ir_cmp_ult() {
     );
     let (_, outcome, _) = run_ir(&program);
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "ult: 2 < 5 should be true, got {outcome:?}"
     );
 }
@@ -2380,7 +2380,7 @@ fn ir_cmp_slt_negative() {
     );
     let (_, outcome, _) = run_ir(&program);
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "slt: -1 < 0 should be true, got {outcome:?}"
     );
 }
@@ -2404,7 +2404,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(4)),
+        matches!(outcome, RunOutcome::Halted(4)),
         "expected Halted(4), got {outcome:?}"
     );
 }
@@ -2424,7 +2424,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(7)),
+        matches!(outcome, RunOutcome::Halted(7)),
         "expected Halted(7), got {outcome:?}"
     );
 }
@@ -2445,7 +2445,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(3)),
+        matches!(outcome, RunOutcome::Halted(3)),
         "expected Halted(3), got {outcome:?}"
     );
 }
@@ -2466,7 +2466,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(21)),
+        matches!(outcome, RunOutcome::Halted(21)),
         "expected Halted(21), got {outcome:?}"
     );
 }
@@ -2487,7 +2487,7 @@ main: () -> i32 {
     );
     // 9.0 + 0.5 = 9.5, * 2.0 = 19.0 -> 19.
     assert!(
-        matches!(outcome, StepOutcome::Halted(19)),
+        matches!(outcome, RunOutcome::Halted(19)),
         "expected Halted(19), got {outcome:?}"
     );
 }
@@ -2507,7 +2507,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(5)),
+        matches!(outcome, RunOutcome::Halted(5)),
         "expected Halted(5), got {outcome:?}"
     );
 }
@@ -2525,7 +2525,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(6)),
+        matches!(outcome, RunOutcome::Halted(6)),
         "expected Halted(6), got {outcome:?}"
     );
 }
@@ -2545,7 +2545,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(7)),
+        matches!(outcome, RunOutcome::Halted(7)),
         "expected Halted(7), got {outcome:?}"
     );
 }
@@ -2565,7 +2565,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(3)),
+        matches!(outcome, RunOutcome::Halted(3)),
         "expected Halted(3), got {outcome:?}"
     );
 }
@@ -2586,7 +2586,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(1)),
+        matches!(outcome, RunOutcome::Halted(1)),
         "expected Halted(1), got {outcome:?}"
     );
 }
@@ -2609,7 +2609,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(1)),
+        matches!(outcome, RunOutcome::Halted(1)),
         "expected Halted(1), got {outcome:?}"
     );
 }
@@ -2637,7 +2637,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(1)),
+        matches!(outcome, RunOutcome::Halted(1)),
         "expected Halted(1), got {outcome:?}"
     );
 }
@@ -2665,7 +2665,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(1)),
+        matches!(outcome, RunOutcome::Halted(1)),
         "expected Halted(1), got {outcome:?}"
     );
 }
@@ -2694,7 +2694,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "u8 0xA4 must widen to 164, not a sign-extended negative; got {outcome:?}"
     );
 }
@@ -2719,7 +2719,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "u16 0x8001 -> 32769 and u32 0x80000001 -> 2147483649; got {outcome:?}"
     );
 }
@@ -2741,7 +2741,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "i8 -1 must sign-extend to i64 -1; got {outcome:?}"
     );
 }
@@ -2787,7 +2787,7 @@ main: () -> i32 {
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
+        matches!(outcome, RunOutcome::Halted(0)),
         "nested LE u64 read must compose all eight bytes; got {outcome:?}"
     );
 }
@@ -2808,7 +2808,7 @@ fn ir_trap_terminator_halts_with_code() {
 
     let (_, outcome, _) = run_ir(&program);
     assert!(
-        matches!(outcome, StepOutcome::Halted(134)),
+        matches!(outcome, RunOutcome::Halted(134)),
         "a reached trap must halt with its diagnostic code; got {outcome:?}"
     );
 }
@@ -2848,7 +2848,7 @@ fn ir_trap_not_taken_returns_normally() {
 
     let (_, outcome, _) = run_ir(&program);
     assert!(
-        matches!(outcome, StepOutcome::Halted(7)),
+        matches!(outcome, RunOutcome::Halted(7)),
         "untaken trap arm must not fire; got {outcome:?}"
     );
 }

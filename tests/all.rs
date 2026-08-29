@@ -8,7 +8,6 @@
     clippy::duplicate_mod,
     clippy::needless_lifetimes,
     clippy::let_underscore_untyped,
-    clippy::match_wildcard_for_single_variants,
     clippy::needless_pass_by_value,
     clippy::print_stderr,
     clippy::print_stdout,

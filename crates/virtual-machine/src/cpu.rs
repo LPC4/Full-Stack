@@ -1,4 +1,5 @@
 pub mod alu;
+pub mod architectural;
 pub mod csr;
 pub mod decoder;
 pub mod hazard_unit;
@@ -8,6 +9,7 @@ pub mod predictor;
 pub mod registers;
 pub mod traps;
 
+pub use architectural::ArchitecturalState;
 pub use pipeline::{CpuPipelineFeed, Pipeline, PipelineStats, StageEntry, TickOutcome};
 pub use registers::PrivilegeMode;
 
@@ -99,5 +101,9 @@ impl Cpu {
 
     pub fn predictor_stats(&self) -> &predictor::PredictorStats {
         self.pipeline.predictor_stats()
+    }
+
+    pub fn architectural_state(&self) -> &ArchitecturalState {
+        self.pipeline.architectural_state()
     }
 }
