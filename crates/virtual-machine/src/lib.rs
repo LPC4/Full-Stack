@@ -37,4 +37,4 @@ pub mod memory;
 pub mod rom;
 pub mod virtual_machine;
 
-pub use virtual_machine::{RunResult, VirtualMachine, VmSnapshot};
+pub use virtual_machine::{RunOutcome, RunResult, VirtualMachine, VmSnapshot};

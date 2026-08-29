@@ -14,7 +14,7 @@ pub use registers::PrivilegeMode;
 use crate::bus::SystemBus;
 use crate::error::VmError;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StepOutcome {
     Continue,
     Halted(i64),

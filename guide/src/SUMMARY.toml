@@ -221,6 +221,16 @@ slug = "standard-library/different-targets"
 title = "Different targets"
 
 [[page]]
+kind = "section"
+slug = "standard-library/real-implementation"
+title = "Real implementation"
+
+[[page]]
+kind = "chapter"
+slug = "the-kernel"
+title = "The kernel"
+
+[[page]]
 kind = "chapter"
 slug = "glossary"
 title = "Glossary"

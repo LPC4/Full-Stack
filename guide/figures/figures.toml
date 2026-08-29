@@ -177,149 +177,149 @@ caption = "After free, a pointer keeps its old address even though that storage 
 [[figure]]
 source = "dynamic_memory_allocation_2"
 name = "heap_fragmentation"
-source_line = 737
+source_line = 785
 caption = "Allocations split one free region into gaps that cannot yet be recombined."
 
 [[figure]]
 source = "pipeline_stages"
 name = "pipeline_stages"
-source_line = 792
+source_line = 840
 caption = "The five pipeline stages overlap instructions, except when a load-use dependency inserts a bubble."
 
 [[figure]]
 source = "memory_hierarchy"
 name = "memory_hierarchy"
-source_line = 820
+source_line = 868
 caption = "The VM models progressively larger and slower storage from registers through three cache levels to DRAM."
 
 [[figure]]
 source = "toolchain_flow"
 name = "toolchain_flow"
-source_line = 837
+source_line = 885
 caption = "A source file becomes typed IR, assembly, a relocatable object, an executable ELF, and finally a process."
 
 [[figure]]
 source = "branch_mispredict"
 name = "branch_mispredict"
-source_line = 856
+source_line = 904
 caption = "A taken branch predicted not taken squashes younger instructions and redirects fetch to the target."
 
 [[figure]]
 source = "vm_memory_map"
 name = "vm_memory_map"
-source_line = 879
+source_line = 927
 caption = "The physical memory map routes addresses to ROM, interrupt controllers, devices, or RAM."
 
 [[figure]]
 source = "user_va_space"
 name = "user_va_space"
-source_line = 898
+source_line = 946
 caption = "Each process sees the same virtual layout while Sv39 maps it to different physical pages."
 
 [[figure]]
 source = "sv39_walk"
 name = "sv39_walk"
-source_line = 916
+source_line = 964
 caption = "Sv39 uses three nine-bit virtual-page indices to walk page tables before combining a physical page with the offset."
 
 [[figure]]
 source = "stack_frame"
 name = "stack_frame"
-source_line = 939
+source_line = 987
 caption = "Register allocation keeps temporary values in saved registers instead of adding spill slots to the stack frame."
 
 [[figure]]
 source = "elf_linking"
 name = "elf_linking"
-source_line = 959
+source_line = 1007
 caption = "The linker lays out sections, resolves undefined symbols, patches relocations, and writes an executable ELF."
 
 [[figure]]
 source = "trap_flow"
 name = "trap_flow"
-source_line = 976
+source_line = 1024
 caption = "A trap crosses into S-mode, saves state, dispatches the cause, and returns to user code with sret."
 
 [[figure]]
 source = "regalloc_coloring"
 name = "regalloc_coloring"
-source_line = 1001
+source_line = 1049
 caption = "Register allocation turns overlapping live ranges into an interference graph whose neighbors require different registers."
 
 [[figure]]
 source = "allocator_zoo"
 name = "allocator_zoo"
-source_line = 1024
+source_line = 1072
 caption = "Heap, arena, pool, and vector allocators share storage but offer different lifetime and layout tradeoffs."
 
 [[figure]]
 source = "vec_growth"
 name = "vec_growth"
-source_line = 1043
+source_line = 1091
 caption = "A full vector reallocates into a larger buffer and copies its elements before the next push."
 
 [[figure]]
 source = "interp_flow"
 name = "interp_flow"
-source_line = 1067
+source_line = 1115
 caption = "Buffer-based interpolation measures first, checks capacity, and writes only when the whole result fits."
 
 [[figure]]
 source = "cache_address_split"
 name = "cache_address_split"
-source_line = 1088
+source_line = 1136
 caption = "The L1 cache splits an address into tag, set index, and byte offset before checking both ways."
 
 [[figure]]
 source = "predictor_fsm"
 name = "predictor_fsm"
-source_line = 1107
+source_line = 1155
 caption = "A two-bit saturating branch predictor needs two opposite outcomes to move from one strong prediction to the other."
 
 [[figure]]
 source = "fb_double_buffer"
 name = "fb_double_buffer"
-source_line = 1127
+source_line = 1175
 caption = "Double buffering lets the guest finish a frame off-screen before atomically publishing it to the GUI."
 
 [[figure]]
 source = "input_paths"
 name = "input_paths"
-source_line = 1148
+source_line = 1196
 caption = "Text input travels through the UART while graphical key events use a separate non-blocking FIFO."
 
 [[figure]]
 source = "process_states"
 name = "process_states"
-source_line = 1168
+source_line = 1216
 caption = "A process moves among ready, running, and blocked states before exit leaves a zombie for waitpid to reap."
 
 [[figure]]
 source = "user_heap_brk"
 name = "user_heap_brk"
-source_line = 1188
+source_line = 1236
 caption = "The brk syscall advances a process-local boundary and maps zeroed heap pages behind it."
 
 [[figure]]
 source = "register_file"
 name = "register_file"
-source_line = 1205
+source_line = 1253
 caption = "The RISC-V ABI assigns conventional jobs and preservation rules to the 32 integer registers."
 
 [[figure]]
 source = "stack_heap_growth"
 name = "stack_heap_growth"
-source_line = 1226
+source_line = 1274
 caption = "The stack grows toward lower addresses while the heap grows toward higher addresses."
 
 [[figure]]
 source = "instruction_encoding"
 name = "instruction_encoding"
-source_line = 1244
+source_line = 1292
 caption = "An R-type instruction encodes its operation and three registers into one 32-bit word."
 
 [[figure]]
 source = "load_store_addressing"
 name = "load_store_addressing"
-source_line = 1260
+source_line = 1308
 caption = "A load adds its signed instruction offset to a base register, then copies the value at that effective address."

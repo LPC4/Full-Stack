@@ -50,9 +50,9 @@ text. The complete textual contract lives in `../ir-to-asm/_IR_SPECIFICATIONS.md
 
 ```
 src/
-  compiler/   lexer-to-IR lowering, semantic analysis, symbol and type tables
+  compiler/       lexer-to-IR lowering, semantic analysis, symbol and type tables
   compiler/opt/   IR optimization passes (constant folding, dead-code elimination)
-  ir/         IR data model: program, functions, blocks, instructions, values, types
+  ir/             IR data model, layout, and structural verifier
 ```
 
 Lexer, parser, AST, the top-level `HllCompiler`, and the stdlib bundler live alongside

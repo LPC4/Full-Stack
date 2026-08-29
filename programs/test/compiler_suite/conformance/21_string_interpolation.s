@@ -477,24 +477,6 @@ main__match_next_17:
 	li a0, 134
 	li a7, 93
 	ecall
-; Basic Block: match_merge_9
-main__match_merge_9:
-	addi   t3, zero, 2
-	addi   a0, t3, 0
-; --- Function Epilogue ---
-; Restore callee-saved register s4 from offset 336
-	ld     s4, 336(sp)
-; Restore callee-saved register s3 from offset 328
-	ld     s3, 328(sp)
-; Restore callee-saved register s2 from offset 320
-	ld     s2, 320(sp)
-; Restore return address (ra) from offset 344
-	ld     ra, 344(sp)
-; Deallocate stack frame: 352 bytes
-	addi   sp, sp, 352
-; Return to caller
-	jalr   zero, 0(ra)
-; --- End Epilogue ---
 ; End of function
 .section .rodata
 str_0:

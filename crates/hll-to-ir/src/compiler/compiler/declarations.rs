@@ -1,7 +1,7 @@
 use super::{
     Block, CompilerError, DeclNode, Declaration, Expression, FunctionDecl, GenericTypeDef,
     HighLevelCompiler, IrFunction, IrGlobalVar, IrInstruction, IrParam, IrProgram, IrRegister,
-    IrTerminator, IrType, IrTypeAlias, IrValue, Literal, Statement, Type,
+    IrTerminator, IrType, IrTypeAlias, IrValue, Literal, ReturnType, Statement, Type,
 };
 
 #[derive(Debug, Clone)]
@@ -189,11 +189,16 @@ impl HighLevelCompiler {
                             "extern function `{final_name}` - definition omitted (linker must provide it)"
                         ));
                     }
-                    let return_ty = self.lower_return_type(return_type.as_ref());
+                    let return_ty = match return_type.as_ref() {
+                        Some(ReturnType::Single(ty)) => {
+                            self.lower_type_with_program(ir_program, ty)?
+                        }
+                        None => IrType::Void,
+                    };
                     let params = params
                         .iter()
-                        .map(|param| self.lower_type(&param.ty))
-                        .collect();
+                        .map(|param| self.lower_type_with_program(ir_program, &param.ty))
+                        .collect::<Result<Vec<_>, _>>()?;
                     ir_program.push_extern_fn(crate::ir::program::IrExternFn {
                         name: final_name.clone(),
                         params,
@@ -221,7 +226,10 @@ impl HighLevelCompiler {
                 self.defers.clear();
                 self.reset_source_line();
 
-                let return_ty = self.lower_return_type(return_type.as_ref());
+                let return_ty = match return_type.as_ref() {
+                    Some(ReturnType::Single(ty)) => self.lower_type_with_program(ir_program, ty)?,
+                    None => IrType::Void,
+                };
                 self.current_return_ty = Some(return_ty.clone());
 
                 // Aggregate returns of 16 bytes or less come back in a0/a1; larger ones
@@ -287,7 +295,7 @@ impl HighLevelCompiler {
                 }
 
                 for param in params {
-                    let lowered_ty = self.lower_type(&param.ty);
+                    let lowered_ty = self.lower_type_with_program(ir_program, &param.ty)?;
                     let register = IrRegister::Named(param.name.clone());
                     function.push_param(IrParam {
                         ty: lowered_ty.clone(),

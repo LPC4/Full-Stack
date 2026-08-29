@@ -333,4 +333,9 @@ fn test_sv39_invalid_pte_faults_preserve_access_kind() {
     mem.write_doubleword(0x3000, l0_pte);
 
     assert_access_specific_page_faults(&mut mem, 0);
+
+    let reserved_leaf = 0xDD; // V|W|X|U|A|D with R clear
+    mem.write_doubleword(0x3000, reserved_leaf);
+
+    assert_access_specific_page_faults(&mut mem, 0);
 }

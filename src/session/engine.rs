@@ -410,8 +410,7 @@ fn run_hosted_artifact(
     max_steps: u64,
 ) -> crate::session::vm::VmExecutionResult {
     use asm_to_binary::assembler::link_layout::LinkLayout;
-    use virtual_machine::cpu::StepOutcome;
-    use virtual_machine::virtual_machine::VirtualMachine;
+    use virtual_machine::virtual_machine::{RunOutcome, VirtualMachine};
 
     let elf = artifacts
         .linked
@@ -422,6 +421,7 @@ fn run_hosted_artifact(
             return crate::session::vm::VmExecutionResult {
                 uart_output: format!("ELF load failed: {err}"),
                 exit_code: None,
+                fault: Some(err.to_string()),
                 steps: 0,
                 max_steps_reached: false,
                 registers: None,
@@ -440,14 +440,17 @@ fn run_hosted_artifact(
         pc: vm.peek_pc(),
         x,
     });
+    let (exit_code, max_steps_reached, fault) = match result.termination {
+        RunOutcome::Halted(code) => (Some(code as i32), false, None),
+        RunOutcome::TimedOut => (None, true, None),
+        RunOutcome::Fault(error) => (None, false, Some(error.to_string())),
+    };
     crate::session::vm::VmExecutionResult {
         uart_output: result.uart_output,
-        exit_code: match result.outcome {
-            StepOutcome::Halted(code) => Some(code as i32),
-            StepOutcome::Continue => None,
-        },
+        exit_code,
+        fault,
         steps: result.steps,
-        max_steps_reached: matches!(result.outcome, StepOutcome::Continue),
+        max_steps_reached,
         registers,
     }
 }
@@ -524,6 +527,7 @@ mod tests {
             .run_hosted_config(&config, 20_000)
             .expect("run config");
         assert_eq!(outcome.vm.exit_code, Some(7));
+        assert_eq!(outcome.vm.fault, None);
         assert!(!outcome.vm.max_steps_reached);
     }
 

@@ -871,6 +871,9 @@ enum VmError {
     InstructionAccessFault(u64),
     LoadAccessFault(u64),
     StoreAccessFault(u64),
+    InstructionPageFault(u64),
+    LoadPageFault(u64),
+    StorePageFault(u64),
     BusError(u64),
 
     // Instruction errors
@@ -883,8 +886,10 @@ enum VmError {
     // Device errors
     WriteToRom,
 
-    // CSR errors
-    IllegalCsr(u16),
+    // Trap returns and host failures
+    Mret,
+    Sret,
+    Other(String),
 }
 ```
 
@@ -897,7 +902,24 @@ enum VmError {
 
 ### 8.3 Trap vs. Error
 - **Traps** (exceptions/interrupts): Saved to CSRs, handler invoked
-- **Fatal errors** (e.g., bus routing failure): Halt VM with error message
+- **Fatal errors** (e.g., bus routing failure): Return `RunOutcome::Fault` with the original error
+
+### 8.4 Run Outcomes
+
+`VirtualMachine::run` returns one explicit termination reason:
+
+```rust
+enum RunOutcome {
+    Halted(i64),
+    TimedOut,
+    Fault(VmError),
+}
+```
+
+`Fault` retains the error that escaped CPU trap handling, and `TimedOut` means the supplied step
+budget was exhausted. `RunResult::outcome` is a temporary compatibility projection: timeouts map
+to `StepOutcome::Continue`, and faults map to `StepOutcome::Halted(-1)`. Remove that field after
+all non-VM callers consume `RunResult::termination`.
 
 
 ## 9. Performance Counters & Timing

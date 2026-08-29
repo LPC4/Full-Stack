@@ -252,7 +252,7 @@ fn lowers_stack_alloc_as_frame_address_not_memory_load() {
         ptr: IrRegister::Named("local".into()),
         offset: None,
     });
-    entry.set_terminator(IrTerminator::Return(None));
+    entry.set_terminator(IrTerminator::Return(Some(IrValue::Integer(0))));
     func.push_block(entry);
     program.push_function(func);
 

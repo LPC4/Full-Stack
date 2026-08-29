@@ -14,9 +14,28 @@ use crate::error::VmError;
 use crate::memory::MemoryAccess as _;
 use asm_to_binary::AssembledOutput;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunOutcome {
+    Halted(i64),
+    TimedOut,
+    Fault(VmError),
+}
+
+impl RunOutcome {
+    pub const fn legacy_step_outcome(&self) -> StepOutcome {
+        match self {
+            Self::Halted(code) => StepOutcome::Halted(*code),
+            Self::TimedOut => StepOutcome::Continue,
+            Self::Fault(_) => StepOutcome::Halted(-1),
+        }
+    }
+}
+
 pub struct RunResult {
     pub steps: u64,
     pub uart_output: String,
+    pub termination: RunOutcome,
+    // Remove after callers no longer depend on faults appearing as exit -1.
     pub outcome: StepOutcome,
 }
 
@@ -170,38 +189,33 @@ impl VirtualMachine {
     }
 
     pub fn run(&mut self, max_steps: u64) -> RunResult {
-        let mut steps = 0u64;
-        let mut outcome = StepOutcome::Continue;
-
-        for _ in 0..max_steps {
-            match self.step() {
-                Ok(StepOutcome::Continue) => {
-                    steps += 1;
-                }
-                Ok(StepOutcome::Halted(code)) => {
-                    steps += 1;
-                    outcome = StepOutcome::Halted(code);
-                    break;
-                }
-                // A trap that escapes the CPU ends the run as exit -1; callers that
-                // need the cause must drive `step` themselves.
-                Err(_) => {
-                    steps += 1;
-                    outcome = StepOutcome::Halted(-1);
-                    break;
-                }
-            }
-        }
+        let (steps, termination) = run_steps(max_steps, || self.step());
 
         let uart_bytes = self.bus.uart_mut().drain_output();
         let uart_output = String::from_utf8_lossy(&uart_bytes).into_owned();
+        let outcome = termination.legacy_step_outcome();
 
         RunResult {
             steps,
             uart_output,
+            termination,
             outcome,
         }
     }
+}
+
+fn run_steps(
+    max_steps: u64,
+    mut step: impl FnMut() -> Result<StepOutcome, VmError>,
+) -> (u64, RunOutcome) {
+    for steps in 1..=max_steps {
+        match step() {
+            Ok(StepOutcome::Continue) => {}
+            Ok(StepOutcome::Halted(code)) => return (steps, RunOutcome::Halted(code)),
+            Err(error) => return (steps, RunOutcome::Fault(error)),
+        }
+    }
+    (max_steps, RunOutcome::TimedOut)
 }
 
 // --- Peripheral / debug accessors ---
@@ -436,6 +450,38 @@ mod tests {
     const L1_PA: u64 = RAM_BASE + 0x11_000;
     const L0_PA: u64 = RAM_BASE + 0x12_000;
     const FRAME_PA: u64 = RAM_BASE + 0x20_000;
+
+    #[test]
+    fn run_steps_distinguishes_halt_timeout_and_fault() {
+        assert_eq!(
+            run_steps(3, || Ok(StepOutcome::Continue)),
+            (3, RunOutcome::TimedOut)
+        );
+        assert_eq!(
+            run_steps(3, || Ok(StepOutcome::Halted(7))),
+            (1, RunOutcome::Halted(7))
+        );
+        assert_eq!(
+            run_steps(3, || Err(VmError::BusError(0x1234))),
+            (1, RunOutcome::Fault(VmError::BusError(0x1234)))
+        );
+    }
+
+    #[test]
+    fn run_outcome_has_a_legacy_step_projection() {
+        assert_eq!(
+            RunOutcome::Halted(7).legacy_step_outcome(),
+            StepOutcome::Halted(7)
+        );
+        assert_eq!(
+            RunOutcome::TimedOut.legacy_step_outcome(),
+            StepOutcome::Continue
+        );
+        assert_eq!(
+            RunOutcome::Fault(VmError::BusError(0x1234)).legacy_step_outcome(),
+            StepOutcome::Halted(-1)
+        );
+    }
 
     fn leaf_pte(pa: u64) -> u64 {
         ((pa >> 12) << 10) | 0b1111 // V,R,W,X

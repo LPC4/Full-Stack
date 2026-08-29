@@ -155,6 +155,4 @@ match_arm_16:
     ret 1
 match_next_17:
     trap 134
-match_merge_9:
-    ret 2
 }

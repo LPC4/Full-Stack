@@ -12,7 +12,7 @@ use asm_to_binary::riscv::rv64i::{Lb, Ld, Lh, Lw, Sb, Sh, Sw};
 use asm_to_binary::utils::reg_name;
 use hll_to_ir::{
     IrCastMode, IrCmpOp, IrInstruction, IrMathOp, IrProgram, IrTerminator, IrType, IrUnaryOp,
-    IrValue, TypeLayoutError,
+    IrValue, TypeLayoutError, VerifierErrors,
 };
 use std::collections::HashMap;
 
@@ -25,21 +25,38 @@ const A1: Reg = 11;
 const FA0: Reg = 10;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CodegenError {
-    pub source: TypeLayoutError,
+pub enum CodegenError {
+    TypeLayout(TypeLayoutError),
+    InvalidIr(VerifierErrors),
 }
 
 impl std::fmt::Display for CodegenError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "code generation failed: {}", self.source)
+        match self {
+            Self::TypeLayout(error) => write!(f, "code generation failed: {error}"),
+            Self::InvalidIr(errors) => write!(f, "code generation rejected invalid IR: {errors}"),
+        }
     }
 }
 
-impl std::error::Error for CodegenError {}
+impl std::error::Error for CodegenError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::TypeLayout(error) => Some(error),
+            Self::InvalidIr(errors) => Some(errors),
+        }
+    }
+}
 
 impl From<TypeLayoutError> for CodegenError {
     fn from(source: TypeLayoutError) -> Self {
-        Self { source }
+        Self::TypeLayout(source)
+    }
+}
+
+impl From<VerifierErrors> for CodegenError {
+    fn from(source: VerifierErrors) -> Self {
+        Self::InvalidIr(source)
     }
 }
 
@@ -107,18 +124,20 @@ impl CompilerRv64 {
     }
 
     /// # Errors
-    /// Returns `CodegenError` when an IR type has no valid target layout.
+    /// Returns `CodegenError` when the IR is structurally invalid or has no valid target layout.
     pub fn compile(&mut self, program: &IrProgram) -> Result<String, CodegenError> {
         self.compile_with_tokens(program).map(|output| output.0)
     }
 
     /// # Errors
-    /// Returns `CodegenError` when an IR type has no valid target layout.
+    /// Returns `CodegenError` when the IR is structurally invalid or has no valid target layout.
     pub fn compile_with_tokens(
         &mut self,
         program: &IrProgram,
     ) -> Result<(String, Vec<asm_to_binary::rv_instruction::RvInstruction>), CodegenError> {
         program.validate_types()?;
+        #[cfg(any(test, debug_assertions))]
+        hll_to_ir::verify_program(program)?;
         self.compile_inner(program);
         if self.peephole {
             // Render the text from the optimized tokens so the `.s` view matches
@@ -2254,8 +2273,31 @@ main: (arg: u8) -> i32 {
             .compile(&program)
             .expect_err("unresolved type");
         assert_eq!(
-            error.source,
-            hll_to_ir::TypeLayoutError::UnresolvedName("Missing".to_owned())
+            error,
+            super::CodegenError::TypeLayout(hll_to_ir::TypeLayoutError::UnresolvedName(
+                "Missing".to_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn invalid_branch_target_stops_codegen_before_lowering() {
+        let mut block = IrBlock::new("entry");
+        block.set_terminator(IrTerminator::Jump(hll_to_ir::IrLabel::new("missing")));
+        let mut function = IrFunction::new("main", IrType::Integer(IntWidth::I32));
+        function.push_block(block);
+        let mut program = IrProgram::new("invalid");
+        program.push_function(function);
+
+        let error = CompilerRv64::new()
+            .compile(&program)
+            .expect_err("unknown target must be rejected");
+        let super::CodegenError::InvalidIr(errors) = error else {
+            panic!("expected verifier error")
+        };
+        assert_eq!(
+            errors.errors[0].invariant,
+            hll_to_ir::VerifierInvariant::UnknownBlockTarget
         );
     }
 }

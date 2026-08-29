@@ -614,6 +614,9 @@ pub(super) fn linked_test_line(text: &str, path: &str, line: usize) -> ConsoleLi
 }
 
 fn status_chip(vm: &VmExecutionResult) -> (String, egui::Color32) {
+    if vm.fault.is_some() {
+        return ("fault".to_owned(), theme::DANGER);
+    }
     match vm.exit_code {
         Some(0) => ("exit 0".to_owned(), theme::ELECTRIC),
         Some(code) => (format!("exit {code}"), theme::TEXT),

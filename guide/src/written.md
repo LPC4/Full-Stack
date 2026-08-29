@@ -1901,54 +1901,174 @@ standard library implementations for you:
 | **Hosted** | Syscall wrappers (like `sys.write` and `brk`) + the hosted `_start`. |
 | **Kernel** | Baremetal hardware providers + the kernel's specific entry point (`_kernel_start`) and logging. |
 
-All three targets share the exact same core algorithms. The build file just changes the underlying "backend"
-functions.
+All three targets share the exact same core algorithms. The build file just changes the underlying "backend" functions.
 
-Let's have a look at how the real allocator is implemented.
+### Real implementation
+
+Let's have a look at how the real allocator is implemented for the different targets. We'll start with the core algorithm.
 
 ```hll
 heap_backend := import("heap_backend")
 
-block: HeapBlock* = heap_backend.heap_raw_alloc(32) as HeapBlock*
-raw: u8* = heap_backend.heap_raw_alloc(padded)
+struct HeapBlock {
+	next: HeapBlock*,
+	ptr: u8*,
+	size: u64,
+	is_free: u64,
+}
+
+heap_list: HeapBlock* = null
+
+heap_alloc_aligned: (size: u64, align: u64) -> u8* {
+	requested: u64 = size
+	if requested == 0 {
+		return align as u8*
+	}
+
+	current: HeapBlock* = heap_list
+	while current != null {
+		address: u64 = current.ptr as u64
+		if current.is_free != 0 and current.size >= requested and address % align == 0 {
+			current.is_free = 0
+			return current.ptr
+		}
+		current = current.next
+	}
+
+	block: HeapBlock* = heap_backend.heap_raw_alloc(32) as HeapBlock*
+	if block == null {
+		return null
+	}
+	padded: u64 = requested + align - 1
+	if padded < requested {
+		return null
+	}
+	raw: u8* = heap_backend.heap_raw_alloc(padded)
+	if raw == null { return null }
+	raw_address: u64 = raw as u64
+	payload_address: u64 = ((raw_address + align - 1) / align) * align
+	payload: u8* = payload_address as u8*
+	@block = {
+		.next    = heap_list,
+		.ptr     = payload,
+		.size    = requested,
+		.is_free = 0,
+	}
+	heap_list = block
+	return payload
+}
 
 export malloc: (size: u64) -> u8* {
 	return heap_alloc_aligned(size, 8)
 }
 ```
 
+The core allocator keeps a linked list of `HeapBlock`s. Each block stores a pointer to the allocated memory, its size,
+whether it is free, and a pointer to the next block in the list. Whenever `malloc` is called, the allocator walks over
+the list and reuses the first free block that is large enough and has the correct alignment.
 
-```toml
-baremetal = [
-	"heap_backend=stdlib/platform/baremetal/heap.hll",
-]
-hosted_platform = [
-	"heap_backend=stdlib/platform/hosted/heap.hll",
-]
-```
+If none of the existing blocks can be reused, the allocator calls `heap_raw_alloc` twice. The first call allocates the
+32-byte `HeapBlock` itself, which stores the allocation's metadata. The second call allocates the actual memory for the
+caller, plus enough padding to align its address. The new `HeapBlock` is then added to the front of the linked list.
 
-
-```hll
-if heap_cur == 0 {
-	base: u64 = heap_brk(0)
-	heap_cur = base
-	heap_top = base
-}
-
-if new_cur > heap_top {
-	new_top: u64 = ((new_cur + 4095) / 4096) * 4096
-	got: u64 = heap_brk(new_top)
-	if got < new_top { return null }
-	heap_top = new_top
-}
-```
+At the top of the file you can see that we import `heap_backend`, which provides this `heap_raw_alloc` function for each
+target. A raw allocation just hands the core allocator a fresh range of bytes. It doesn't keep a list or reuse freed
+blocks itself, that's all handled by the shared core algorithm. Let's look at the U-mode example.
 
 ```hll
-new_bump: u64 = heap_bump + aligned
-if new_bump < heap_bump or new_bump > 65536 {
-	return null
+heap_cur: u64 = 0
+heap_top: u64 = 0
+
+export heap_brk: (addr: u64) -> u64 {
+	result: u64 = 0
+	asm {
+		mv a0, $addr
+		li a7, 214
+		ecall
+		mv $result, a0
+	}
+	return result
 }
-ptr: u8* = &heap_buffer[heap_bump]
-heap_bump = new_bump
-return ptr
+
+export heap_raw_alloc: (n: u64) -> u8* {
+	if n + 7 < n { return null }
+	aligned: u64 = ((n + 7) / 8) * 8
+	if aligned < n { return null }
+	if heap_cur == 0 {
+		base: u64 = heap_brk(0)
+		heap_cur = base
+		heap_top = base
+	}
+	new_cur: u64 = heap_cur + aligned
+	if new_cur < heap_cur { return null }
+	if new_cur > heap_top {
+		if new_cur + 4095 < new_cur { return null }
+		new_top: u64 = ((new_cur + 4095) / 4096) * 4096
+		got: u64 = heap_brk(new_top)
+		if got < new_top {
+			return null
+		}
+		heap_top = new_top
+	}
+	ptr: u8* = heap_cur as u8*
+	heap_cur = new_cur
+	return ptr
+}
 ```
+
+This version of `heap_raw_alloc` is a *bump allocator*. `heap_cur` points to the next unused byte, while `heap_top` marks
+the end of the memory currently available to the process. Each request is rounded up to eight bytes, then `heap_cur` is
+moved forward by that amount. The old value of `heap_cur` is the address returned to the core allocator.
+
+When an allocation would move `heap_cur` past `heap_top`, the allocator uses the `brk` syscall to request more memory.
+The *program break* is the address just past the end of the process's heap. Calling `heap_brk(0)` asks the kernel for the
+current break, while passing a new address asks the kernel to move it. The kernel maps enough new pages to reach that
+address and returns the resulting break. If it cannot grow the heap, it returns the old break instead, and the allocation
+fails.
+
+Because it's in U-mode, it can't extend its address space directly, so it uses system calls to request more memory from
+the kernel. This would, of course, be impossible in a bare-metal or kernel environment (a kernel can't request memory
+from itself), so these targets use the bare-metal implementation.
+
+```hll
+heap_buffer: u8[65536] = []
+heap_bump: u64 = 0
+
+heap_region_cur: u64 = 0
+heap_region_end: u64 = 0
+
+export heap_set_region: (start: u64, end: u64) {
+	heap_region_cur = start
+	heap_region_end = end
+}
+
+export heap_raw_alloc: (n: u64) -> u8* {
+	if n + 7 < n { return null }
+	aligned: u64 = ((n + 7) / 8) * 8
+	if heap_region_cur != 0 {
+		new_cur: u64 = heap_region_cur + aligned
+		if new_cur >= heap_region_cur and new_cur <= heap_region_end {
+			ptr: u8* = heap_region_cur as u8*
+			heap_region_cur = new_cur
+			return ptr
+		}
+	}
+	new_bump: u64 = heap_bump + aligned
+	if new_bump < heap_bump or new_bump > 65536 {
+		return null
+	}
+	ptr: u8* = &heap_buffer[heap_bump]
+	heap_bump = new_bump
+	return ptr
+}
+```
+
+The bare-metal implementation uses the same bump-allocation idea, but it gets its memory directly instead of asking a
+kernel for it. A kernel can provide a larger range with `heap_set_region`, and allocations use that range first. If no
+range has been provided, or if it runs out, the allocator falls back to the fixed 64 KiB `heap_buffer`.
+
+`heap_raw_alloc` only moves the relevant bump pointer forward, so it cannot free individual raw allocations. When the
+program calls `free`, the core allocator instead marks the matching `HeapBlock` as free. A later call to `malloc` can then
+find that block in the linked list and reuse it.
+
+## The kernel

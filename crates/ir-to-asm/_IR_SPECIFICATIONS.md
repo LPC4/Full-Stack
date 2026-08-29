@@ -161,7 +161,7 @@ entry:
 
 Every function prints an explicit return type, including `-> void`. Each block has one label and
 at most one terminator. Valid lowered functions end every reachable block in exactly one
-terminator.
+terminator. Control-flow lowering omits synthetic merge blocks when no predecessor reaches them.
 
 ## 5. Instructions
 
@@ -443,3 +443,71 @@ return          = "ret" [ value ];
 trap            = "trap" unsigned;
 terminator      = jump | branch | return | trap;
 ```
+
+## 9. Verification
+
+`verify_program` checks a complete object-module `IrProgram`; `verify_function` checks the
+function-local structural subset. Verification is deterministic, does not mutate IR, reports up
+to 64 independent errors, and marks the report as truncated when more errors exist. A diagnostic
+may carry the nearest `SourceLine` marker and a related definition location.
+
+The structural verifier enforces:
+
+- valid type trees and overflow-checked layouts
+- nonempty and unique type, extern, global, function, block, and temporary identities
+- compatible signatures when an extern declaration and local definition share a name
+- at least one block per function, with the first block designated as the entry block
+- no predecessor edge to the entry block
+- exactly one terminator per valid block
+- existing jump and branch targets
+- return-value presence matching the declared function return type
+
+Numeric temporaries and ordinary value destinations are single-definition. Named `stack_alloc`
+identities are the pre-mem2reg exception: lowering may reuse one function-scoped mutable slot name
+for declarations from separate lexical scopes. Parameters cannot collide with that slot.
+
+An `IrProgram` is an object module, not a linked executable. It may omit `main`, `_start`, or
+`_kernel_start`, and it may contain references that another object defines. Entry-point policy and
+cross-object symbol resolution therefore belong to run-configuration validation and the linker.
+
+Stable structural invariant codes are:
+
+| Code | Invariant |
+| --- | --- |
+| `IR001` | Invalid type tree or layout |
+| `IR002` | Empty identity |
+| `IR003` | Duplicate type alias |
+| `IR004` | Duplicate extern declaration |
+| `IR005` | Duplicate global symbol |
+| `IR006` | Duplicate function definition |
+| `IR007` | Function/global namespace collision |
+| `IR008` | Extern/definition signature mismatch |
+| `IR009` | Missing function entry block |
+| `IR010` | Duplicate block label |
+| `IR011` | Duplicate value definition |
+| `IR012` | Missing block terminator |
+| `IR013` | Unknown branch target |
+| `IR014` | Illegal entry-block predecessor |
+| `IR015` | Missing non-void return value |
+| `IR016` | Value returned from a void function |
+
+The RV64 backend invokes structural verification before lowering in debug and test builds. Type
+layout validation remains unconditional. Instruction typing, def-use, phi-edge, dominance, call,
+inline-assembly, and target-legality checks are added by later verifier layers.
+
+### 9.1 Backend assumption ownership
+
+The initial backend assertion inventory assigns each current assumption to one owner:
+
+| Backend assumption | Owner |
+| --- | --- |
+| Type layout resolution succeeds | Unconditional layout validation and `IR001` |
+| Function block labels are unique and branch targets exist | Structural verifier `IR010`-`IR014` |
+| Every consumed register has a slot and compatible value type | Def-use and instruction verifier |
+| Math, unary, comparison, and cast types support the selected opcode | Instruction verifier |
+| Aggregate call arguments and returns use the required value form | Call/instruction verifier |
+| Phi destinations and incoming registers have slots | CFG, phi-edge, and def-use verifier |
+| Inline-assembly registers, places, offsets, and scratch slots are legal | Target-aware asm verifier |
+| Emitter legalization can reserve a non-conflicting scratch register | Machine IR/local proof |
+
+Panics and unwraps confined to test fixture inspection are not public IR ingestion assumptions.

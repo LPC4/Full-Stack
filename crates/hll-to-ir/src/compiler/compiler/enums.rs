@@ -513,6 +513,7 @@ impl HighLevelCompiler {
         self.match_id += 1;
 
         let mut saw_catch_all = false;
+        let mut merge_reachable = false;
         for arm in arms {
             match &arm.pattern {
                 Pattern::Wildcard | Pattern::Binding(_) => {
@@ -527,6 +528,10 @@ impl HighLevelCompiler {
                     }
                     self.lower_block(ir_program, &arm.body);
                     self.store_arm_value(&arm.value, &result_slot, &mut store_ty);
+                    merge_reachable |= self
+                        .current_block
+                        .as_ref()
+                        .is_some_and(|block| block.terminator.is_none());
                     self.set_terminator(IrTerminator::Jump(merge_label.clone()));
                     self.context.symbols.exit_scope();
                     saw_catch_all = true;
@@ -570,6 +575,10 @@ impl HighLevelCompiler {
                     self.bind_variant_payload(&enum_ptr, &info, bindings, match_id);
                     self.lower_block(ir_program, &arm.body);
                     self.store_arm_value(&arm.value, &result_slot, &mut store_ty);
+                    merge_reachable |= self
+                        .current_block
+                        .as_ref()
+                        .is_some_and(|block| block.terminator.is_none());
                     self.set_terminator(IrTerminator::Jump(merge_label.clone()));
                     self.context.symbols.exit_scope();
 
@@ -593,7 +602,9 @@ impl HighLevelCompiler {
             });
         }
 
-        self.start_new_block(merge_label.0.clone());
+        if merge_reachable {
+            self.start_new_block(merge_label.0.clone());
+        }
         store_ty
     }
 
@@ -620,6 +631,7 @@ impl HighLevelCompiler {
         let merge_label = self.new_label("match_merge");
 
         let mut saw_catch_all = false;
+        let mut merge_reachable = false;
         for arm in arms {
             match &arm.pattern {
                 Pattern::Wildcard | Pattern::Binding(_) => {
@@ -629,6 +641,10 @@ impl HighLevelCompiler {
                     }
                     self.lower_block(ir_program, &arm.body);
                     self.store_arm_value(&arm.value, &result_slot, &mut store_ty);
+                    merge_reachable |= self
+                        .current_block
+                        .as_ref()
+                        .is_some_and(|block| block.terminator.is_none());
                     self.set_terminator(IrTerminator::Jump(merge_label.clone()));
                     self.context.symbols.exit_scope();
                     saw_catch_all = true;
@@ -656,6 +672,10 @@ impl HighLevelCompiler {
                     self.context.symbols.enter_scope();
                     self.lower_block(ir_program, &arm.body);
                     self.store_arm_value(&arm.value, &result_slot, &mut store_ty);
+                    merge_reachable |= self
+                        .current_block
+                        .as_ref()
+                        .is_some_and(|block| block.terminator.is_none());
                     self.set_terminator(IrTerminator::Jump(merge_label.clone()));
                     self.context.symbols.exit_scope();
 
@@ -672,7 +692,9 @@ impl HighLevelCompiler {
             });
         }
 
-        self.start_new_block(merge_label.0.clone());
+        if merge_reachable {
+            self.start_new_block(merge_label.0.clone());
+        }
         store_ty
     }
 

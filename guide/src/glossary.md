@@ -36,6 +36,18 @@ or changing the program counter.
 The stage where the CPU reads the next encoded instruction from the address in the program
 counter.
 
+#### [Freestanding](../../standard-library/different-targets/)
+
+A program environment with no operating system underneath it. A freestanding program provides
+its own startup and heap support and interacts with hardware directly. In this Guide, it runs in
+M-mode.
+
+#### [Hosted](../../standard-library/different-targets/)
+
+A program environment that provides services through system calls instead of direct hardware
+access. In this Guide, normal hosted programs run in U-mode and request those services from the
+kernel.
+
 #### Immediate
 
 A constant encoded directly inside an instruction rather than read from a register. Its bit field
@@ -51,6 +63,12 @@ four bytes.
 The contract implemented by a CPU: its instructions, registers, encodings, and machine-level
 behavior. Programs compiled for one ISA do not automatically run on another.
 
+#### [Kernel](../../standard-library/different-targets/)
+
+The privileged core of an operating system. It manages memory, processes, and hardware, and
+provides controlled services to user programs through system calls. This project's kernel runs in
+S-mode.
+
 #### [Program counter (pc)](../../cpus-and-assembly/how-the-cpu-reads-instructions/)
 
 The register containing the address of the current instruction. Normal execution advances it;
@@ -60,6 +78,12 @@ branches, jumps, and calls replace it with another address.
 
 A hardware-enforced execution level that controls which instructions, memory, and devices code
 may access. Ordinary programs run with fewer permissions than the kernel or firmware.
+
+#### [Protection](../../runtimes/why-abstract-it/)
+
+Hardware-enforced limits that prevent code from accessing memory, devices, or instructions it
+does not have permission to use. Privilege modes and virtual-memory permissions provide these
+limits.
 
 #### [QEMU](../../the-same-code-on-qemu/)
 
@@ -118,6 +142,12 @@ characters. ASCII uses seven bits, though each encoded character is normally sto
 
 Eight bits. Memory is addressed by byte even when an instruction reads or writes a larger value.
 
+#### [Bump allocator](../../standard-library/different-targets/)
+
+An allocator that keeps a pointer to the next unused byte. Each allocation returns that address
+and moves the pointer forward. It is simple and fast, but it cannot reclaim individual allocations
+by itself.
+
 #### [Device](../../memory-mapped-input-output/an-address-is-also-just-a-number/)
 
 Hardware, or emulated hardware, that the CPU communicates with. A memory-mapped device responds
@@ -127,6 +157,16 @@ to loads and stores in its assigned address range.
 
 The order in which the bytes of a multi-byte value are stored in memory. RISC-V code in this
 Guide is little-endian, so the least significant byte is stored at the lowest address.
+
+#### [First-fit](../../standard-library/malloc/)
+
+An allocation strategy that scans known blocks in order and reuses the first free block large
+enough for the request.
+
+#### [Fragmentation](../../standard-library/malloc/)
+
+Free memory split across separate gaps that cannot satisfy one larger allocation even when their
+combined size would be enough. This happens when allocated blocks remain between freed blocks.
 
 #### [Heap](../../cpus-and-assembly/the-stack-and-the-heap/)
 
@@ -152,6 +192,11 @@ defined owner before a load or store has a useful meaning.
 
 A way to control devices using ordinary load and store instructions at designated addresses.
 These accesses can have side effects, such as printing a byte or stopping the machine.
+
+#### [Program break](../../standard-library/different-targets/)
+
+The address just past the end of a process's heap. The `brk` system call queries or moves this
+address, allowing the kernel to map more memory when the heap needs to grow.
 
 #### [RAM](../../cpus-and-assembly/memory/)
 

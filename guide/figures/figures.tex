@@ -697,40 +697,88 @@
 \subsection*{dynamic_memory_allocation}
 \begin{tikzpicture}[
   stage title/.style={font=\small\bfseries\color{gray7}},
-  pointer/.style={rounded corners=2pt, line width=0.7pt, minimum width=3.3cm,
-                  minimum height=0.72cm, align=left, font=\footnotesize\ttfamily,
-                  text width=2.7cm},
-  region/.style={rounded corners=2pt, line width=0.7pt, minimum width=3.3cm,
-                 minimum height=1.15cm, align=left, font=\footnotesize,
-                 text width=2.7cm},
+  pointer box/.style={rounded corners=2pt, line width=0.7pt, minimum width=4.5cm,
+                      minimum height=1.05cm},
+  region/.style={rounded corners=2pt, line width=0.7pt, minimum width=4.5cm,
+                 minimum height=1.45cm},
+  field label/.style={font=\scriptsize\color{gray7}, anchor=west},
+  field value/.style={font=\footnotesize\ttfamily, anchor=east},
+  block title/.style={font=\scriptsize\bfseries},
+  value cell/.style={draw=ggreen!60, fill=ggreen!8, line width=0.5pt,
+                     minimum width=0.66cm, minimum height=0.48cm,
+                     font=\scriptsize\ttfamily, inner sep=0},
+  freed cell/.style={draw=gray5, fill=gray3!20, text=gray5, line width=0.5pt,
+                     minimum width=0.66cm, minimum height=0.48cm,
+                     font=\scriptsize\ttfamily, inner sep=0},
+  reused cell/.style={draw=gyellow!70, fill=gyellow!10, line width=0.5pt,
+                      minimum width=0.66cm, minimum height=0.48cm,
+                      font=\scriptsize\ttfamily, inner sep=0},
   ptr/.style={-{Stealth[length=2.3mm]}, line width=0.9pt, gblue},
+  dangling/.style={-{Stealth[length=2.3mm]}, line width=0.9pt, gred, dashed},
   transition/.style={-{Stealth[length=2.6mm]}, line width=1pt, gray7},
   note/.style={font=\scriptsize\color{gray7}, align=center}]
-  \node[stage title] at (0,2.55) {before free};
-  \node[pointer, fill=gblue!8, draw=gblue!60] (ptr1) at (0,1.45)
-    {my\_data = 0x2400};
-  \node[region, fill=ggreen!8, draw=ggreen!60] (heap1) at (0,-0.25)
-    {0x2400\\10\quad 20\quad 30\quad 40\quad 50};
+  \node[stage title] at (0,3.25) {before free};
+  \node[pointer box, fill=gblue!8, draw=gblue!60] (ptr1) at (0,2.1) {};
+  \node[field label] at ($(ptr1.west)+(0.2,0.21)$) {pointer variable};
+  \node[field value] at ($(ptr1.east)+(-0.2,0.21)$) {my\_data};
+  \draw[gray3, line width=0.5pt] ($(ptr1.west)+(0.18,0)$) -- ($(ptr1.east)+(-0.18,0)$);
+  \node[field label] at ($(ptr1.west)+(0.2,-0.21)$) {stored address};
+  \node[field value, text=blue700] at ($(ptr1.east)+(-0.2,-0.21)$) {0x2400};
+  \node[region, fill=ggreen!4, draw=ggreen!60] (heap1) at (0,0) {};
+  \node[block title] at ($(heap1.north)+(0,-0.25)$) {heap block at \texttt{0x2400}};
+  \draw[ggreen!35, line width=0.5pt]
+    ($(heap1.west)+(0.18,0.12)$) -- ($(heap1.east)+(-0.18,0.12)$);
+  \node[value cell] at ($(heap1.center)+(-1.48,-0.3)$) {10};
+  \node[value cell] at ($(heap1.center)+(-0.74,-0.3)$) {20};
+  \node[value cell] at ($(heap1.center)+(0,-0.3)$) {30};
+  \node[value cell] at ($(heap1.center)+(0.74,-0.3)$) {40};
+  \node[value cell] at ($(heap1.center)+(1.48,-0.3)$) {50};
   \draw[ptr] (ptr1.south) -- (heap1.north);
+  \node[note, text=green700] at (0,-1.0) {valid pointer};
 
-  \node[stage title] at (5.2,2.55) {immediately after free};
-  \node[pointer, fill=gblue!8, draw=gblue!60] (ptr2) at (5.2,1.45)
-    {my\_data = 0x2400};
-  \node[region, fill=gray3!35, draw=gray5, dashed] (heap2) at (5.2,-0.25)
-    {0x2400\\released; contents undefined};
-  \draw[ptr, dashed] (ptr2.south) -- (heap2.north);
-  \node[note, text=gred] at (5.2,-1.25) {my\_data is now a dangling pointer};
+  \node[stage title] at (6,3.25) {immediately after free};
+  \node[pointer box, fill=gblue!8, draw=gblue!60] (ptr2) at (6,2.1) {};
+  \node[field label] at ($(ptr2.west)+(0.2,0.21)$) {pointer variable};
+  \node[field value] at ($(ptr2.east)+(-0.2,0.21)$) {my\_data};
+  \draw[gray3, line width=0.5pt] ($(ptr2.west)+(0.18,0)$) -- ($(ptr2.east)+(-0.18,0)$);
+  \node[field label] at ($(ptr2.west)+(0.2,-0.21)$) {stored address};
+  \node[field value, text=blue700] at ($(ptr2.east)+(-0.2,-0.21)$) {0x2400};
+  \node[region, fill=gray3!30, draw=gray5, dashed] (heap2) at (6,0) {};
+  \node[block title, text=gred] at ($(heap2.north)+(0,-0.25)$)
+    {freed block at \texttt{0x2400}};
+  \draw[gray3, line width=0.5pt]
+    ($(heap2.west)+(0.18,0.12)$) -- ($(heap2.east)+(-0.18,0.12)$);
+  \node[freed cell] at ($(heap2.center)+(-1.48,-0.3)$) {10};
+  \node[freed cell] at ($(heap2.center)+(-0.74,-0.3)$) {20};
+  \node[freed cell] at ($(heap2.center)+(0,-0.3)$) {30};
+  \node[freed cell] at ($(heap2.center)+(0.74,-0.3)$) {40};
+  \node[freed cell] at ($(heap2.center)+(1.48,-0.3)$) {50};
+  \draw[dangling] (ptr2.south) -- (heap2.north);
+  \node[note, text=gred] at (6,-1.08)
+    {old bytes may still appear unchanged;\\dereferencing my\_data is undefined};
 
-  \node[stage title] at (10.4,2.55) {after the space is reused};
-  \node[pointer, fill=gblue!8, draw=gblue!60] (ptr3) at (10.4,1.45)
-    {my\_data = 0x2400};
-  \node[region, fill=gyellow!10, draw=gyellow!70] (heap3) at (10.4,-0.25)
-    {0x2400\\different allocation: 99, 7, ...};
-  \draw[ptr, dashed] (ptr3.south) -- (heap3.north);
-  \node[note, text=gred] at (10.4,-1.25) {using my\_data can corrupt new data};
+  \node[stage title] at (12,3.25) {after a new allocation};
+  \node[pointer box, fill=gblue!8, draw=gblue!60] (ptr3) at (12,2.1) {};
+  \node[field label] at ($(ptr3.west)+(0.2,0.21)$) {pointer variable};
+  \node[field value] at ($(ptr3.east)+(-0.2,0.21)$) {my\_data};
+  \draw[gray3, line width=0.5pt] ($(ptr3.west)+(0.18,0)$) -- ($(ptr3.east)+(-0.18,0)$);
+  \node[field label] at ($(ptr3.west)+(0.2,-0.21)$) {stored address};
+  \node[field value, text=blue700] at ($(ptr3.east)+(-0.2,-0.21)$) {0x2400};
+  \node[region, fill=gyellow!4, draw=gyellow!70] (heap3) at (12,0) {};
+  \node[block title] at ($(heap3.north)+(0,-0.25)$) {new block at \texttt{0x2400}};
+  \draw[gyellow!35, line width=0.5pt]
+    ($(heap3.west)+(0.18,0.12)$) -- ($(heap3.east)+(-0.18,0.12)$);
+  \node[reused cell] at ($(heap3.center)+(-1.48,-0.3)$) {99};
+  \node[reused cell] at ($(heap3.center)+(-0.74,-0.3)$) {7};
+  \node[reused cell] at ($(heap3.center)+(0,-0.3)$) {18};
+  \node[reused cell] at ($(heap3.center)+(0.74,-0.3)$) {4};
+  \node[reused cell] at ($(heap3.center)+(1.48,-0.3)$) {61};
+  \draw[dangling] (ptr3.south) -- (heap3.north);
+  \node[note, text=gred] at (12,-1.08)
+    {new allocation changed the bytes;\\my\_data is still dangling};
 
-  \draw[transition] (1.9,0.6) -- node[above=4pt, note] {free(my\_data)} (3.3,0.6);
-  \draw[transition] (7.1,0.6) -- node[above=4pt, note] {later allocation} (8.5,0.6);
+  \draw[transition] (2.5,1.15) -- (3.5,1.15);
+  \draw[transition] (8.5,1.15) -- (9.5,1.15);
 \end{tikzpicture}
 
 \subsection*{dynamic_memory_allocation_2}

@@ -45,6 +45,7 @@ fn open_native_workspace_replaces_tree_configs_and_transient_state() {
     app.vm_result = Some(VmExecutionResult {
         uart_output: "old".to_owned(),
         exit_code: Some(0),
+        fault: None,
         steps: 1,
         max_steps_reached: false,
         registers: None,

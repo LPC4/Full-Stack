@@ -7,9 +7,9 @@ use ir_to_asm::CompilerRv64;
 use serde::Serialize;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use virtual_machine::RunResult;
 use virtual_machine::bus::ELF_LOAD_BASE;
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
+use virtual_machine::{RunOutcome, RunResult};
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
@@ -59,7 +59,7 @@ fn wrap_snippet(source: &str) -> String {
 
 fn run_to_marker(vm: &mut VirtualMachine, marker_pc: u64, max_steps: u64) -> RunResult {
     let mut steps = 0;
-    let mut outcome = StepOutcome::Continue;
+    let mut termination = RunOutcome::TimedOut;
 
     for _ in 0..max_steps {
         steps += 1;
@@ -68,25 +68,27 @@ fn run_to_marker(vm: &mut VirtualMachine, marker_pc: u64, max_steps: u64) -> Run
                 let marker_retired =
                     vm.pipeline_snapshot().stages[4].is_some_and(|(pc, _)| pc == marker_pc);
                 if marker_retired {
-                    outcome = StepOutcome::Halted(0);
+                    termination = RunOutcome::Halted(0);
                     break;
                 }
             }
             Ok(StepOutcome::Halted(code)) => {
-                outcome = StepOutcome::Halted(code);
+                termination = RunOutcome::Halted(code);
                 break;
             }
-            Err(_) => {
-                outcome = StepOutcome::Halted(-1);
+            Err(error) => {
+                termination = RunOutcome::Fault(error);
                 break;
             }
         }
     }
 
     let uart_output = String::from_utf8_lossy(&vm.uart_output()).into_owned();
+    let outcome = termination.legacy_step_outcome();
     RunResult {
         steps,
         uart_output,
+        termination,
         outcome,
     }
 }
@@ -95,18 +97,21 @@ fn outcome_from_result(vm: &VirtualMachine, result: RunResult) -> Outcome {
     let RunResult {
         steps,
         uart_output,
-        outcome,
+        termination,
+        ..
     } = result;
     let registers = vm.peek_all_xregs();
+    let (error, exit_code, max_steps_reached) = match termination {
+        RunOutcome::Halted(code) => (None, Some(code as i32), false),
+        RunOutcome::TimedOut => (None, None, true),
+        RunOutcome::Fault(error) => (Some(error.to_string()), None, false),
+    };
     Outcome {
-        error: None,
+        error,
         uart: uart_output,
-        exit_code: match outcome {
-            StepOutcome::Halted(code) => Some(code as i32),
-            StepOutcome::Continue => None,
-        },
+        exit_code,
         steps,
-        max_steps_reached: matches!(outcome, StepOutcome::Continue),
+        max_steps_reached,
         pc: format!("{:#x}", vm.peek_pc()),
         registers: ABI_NAMES
             .iter()

@@ -165,6 +165,10 @@ pub(crate) fn finalize_leaf(
     let x = (pte >> 3) & 1;
     let u_bit = (pte >> 4) & 1;
 
+    if r == 0 && w == 1 {
+        return Err(access.page_fault(vaddr));
+    }
+
     // Permission checks.
     if access.is_execute() && x == 0 {
         return Err(access.page_fault(vaddr));
@@ -218,13 +222,13 @@ pub(crate) fn finalize_leaf(
         let pmp_match = ctx.pmpaddr0 == u64::MAX || phys_addr <= ctx.pmpaddr0;
         if pmp_match {
             if access.is_execute() && !allow_x {
-                return Err(VmError::InstructionAccessFault(vaddr));
+                return Err(access.access_fault(vaddr));
             }
             if access.is_write() && !allow_w {
-                return Err(VmError::StoreAccessFault(vaddr));
+                return Err(access.access_fault(vaddr));
             }
             if matches!(access, AccessKind::Load) && !allow_r {
-                return Err(VmError::LoadAccessFault(vaddr));
+                return Err(access.access_fault(vaddr));
             }
         } else {
             return Err(access.access_fault(vaddr));
@@ -260,13 +264,13 @@ pub fn translate_with_pmp(
             let pmp_match = ctx.pmpaddr0 == u64::MAX || phys_addr <= ctx.pmpaddr0;
             if pmp_match {
                 if access.is_execute() && !allow_x {
-                    return Err(VmError::InstructionAccessFault(vaddr));
+                    return Err(access.access_fault(vaddr));
                 }
                 if access.is_write() && !allow_w {
-                    return Err(VmError::StoreAccessFault(vaddr));
+                    return Err(access.access_fault(vaddr));
                 }
                 if matches!(access, AccessKind::Load) && !allow_r {
-                    return Err(VmError::LoadAccessFault(vaddr));
+                    return Err(access.access_fault(vaddr));
                 }
             } else {
                 return Err(access.access_fault(vaddr));

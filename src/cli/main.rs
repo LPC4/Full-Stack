@@ -35,7 +35,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
-use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
+use virtual_machine::virtual_machine::{RunOutcome, VirtualMachine};
 
 // --- Error type ---
 
@@ -45,6 +45,7 @@ enum CliError {
     Io(std::io::Error),
     Compile(String),
     Assemble(String),
+    Runtime(String),
     Timeout(u64),
 }
 
@@ -55,6 +56,7 @@ impl fmt::Display for CliError {
             Self::Io(err) => write!(f, "I/O error: {err}"),
             Self::Compile(msg) => write!(f, "compilation error: {msg}"),
             Self::Assemble(msg) => write!(f, "linker/assembler error: {msg}"),
+            Self::Runtime(msg) => write!(f, "runtime error: {msg}"),
             Self::Timeout(steps) => write!(f, "execution timed out after {steps} steps"),
         }
     }
@@ -362,12 +364,13 @@ fn cmd_run(args: &Args) -> Result<ExitCode, CliError> {
 
     print!("{}", result.uart_output);
 
-    match result.outcome {
-        StepOutcome::Halted(code) => {
+    match result.termination {
+        RunOutcome::Halted(code) => {
             eprintln!("fsc: program exited with code {code}");
             Ok(ExitCode::from((code & 0xFF) as u8))
         }
-        StepOutcome::Continue => Err(CliError::Timeout(args.max_steps)),
+        RunOutcome::TimedOut => Err(CliError::Timeout(args.max_steps)),
+        RunOutcome::Fault(error) => Err(CliError::Runtime(error.to_string())),
     }
 }
 
@@ -382,6 +385,9 @@ fn run_cli_config(input: &str, mode: TargetMode, max_steps: u64) -> Result<ExitC
                 .run_hosted_config(&config, max_steps)
                 .map_err(map_session_error)?;
             print!("{}", outcome.vm.uart_output);
+            if let Some(fault) = outcome.vm.fault {
+                return Err(CliError::Runtime(fault));
+            }
             if outcome.vm.max_steps_reached {
                 return Err(CliError::Timeout(max_steps));
             }
@@ -395,12 +401,13 @@ fn run_cli_config(input: &str, mode: TargetMode, max_steps: u64) -> Result<ExitC
             let mut vm = VirtualMachine::new(&outcome.artifacts.linked);
             let result = vm.run(max_steps);
             print!("{}", result.uart_output);
-            match result.outcome {
-                StepOutcome::Halted(code) => {
+            match result.termination {
+                RunOutcome::Halted(code) => {
                     eprintln!("fsc: program exited with code {code}");
                     Ok(ExitCode::from((code & 0xFF) as u8))
                 }
-                StepOutcome::Continue => Err(CliError::Timeout(max_steps)),
+                RunOutcome::TimedOut => Err(CliError::Timeout(max_steps)),
+                RunOutcome::Fault(error) => Err(CliError::Runtime(error.to_string())),
             }
         }
     }

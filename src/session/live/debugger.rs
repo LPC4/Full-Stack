@@ -174,6 +174,10 @@ impl LiveMachine {
                 MachineState::Exited(code) => Some(code),
                 _ => None,
             },
+            fault: match &self.state {
+                MachineState::Faulted(message) => Some(message.clone()),
+                _ => None,
+            },
             steps: self.steps,
             max_steps_reached: false,
             registers: Some(self.registers()),

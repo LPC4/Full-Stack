@@ -477,6 +477,7 @@ impl HighLevelCompiler {
         } else {
             merge_label.clone()
         };
+        let mut merge_reachable = else_branch.is_none();
 
         self.set_terminator(IrTerminator::Branch {
             cond: cond_value,
@@ -487,16 +488,26 @@ impl HighLevelCompiler {
         // Locals live in stack slots until the SSA work in COMPILER_QUALITY_PLAN.md.
         self.start_new_block(then_label.0.clone());
         self.lower_block(ir_program, then_block);
+        merge_reachable |= self
+            .current_block
+            .as_ref()
+            .is_some_and(|block| block.terminator.is_none());
         self.set_terminator(IrTerminator::Jump(merge_label.clone()));
 
         // Lower else branch
         if let Some(else_stmt) = else_branch {
             self.start_new_block(else_label.0.clone());
             self.lower_statement(ir_program, else_stmt);
+            merge_reachable |= self
+                .current_block
+                .as_ref()
+                .is_some_and(|block| block.terminator.is_none());
             self.set_terminator(IrTerminator::Jump(merge_label.clone()));
         }
 
-        self.start_new_block(merge_label.0.clone());
+        if merge_reachable {
+            self.start_new_block(merge_label.0.clone());
+        }
     }
 
     pub(super) fn lower_while(

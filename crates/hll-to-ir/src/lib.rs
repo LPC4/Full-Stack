@@ -81,5 +81,6 @@ pub use ir::{
     FloatWidth, IntWidth, IrAsmOp, IrAsmPlace, IrBlock, IrCastMode, IrCmpOp, IrFunction,
     IrGlobalString, IrGlobalVar, IrInstruction, IrLabel, IrMathOp, IrParam, IrProgram, IrRegister,
     IrTerminator, IrType, IrTypeAlias, IrUnaryOp, IrValue, TypeLayout, TypeLayoutError,
-    type_layout, type_resolves_to_void,
+    VerifierError, VerifierErrors, VerifierInvariant, VerifierLocation, VerifierSource,
+    type_layout, type_resolves_to_void, verify_function, verify_program,
 };

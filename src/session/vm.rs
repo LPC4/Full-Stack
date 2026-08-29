@@ -1,9 +1,10 @@
-/// Outcome of running an assembled program: captured UART output, exit code,
-/// step count, whether the budget ran out, and the final CPU register file.
+/// Outcome of running an assembled program, including its halt, timeout, or fault status and
+/// final CPU register file.
 #[derive(Clone)]
 pub struct VmExecutionResult {
     pub uart_output: String,
     pub exit_code: Option<i32>,
+    pub fault: Option<String>,
     pub steps: u64,
     pub max_steps_reached: bool,
     /// Final register file, or `None` if the image never loaded.
