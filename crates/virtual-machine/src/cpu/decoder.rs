@@ -6,6 +6,7 @@
 
 use crate::error::VmError;
 use asm_to_binary::isa::{float_register_name, integer_register_name};
+use riscv_model::InstructionId;
 
 // --- Public types ---
 
@@ -141,6 +142,135 @@ pub enum DecodedInsn {
 }
 
 impl DecodedInsn {
+    pub fn instruction_id(&self) -> Option<InstructionId> {
+        #[cfg_attr(
+            not(test),
+            expect(
+                clippy::enum_glob_use,
+                reason = "the exhaustive mapping reads as an instruction vocabulary"
+            )
+        )]
+        use InstructionId::*;
+
+        match self {
+            Self::Lui { .. } => Some(Lui),
+            Self::Auipc { .. } => Some(Auipc),
+            Self::Jal { .. } => Some(Jal),
+            Self::Jalr { .. } => Some(Jalr),
+            Self::Branch { funct3, .. } => match funct3 {
+                0 => Some(Beq),
+                1 => Some(Bne),
+                4 => Some(Blt),
+                5 => Some(Bge),
+                6 => Some(Bltu),
+                7 => Some(Bgeu),
+                _ => None,
+            },
+            Self::Load { funct3, .. } => match funct3 {
+                0 => Some(Lb),
+                1 => Some(Lh),
+                2 => Some(Lw),
+                3 => Some(Ld),
+                4 => Some(Lbu),
+                5 => Some(Lhu),
+                6 => Some(Lwu),
+                _ => None,
+            },
+            Self::Store { funct3, .. } => match funct3 {
+                0 => Some(Sb),
+                1 => Some(Sh),
+                2 => Some(Sw),
+                3 => Some(Sd),
+                _ => None,
+            },
+            Self::AluImm { funct3, funct7, .. } => match funct3 {
+                0 => Some(Addi),
+                1 => Some(Slli),
+                2 => Some(Slti),
+                3 => Some(Sltiu),
+                4 => Some(Xori),
+                5 if funct7 & 0x20 != 0 => Some(Srai),
+                5 => Some(Srli),
+                6 => Some(Ori),
+                7 => Some(Andi),
+                _ => None,
+            },
+            Self::AluImm32 { funct3, funct7, .. } => match funct3 {
+                0 => Some(Addiw),
+                1 => Some(Slliw),
+                5 if funct7 & 0x20 != 0 => Some(Sraiw),
+                5 => Some(Srliw),
+                _ => None,
+            },
+            Self::Alu { funct3, funct7, .. } => match (*funct7, *funct3) {
+                (0, 0) => Some(Add),
+                (0, 1) => Some(Sll),
+                (0, 2) => Some(Slt),
+                (0, 3) => Some(Sltu),
+                (0, 4) => Some(Xor),
+                (0, 5) => Some(Srl),
+                (0, 6) => Some(Or),
+                (0, 7) => Some(And),
+                (0x20, 0) => Some(Sub),
+                (0x20, 5) => Some(Sra),
+                (1, 0) => Some(Mul),
+                (1, 1) => Some(Mulh),
+                (1, 2) => Some(Mulhsu),
+                (1, 3) => Some(Mulhu),
+                (1, 4) => Some(Div),
+                (1, 5) => Some(Divu),
+                (1, 6) => Some(Rem),
+                (1, 7) => Some(Remu),
+                _ => None,
+            },
+            Self::Alu32 { funct3, funct7, .. } => match (*funct7, *funct3) {
+                (0, 0) => Some(Addw),
+                (0, 1) => Some(Sllw),
+                (0, 5) => Some(Srlw),
+                (0x20, 0) => Some(Subw),
+                (0x20, 5) => Some(Sraw),
+                (1, 0) => Some(Mulw),
+                (1, 4) => Some(Divw),
+                (1, 5) => Some(Divuw),
+                (1, 6) => Some(Remw),
+                (1, 7) => Some(Remuw),
+                _ => None,
+            },
+            Self::Fence { .. } => Some(Fence),
+            Self::FenceI => Some(FenceI),
+            Self::Ecall => Some(Ecall),
+            Self::Ebreak => Some(Ebreak),
+            Self::Mret => Some(Mret),
+            Self::Sret => Some(Sret),
+            Self::SfenceVma => Some(SfenceVma),
+            Self::Wfi => Some(Wfi),
+            Self::Csr { funct3, .. } => match funct3 {
+                1 => Some(Csrrw),
+                2 => Some(Csrrs),
+                3 => Some(Csrrc),
+                5 => Some(Csrrwi),
+                6 => Some(Csrrsi),
+                7 => Some(Csrrci),
+                _ => None,
+            },
+            Self::FLoad { funct3: 2, .. } => Some(Flw),
+            Self::FLoad { funct3: 3, .. } => Some(Fld),
+            Self::FLoad { .. } => None,
+            Self::FStore { funct3: 2, .. } => Some(Fsw),
+            Self::FStore { funct3: 3, .. } => Some(Fsd),
+            Self::FStore { .. } => None,
+            Self::FOp {
+                funct5,
+                fmt,
+                rm,
+                rs2,
+                ..
+            } => fp_instruction_id(*funct5, *fmt, *rm, *rs2),
+            Self::FMac { op, fmt, .. } => fmac_instruction_id(op, *fmt),
+            Self::Atomic { funct5, funct3, .. } => atomic_instruction_id(*funct5, *funct3),
+        }
+    }
+
     pub fn mnemonic(&self) -> &'static str {
         match self {
             Self::Lui { .. } => "lui",
@@ -305,6 +435,110 @@ impl DecodedInsn {
                 _ => "amo??",
             },
         }
+    }
+}
+
+fn fp_instruction_id(funct5: u8, fmt: u8, rm: u8, rs2: usize) -> Option<InstructionId> {
+    use InstructionId as Id;
+
+    match (funct5, fmt, rm, rs2) {
+        (0b00000, 0, _, _) => Some(Id::FaddS),
+        (0b00000, 1, _, _) => Some(Id::FaddD),
+        (0b00001, 0, _, _) => Some(Id::FsubS),
+        (0b00001, 1, _, _) => Some(Id::FsubD),
+        (0b00010, 0, _, _) => Some(Id::FmulS),
+        (0b00010, 1, _, _) => Some(Id::FmulD),
+        (0b00011, 0, _, _) => Some(Id::FdivS),
+        (0b00011, 1, _, _) => Some(Id::FdivD),
+        (0b01011, 0, _, _) => Some(Id::FsqrtS),
+        (0b01011, 1, _, _) => Some(Id::FsqrtD),
+        (0b00100, 0, 0, _) => Some(Id::FsgnjS),
+        (0b00100, 1, 0, _) => Some(Id::FsgnjD),
+        (0b00100, 0, 1, _) => Some(Id::FsgnjnS),
+        (0b00100, 1, 1, _) => Some(Id::FsgnjnD),
+        (0b00100, 0, 2, _) => Some(Id::FsgnjxS),
+        (0b00100, 1, 2, _) => Some(Id::FsgnjxD),
+        (0b00101, 0, 0, _) => Some(Id::FminS),
+        (0b00101, 1, 0, _) => Some(Id::FminD),
+        (0b00101, 0, 1, _) => Some(Id::FmaxS),
+        (0b00101, 1, 1, _) => Some(Id::FmaxD),
+        (0b10100, 0, 0, _) => Some(Id::FleS),
+        (0b10100, 1, 0, _) => Some(Id::FleD),
+        (0b10100, 0, 1, _) => Some(Id::FltS),
+        (0b10100, 1, 1, _) => Some(Id::FltD),
+        (0b10100, 0, 2, _) => Some(Id::FeqS),
+        (0b10100, 1, 2, _) => Some(Id::FeqD),
+        (0b11000, 0, _, 0) => Some(Id::FcvtWS),
+        (0b11000, 0, _, 1) => Some(Id::FcvtWuS),
+        (0b11000, 0, _, 2) => Some(Id::FcvtLS),
+        (0b11000, 0, _, 3) => Some(Id::FcvtLuS),
+        (0b11000, 1, _, 0) => Some(Id::FcvtWD),
+        (0b11000, 1, _, 1) => Some(Id::FcvtWuD),
+        (0b11000, 1, _, 2) => Some(Id::FcvtLD),
+        (0b11000, 1, _, 3) => Some(Id::FcvtLuD),
+        (0b11010, 0, _, 0) => Some(Id::FcvtSW),
+        (0b11010, 0, _, 1) => Some(Id::FcvtSWu),
+        (0b11010, 0, _, 2) => Some(Id::FcvtSL),
+        (0b11010, 0, _, 3) => Some(Id::FcvtSLu),
+        (0b11010, 1, _, 0) => Some(Id::FcvtDW),
+        (0b11010, 1, _, 1) => Some(Id::FcvtDWu),
+        (0b11010, 1, _, 2) => Some(Id::FcvtDL),
+        (0b11010, 1, _, 3) => Some(Id::FcvtDLu),
+        (0b01000, 0, _, _) => Some(Id::FcvtSD),
+        (0b01001, 1, _, _) => Some(Id::FcvtDS),
+        (0b11100, 0, 0, _) => Some(Id::FmvXW),
+        (0b11100, 1, 0, _) => Some(Id::FmvXD),
+        (0b11100, 0, 1, _) => Some(Id::FclassS),
+        (0b11100, 1, 1, _) => Some(Id::FclassD),
+        (0b11110, 0, _, _) => Some(Id::FmvWX),
+        (0b11110, 1, _, _) => Some(Id::FmvDX),
+        _ => None,
+    }
+}
+
+fn fmac_instruction_id(op: &FMacOp, fmt: u8) -> Option<InstructionId> {
+    use InstructionId as Id;
+
+    match (op, fmt) {
+        (FMacOp::Fmadd, 0) => Some(Id::FmaddS),
+        (FMacOp::Fmadd, 1) => Some(Id::FmaddD),
+        (FMacOp::Fmsub, 0) => Some(Id::FmsubS),
+        (FMacOp::Fmsub, 1) => Some(Id::FmsubD),
+        (FMacOp::Fnmsub, 0) => Some(Id::FnmsubS),
+        (FMacOp::Fnmsub, 1) => Some(Id::FnmsubD),
+        (FMacOp::Fnmadd, 0) => Some(Id::FnmaddS),
+        (FMacOp::Fnmadd, 1) => Some(Id::FnmaddD),
+        _ => None,
+    }
+}
+
+fn atomic_instruction_id(funct5: u8, funct3: u8) -> Option<InstructionId> {
+    use InstructionId as Id;
+
+    match (funct5, funct3) {
+        (2, 2) => Some(Id::LrW),
+        (2, 3) => Some(Id::LrD),
+        (3, 2) => Some(Id::ScW),
+        (3, 3) => Some(Id::ScD),
+        (1, 2) => Some(Id::AmoswapW),
+        (1, 3) => Some(Id::AmoswapD),
+        (0, 2) => Some(Id::AmoaddW),
+        (0, 3) => Some(Id::AmoaddD),
+        (4, 2) => Some(Id::AmoxorW),
+        (4, 3) => Some(Id::AmoxorD),
+        (8, 2) => Some(Id::AmoorW),
+        (8, 3) => Some(Id::AmoorD),
+        (12, 2) => Some(Id::AmoandW),
+        (12, 3) => Some(Id::AmoandD),
+        (16, 2) => Some(Id::AmominW),
+        (16, 3) => Some(Id::AmominD),
+        (20, 2) => Some(Id::AmomaxW),
+        (20, 3) => Some(Id::AmomaxD),
+        (24, 2) => Some(Id::AmominuW),
+        (24, 3) => Some(Id::AmominuD),
+        (28, 2) => Some(Id::AmomaxuW),
+        (28, 3) => Some(Id::AmomaxuD),
+        _ => None,
     }
 }
 
@@ -915,4 +1149,64 @@ fn j_imm(word: u32) -> i64 {
     let bit11 = field(word, 20, 20) << 11;
     let bits10_1 = field(word, 30, 21) << 1;
     sign_ext(bit20 | bits19_12 | bit11 | bits10_1, 21)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DecodedInsn, FMacOp};
+    use riscv_model::InstructionId;
+
+    #[test]
+    fn decoded_operands_map_to_shared_instruction_identity() {
+        let add = DecodedInsn::Alu {
+            funct3: 0,
+            funct7: 0,
+            rd: 1,
+            rs1: 2,
+            rs2: 3,
+        };
+        let convert = DecodedInsn::FOp {
+            funct5: 0b11010,
+            fmt: 1,
+            rm: 0,
+            rd: 1,
+            rs1: 2,
+            rs2: 3,
+        };
+        let fused = DecodedInsn::FMac {
+            op: FMacOp::Fnmadd,
+            fmt: 0,
+            rm: 0,
+            rd: 1,
+            rs1: 2,
+            rs2: 3,
+            rs3: 4,
+        };
+        let atomic = DecodedInsn::Atomic {
+            funct5: 0,
+            aq: false,
+            rl: false,
+            funct3: 3,
+            rd: 1,
+            rs1: 2,
+            rs2: 3,
+        };
+
+        assert_eq!(add.instruction_id(), Some(InstructionId::Add));
+        assert_eq!(convert.instruction_id(), Some(InstructionId::FcvtDLu));
+        assert_eq!(fused.instruction_id(), Some(InstructionId::FnmaddS));
+        assert_eq!(atomic.instruction_id(), Some(InstructionId::AmoaddD));
+    }
+
+    #[test]
+    fn unsupported_selectors_have_no_instruction_identity() {
+        let branch = DecodedInsn::Branch {
+            funct3: 2,
+            rs1: 1,
+            rs2: 2,
+            imm: 4,
+        };
+
+        assert_eq!(branch.instruction_id(), None);
+    }
 }

@@ -235,7 +235,13 @@ let instruction = bus.read_word(phys_addr)
 
 **Outputs:**
 - `DecodedInsn`: Enum variant with parsed fields (rd, rs1, rs2, imm, funct3, etc.)
+- `InstructionId`: Canonical operation identity from the dependency-light `riscv-model` crate
 - **Error:** `IllegalInstruction(opcode)` if opcode is invalid
+
+`DecodedInsn` remains a VM-local operand carrier during the decoder migration. Operation identity
+and explicit integer/FP register-use classification are shared contracts owned by `riscv-model`.
+The pipeline uses that metadata for hazards and forwarding instead of deriving operation classes
+from decoder variant selectors.
 
 **Decode Categories:**
 - **R-type:** ALU operations (add, sub, mul, div, etc.)
@@ -253,11 +259,13 @@ let instruction = bus.read_word(phys_addr)
 
 ### 3.3 Execute Stage
 **Responsibility:** Perform arithmetic/logic operations, calculate addresses, evaluate branches.
+Architectural operation selection is keyed by the shared `InstructionId`; `DecodedInsn` supplies
+the extracted operands until shared decoding is introduced.
 
 **Inputs:**
 - `decoded`: Decoded instruction
-- `regs`: Register file (integer + FP)
-- `csrs`: CSR file
+- `operands`: Read-only integer/FP values with pipeline forwarding already applied
+- `csrs`: Read-only CSR file
 
 **Outputs:**
 - `ExecResult`: Enum describing operation outcome
@@ -270,6 +278,11 @@ let instruction = bus.read_word(phys_addr)
   - `Csr { funct3, rd, csr, operand, next_pc }` - CSR operation
   - `Ecall` / `Ebreak` - Environment calls
   - `Fence` / `FenceI` - Memory fences
+
+Execute is a pure state transition: it returns an `ExecResult` or fault and does not modify
+registers, CSRs, memory, or pipeline state. The pipeline supplies forwarded values through an
+operand view rather than temporarily overwriting architectural registers. Writeback remains the
+commit point for returned register and CSR effects.
 
 **ALU Operations:**
 - Integer: add, sub, sll, srl, sra, and, or, xor, slt, sltu

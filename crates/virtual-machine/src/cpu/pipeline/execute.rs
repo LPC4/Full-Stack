@@ -2,9 +2,75 @@
 
 use crate::cpu::alu::{self, RM_DYN};
 use crate::cpu::csr::CsrFile;
-use crate::cpu::decoder::{DecodedInsn, FMacOp};
+use crate::cpu::decoder::DecodedInsn;
 use crate::cpu::registers::Registers;
 use crate::error::VmError;
+use riscv_model::InstructionId;
+
+pub(crate) struct ExecuteOperands<'a> {
+    registers: &'a Registers,
+    rs1: (usize, u64),
+    rs2: (usize, u64),
+    frs1: (usize, u64),
+    frs2: (usize, u64),
+}
+
+impl<'a> ExecuteOperands<'a> {
+    pub(crate) fn new(
+        registers: &'a Registers,
+        rs1: (usize, u64),
+        rs2: (usize, u64),
+        frs1: (usize, u64),
+        frs2: (usize, u64),
+    ) -> Self {
+        Self {
+            registers,
+            rs1,
+            rs2,
+            frs1,
+            frs2,
+        }
+    }
+
+    fn read_x(&self, reg: usize) -> u64 {
+        if reg == 0 {
+            0
+        } else if reg == self.rs1.0 {
+            self.rs1.1
+        } else if reg == self.rs2.0 {
+            self.rs2.1
+        } else {
+            self.registers.read_x(reg)
+        }
+    }
+
+    fn read_f_bits(&self, reg: usize) -> u64 {
+        if reg == self.frs1.0 {
+            self.frs1.1
+        } else if reg == self.frs2.0 {
+            self.frs2.1
+        } else {
+            self.registers.read_f_bits(reg)
+        }
+    }
+
+    fn read_f32(&self, reg: usize) -> f32 {
+        let bits = self.read_f_bits(reg);
+        if bits & 0xFFFF_FFFF_0000_0000 != 0xFFFF_FFFF_0000_0000 {
+            f32::NAN
+        } else {
+            f32::from_bits(bits as u32)
+        }
+    }
+
+    fn read_f64(&self, reg: usize) -> f64 {
+        f64::from_bits(self.read_f_bits(reg))
+    }
+
+    fn privilege_mode(&self) -> crate::cpu::registers::PrivilegeMode {
+        self.registers.priv_mode
+    }
+}
 
 // --- Public result type ---
 
@@ -97,12 +163,14 @@ pub enum ExecResult {
 
 // --- Public entry point ---
 
-pub fn execute(
+pub(crate) fn execute(
     insn: &DecodedInsn,
-    regs: &Registers,
+    regs: &ExecuteOperands<'_>,
     csrs: &CsrFile,
     pc: u64,
 ) -> Result<ExecResult, VmError> {
+    let instruction_id = insn.instruction_id();
+
     match insn {
         DecodedInsn::Lui { rd, imm } => Ok(ExecResult::WriteInt {
             rd: *rd,
@@ -132,21 +200,16 @@ pub fn execute(
             })
         }
 
-        DecodedInsn::Branch {
-            funct3,
-            rs1,
-            rs2,
-            imm,
-        } => {
+        DecodedInsn::Branch { rs1, rs2, imm, .. } => {
             let lhs = regs.read_x(*rs1);
             let rhs = regs.read_x(*rs2);
-            let taken = match funct3 {
-                0 => lhs == rhs,
-                1 => lhs != rhs,
-                4 => (lhs as i64) < (rhs as i64),
-                5 => (lhs as i64) >= (rhs as i64),
-                6 => lhs < rhs,
-                7 => lhs >= rhs,
+            let taken = match instruction_id {
+                Some(InstructionId::Beq) => lhs == rhs,
+                Some(InstructionId::Bne) => lhs != rhs,
+                Some(InstructionId::Blt) => (lhs as i64) < (rhs as i64),
+                Some(InstructionId::Bge) => (lhs as i64) >= (rhs as i64),
+                Some(InstructionId::Bltu) => lhs < rhs,
+                Some(InstructionId::Bgeu) => lhs >= rhs,
                 _ => return Err(VmError::IllegalInstruction(0)),
             };
             let next_pc = if taken {
@@ -162,6 +225,7 @@ pub fn execute(
             rd,
             rs1,
             imm,
+            ..
         } => {
             let addr = regs.read_x(*rs1).wrapping_add(*imm as u64);
             Ok(ExecResult::Load {
@@ -190,35 +254,35 @@ pub fn execute(
 
         DecodedInsn::AluImm {
             funct3,
-            funct7,
             rd,
             rs1,
             imm,
-        } => exec_alu_imm(*funct3, *funct7, *rd, *rs1, *imm, regs, pc),
+            ..
+        } => exec_alu_imm(instruction_id, *funct3, *rd, *rs1, *imm, regs, pc),
 
         DecodedInsn::AluImm32 {
             funct3,
-            funct7,
             rd,
             rs1,
             imm,
-        } => exec_alu_imm32(*funct3, *funct7, *rd, *rs1, *imm, regs, pc),
+            ..
+        } => exec_alu_imm32(instruction_id, *funct3, *rd, *rs1, *imm, regs, pc),
 
         DecodedInsn::Alu {
             funct3,
-            funct7,
             rd,
             rs1,
             rs2,
-        } => exec_alu(*funct3, *funct7, *rd, *rs1, *rs2, regs, pc),
+            ..
+        } => exec_alu(instruction_id, *funct3, *rd, *rs1, *rs2, regs, pc),
 
         DecodedInsn::Alu32 {
             funct3,
-            funct7,
             rd,
             rs1,
             rs2,
-        } => exec_alu32(*funct3, *funct7, *rd, *rs1, *rs2, regs, pc),
+            ..
+        } => exec_alu32(instruction_id, *funct3, *rd, *rs1, *rs2, regs, pc),
 
         DecodedInsn::Fence { .. } => Ok(ExecResult::Fence {
             next_pc: pc.wrapping_add(4),
@@ -250,21 +314,30 @@ pub fn execute(
         } => {
             // CSR address bits [9:8] encode the minimum privilege required (0=U,1=S,3=M).
             let required_priv = ((*csr as u64) >> 8) & 0x3;
-            if (regs.priv_mode as u64) < required_priv {
+            if (regs.privilege_mode() as u64) < required_priv {
                 return Err(VmError::IllegalInstruction(*csr as u32));
             }
             // Bits [11:10] == 0b11 marks a read-only CSR; writes are illegal.
-            let is_write = match funct3 {
-                1 | 5 => true,
-                2 | 3 | 6 | 7 => *rs1_uimm != 0,
+            let is_write = match instruction_id {
+                Some(InstructionId::Csrrw | InstructionId::Csrrwi) => true,
+                Some(
+                    InstructionId::Csrrs
+                    | InstructionId::Csrrc
+                    | InstructionId::Csrrsi
+                    | InstructionId::Csrrci,
+                ) => *rs1_uimm != 0,
                 _ => false,
             };
             if is_write && ((*csr as u64) >> 10) & 0x3 == 0x3 {
                 return Err(VmError::IllegalInstruction(*csr as u32));
             }
-            let operand = match funct3 {
-                1..=3 => regs.read_x(*rs1_uimm),
-                5..=7 => *rs1_uimm as u64,
+            let operand = match instruction_id {
+                Some(InstructionId::Csrrw | InstructionId::Csrrs | InstructionId::Csrrc) => {
+                    regs.read_x(*rs1_uimm)
+                }
+                Some(InstructionId::Csrrwi | InstructionId::Csrrsi | InstructionId::Csrrci) => {
+                    *rs1_uimm as u64
+                }
                 _ => return Err(VmError::IllegalInstruction(*funct3 as u32)),
             };
             let old_val = csrs.read(*csr).unwrap_or(0);
@@ -317,17 +390,39 @@ pub fn execute(
             rd,
             rs1,
             rs2,
-        } => exec_fp_op(*funct5, *fmt, *rm, *rd, *rs1, *rs2, regs, csrs, pc),
+        } => exec_fp_op(
+            instruction_id,
+            *funct5,
+            *fmt,
+            *rm,
+            *rd,
+            *rs1,
+            *rs2,
+            regs,
+            csrs,
+            pc,
+        ),
 
         DecodedInsn::FMac {
-            op,
             fmt,
             rm,
             rd,
             rs1,
             rs2,
             rs3,
-        } => exec_fmac(op, *fmt, *rm, *rd, *rs1, *rs2, *rs3, regs, csrs, pc),
+            ..
+        } => exec_fmac(
+            instruction_id,
+            *fmt,
+            *rm,
+            *rd,
+            *rs1,
+            *rs2,
+            *rs3,
+            regs,
+            csrs,
+            pc,
+        ),
 
         DecodedInsn::Atomic {
             funct5,
@@ -357,32 +452,26 @@ pub fn execute(
 // --- ALU helpers ---
 
 fn exec_alu_imm(
+    instruction_id: Option<InstructionId>,
     funct3: u8,
-    funct7: u8,
     rd: usize,
     rs1: usize,
     imm: i64,
-    regs: &Registers,
+    regs: &ExecuteOperands<'_>,
     pc: u64,
 ) -> Result<ExecResult, VmError> {
     let val = regs.read_x(rs1);
     let imm_u = imm as u64;
-    let result = match funct3 {
-        0 => alu::add(val, imm_u),
-        1 => alu::sll(val, (imm & 63) as u64),
-        2 => alu::slt(val, imm_u),
-        3 => alu::sltu(val, imm_u),
-        4 => alu::xor(val, imm_u),
-        5 => {
-            let shamt = (imm & 63) as u64;
-            if funct7 & 0x20 != 0 {
-                alu::sra(val, shamt)
-            } else {
-                alu::srl(val, shamt)
-            }
-        }
-        6 => alu::or(val, imm_u),
-        7 => alu::and(val, imm_u),
+    let result = match instruction_id {
+        Some(InstructionId::Addi) => alu::add(val, imm_u),
+        Some(InstructionId::Slli) => alu::sll(val, (imm & 63) as u64),
+        Some(InstructionId::Slti) => alu::slt(val, imm_u),
+        Some(InstructionId::Sltiu) => alu::sltu(val, imm_u),
+        Some(InstructionId::Xori) => alu::xor(val, imm_u),
+        Some(InstructionId::Srli) => alu::srl(val, (imm & 63) as u64),
+        Some(InstructionId::Srai) => alu::sra(val, (imm & 63) as u64),
+        Some(InstructionId::Ori) => alu::or(val, imm_u),
+        Some(InstructionId::Andi) => alu::and(val, imm_u),
         _ => return Err(VmError::IllegalInstruction(funct3 as u32)),
     };
     Ok(ExecResult::WriteInt {
@@ -393,26 +482,20 @@ fn exec_alu_imm(
 }
 
 fn exec_alu_imm32(
+    instruction_id: Option<InstructionId>,
     funct3: u8,
-    funct7: u8,
     rd: usize,
     rs1: usize,
     imm: i64,
-    regs: &Registers,
+    regs: &ExecuteOperands<'_>,
     pc: u64,
 ) -> Result<ExecResult, VmError> {
     let val = regs.read_x(rs1);
-    let result = match funct3 {
-        0 => alu::addw(val, imm as u64),
-        1 => alu::sllw(val, (imm & 31) as u64),
-        5 => {
-            let shamt = (imm & 31) as u64;
-            if funct7 & 0x20 != 0 {
-                alu::sraw(val, shamt)
-            } else {
-                alu::srlw(val, shamt)
-            }
-        }
+    let result = match instruction_id {
+        Some(InstructionId::Addiw) => alu::addw(val, imm as u64),
+        Some(InstructionId::Slliw) => alu::sllw(val, (imm & 31) as u64),
+        Some(InstructionId::Srliw) => alu::srlw(val, (imm & 31) as u64),
+        Some(InstructionId::Sraiw) => alu::sraw(val, (imm & 31) as u64),
         _ => return Err(VmError::IllegalInstruction(funct3 as u32)),
     };
     Ok(ExecResult::WriteInt {
@@ -423,45 +506,36 @@ fn exec_alu_imm32(
 }
 
 fn exec_alu(
+    instruction_id: Option<InstructionId>,
     funct3: u8,
-    funct7: u8,
     rd: usize,
     rs1: usize,
     rs2: usize,
-    regs: &Registers,
+    regs: &ExecuteOperands<'_>,
     pc: u64,
 ) -> Result<ExecResult, VmError> {
     let a = regs.read_x(rs1);
     let b = regs.read_x(rs2);
-    let result = match funct7 {
-        0x00 => match funct3 {
-            0 => alu::add(a, b),
-            1 => alu::sll(a, b),
-            2 => alu::slt(a, b),
-            3 => alu::sltu(a, b),
-            4 => alu::xor(a, b),
-            5 => alu::srl(a, b),
-            6 => alu::or(a, b),
-            7 => alu::and(a, b),
-            _ => return Err(VmError::IllegalInstruction(funct3 as u32)),
-        },
-        0x20 => match funct3 {
-            0 => alu::sub(a, b),
-            5 => alu::sra(a, b),
-            _ => return Err(VmError::IllegalInstruction(funct3 as u32)),
-        },
-        0x01 => match funct3 {
-            0 => alu::mul(a, b),
-            1 => alu::mulh(a, b),
-            2 => alu::mulhsu(a, b),
-            3 => alu::mulhu(a, b),
-            4 => alu::div(a, b),
-            5 => alu::divu(a, b),
-            6 => alu::rem(a, b),
-            7 => alu::remu(a, b),
-            _ => return Err(VmError::IllegalInstruction(funct3 as u32)),
-        },
-        _ => return Err(VmError::IllegalInstruction(funct7 as u32)),
+    let result = match instruction_id {
+        Some(InstructionId::Add) => alu::add(a, b),
+        Some(InstructionId::Sub) => alu::sub(a, b),
+        Some(InstructionId::Sll) => alu::sll(a, b),
+        Some(InstructionId::Slt) => alu::slt(a, b),
+        Some(InstructionId::Sltu) => alu::sltu(a, b),
+        Some(InstructionId::Xor) => alu::xor(a, b),
+        Some(InstructionId::Srl) => alu::srl(a, b),
+        Some(InstructionId::Sra) => alu::sra(a, b),
+        Some(InstructionId::Or) => alu::or(a, b),
+        Some(InstructionId::And) => alu::and(a, b),
+        Some(InstructionId::Mul) => alu::mul(a, b),
+        Some(InstructionId::Mulh) => alu::mulh(a, b),
+        Some(InstructionId::Mulhsu) => alu::mulhsu(a, b),
+        Some(InstructionId::Mulhu) => alu::mulhu(a, b),
+        Some(InstructionId::Div) => alu::div(a, b),
+        Some(InstructionId::Divu) => alu::divu(a, b),
+        Some(InstructionId::Rem) => alu::rem(a, b),
+        Some(InstructionId::Remu) => alu::remu(a, b),
+        _ => return Err(VmError::IllegalInstruction(funct3 as u32)),
     };
     Ok(ExecResult::WriteInt {
         rd,
@@ -471,37 +545,28 @@ fn exec_alu(
 }
 
 fn exec_alu32(
+    instruction_id: Option<InstructionId>,
     funct3: u8,
-    funct7: u8,
     rd: usize,
     rs1: usize,
     rs2: usize,
-    regs: &Registers,
+    regs: &ExecuteOperands<'_>,
     pc: u64,
 ) -> Result<ExecResult, VmError> {
     let a = regs.read_x(rs1);
     let b = regs.read_x(rs2);
-    let result = match funct7 {
-        0x00 => match funct3 {
-            0 => alu::addw(a, b),
-            1 => alu::sllw(a, b),
-            5 => alu::srlw(a, b),
-            _ => return Err(VmError::IllegalInstruction(funct3 as u32)),
-        },
-        0x20 => match funct3 {
-            0 => alu::subw(a, b),
-            5 => alu::sraw(a, b),
-            _ => return Err(VmError::IllegalInstruction(funct3 as u32)),
-        },
-        0x01 => match funct3 {
-            0 => alu::mulw(a, b),
-            4 => alu::divw(a, b),
-            5 => alu::divuw(a, b),
-            6 => alu::remw(a, b),
-            7 => alu::remuw(a, b),
-            _ => return Err(VmError::IllegalInstruction(funct3 as u32)),
-        },
-        _ => return Err(VmError::IllegalInstruction(funct7 as u32)),
+    let result = match instruction_id {
+        Some(InstructionId::Addw) => alu::addw(a, b),
+        Some(InstructionId::Subw) => alu::subw(a, b),
+        Some(InstructionId::Sllw) => alu::sllw(a, b),
+        Some(InstructionId::Srlw) => alu::srlw(a, b),
+        Some(InstructionId::Sraw) => alu::sraw(a, b),
+        Some(InstructionId::Mulw) => alu::mulw(a, b),
+        Some(InstructionId::Divw) => alu::divw(a, b),
+        Some(InstructionId::Divuw) => alu::divuw(a, b),
+        Some(InstructionId::Remw) => alu::remw(a, b),
+        Some(InstructionId::Remuw) => alu::remuw(a, b),
+        _ => return Err(VmError::IllegalInstruction(funct3 as u32)),
     };
     Ok(ExecResult::WriteInt {
         rd,
@@ -513,13 +578,14 @@ fn exec_alu32(
 // --- FP helpers ---
 
 fn exec_fp_op(
+    instruction_id: Option<InstructionId>,
     funct5: u8,
     fmt: u8,
     rm: u8,
     rd: usize,
     rs1: usize,
     rs2: usize,
-    regs: &Registers,
+    regs: &ExecuteOperands<'_>,
     csrs: &CsrFile,
     pc: u64,
 ) -> Result<ExecResult, VmError> {
@@ -531,9 +597,9 @@ fn exec_fp_op(
     };
     let next_pc = pc.wrapping_add(4);
 
-    match funct5 {
+    match instruction_id {
         // FADD
-        0b00000 => {
+        Some(InstructionId::FaddS | InstructionId::FaddD) => {
             let (bits, fflags) = match fmt {
                 0 => alu::fp_add_s(regs.read_f32(rs1), regs.read_f32(rs2), rm),
                 1 => alu::fp_add_d(regs.read_f64(rs1), regs.read_f64(rs2), rm),
@@ -547,7 +613,7 @@ fn exec_fp_op(
             })
         }
         // FSUB
-        0b00001 => {
+        Some(InstructionId::FsubS | InstructionId::FsubD) => {
             let (bits, fflags) = match fmt {
                 0 => alu::fp_sub_s(regs.read_f32(rs1), regs.read_f32(rs2), rm),
                 1 => alu::fp_sub_d(regs.read_f64(rs1), regs.read_f64(rs2), rm),
@@ -561,7 +627,7 @@ fn exec_fp_op(
             })
         }
         // FMUL
-        0b00010 => {
+        Some(InstructionId::FmulS | InstructionId::FmulD) => {
             let (bits, fflags) = match fmt {
                 0 => alu::fp_mul_s(regs.read_f32(rs1), regs.read_f32(rs2), rm),
                 1 => alu::fp_mul_d(regs.read_f64(rs1), regs.read_f64(rs2), rm),
@@ -575,7 +641,7 @@ fn exec_fp_op(
             })
         }
         // FDIV
-        0b00011 => {
+        Some(InstructionId::FdivS | InstructionId::FdivD) => {
             let (bits, fflags) = match fmt {
                 0 => alu::fp_div_s(regs.read_f32(rs1), regs.read_f32(rs2), rm),
                 1 => alu::fp_div_d(regs.read_f64(rs1), regs.read_f64(rs2), rm),
@@ -589,7 +655,7 @@ fn exec_fp_op(
             })
         }
         // FSQRT
-        0b01011 => {
+        Some(InstructionId::FsqrtS | InstructionId::FsqrtD) => {
             let (bits, fflags) = match fmt {
                 0 => alu::fp_sqrt_s(regs.read_f32(rs1), rm),
                 1 => alu::fp_sqrt_d(regs.read_f64(rs1), rm),
@@ -603,7 +669,14 @@ fn exec_fp_op(
             })
         }
         // FSGNJ family
-        0b00100 => {
+        Some(
+            InstructionId::FsgnjS
+            | InstructionId::FsgnjD
+            | InstructionId::FsgnjnS
+            | InstructionId::FsgnjnD
+            | InstructionId::FsgnjxS
+            | InstructionId::FsgnjxD,
+        ) => {
             let bits = match fmt {
                 0 => match rm {
                     0 => alu::fp_sgnj_s(regs.read_f32(rs1), regs.read_f32(rs2)),
@@ -622,7 +695,12 @@ fn exec_fp_op(
             Ok(ExecResult::WriteFp { rd, bits, next_pc })
         }
         // FMIN/FMAX
-        0b00101 => {
+        Some(
+            InstructionId::FminS
+            | InstructionId::FminD
+            | InstructionId::FmaxS
+            | InstructionId::FmaxD,
+        ) => {
             let (bits, fflags) = match fmt {
                 0 => match rm {
                     0 => alu::fp_min_s(regs.read_f32(rs1), regs.read_f32(rs2)),
@@ -644,7 +722,14 @@ fn exec_fp_op(
             })
         }
         // FCMP: FLE/FLT/FEQ
-        0b10100 => {
+        Some(
+            InstructionId::FleS
+            | InstructionId::FleD
+            | InstructionId::FltS
+            | InstructionId::FltD
+            | InstructionId::FeqS
+            | InstructionId::FeqD,
+        ) => {
             let (val, fflags) = match fmt {
                 0 => match rm {
                     0 => alu::fp_fle_s(regs.read_f32(rs1), regs.read_f32(rs2)),
@@ -668,7 +753,16 @@ fn exec_fp_op(
             })
         }
         // FCVT.{W,WU,L,LU}.{S,D} , FP -> int
-        0b11000 => {
+        Some(
+            InstructionId::FcvtWS
+            | InstructionId::FcvtWuS
+            | InstructionId::FcvtLS
+            | InstructionId::FcvtLuS
+            | InstructionId::FcvtWD
+            | InstructionId::FcvtWuD
+            | InstructionId::FcvtLD
+            | InstructionId::FcvtLuD,
+        ) => {
             let (val, fflags) = match fmt {
                 0 => {
                     let v = regs.read_f32(rs1);
@@ -700,7 +794,16 @@ fn exec_fp_op(
             })
         }
         // FCVT.{S,D}.{W,WU,L,LU} , int -> FP
-        0b11010 => {
+        Some(
+            InstructionId::FcvtSW
+            | InstructionId::FcvtSWu
+            | InstructionId::FcvtSL
+            | InstructionId::FcvtSLu
+            | InstructionId::FcvtDW
+            | InstructionId::FcvtDWu
+            | InstructionId::FcvtDL
+            | InstructionId::FcvtDLu,
+        ) => {
             let src = regs.read_x(rs1);
             let (bits, fflags) = match fmt {
                 0 => {
@@ -742,7 +845,7 @@ fn exec_fp_op(
             })
         }
         // FCVT.S.D (fmt=0, rs2=1), convert f64 -> f32 with rounding + flags
-        0b01000 => {
+        Some(InstructionId::FcvtSD) => {
             if fmt != 0 {
                 return Err(VmError::IllegalInstruction(funct5 as u32));
             }
@@ -756,7 +859,7 @@ fn exec_fp_op(
             })
         }
         // FCVT.D.S (fmt=1, rs2=0), convert f32 -> f64; exact, no flags
-        0b01001 => {
+        Some(InstructionId::FcvtDS) => {
             if fmt != 1 {
                 return Err(VmError::IllegalInstruction(funct5 as u32));
             }
@@ -771,7 +874,12 @@ fn exec_fp_op(
             })
         }
         // FMV.X.W/D and FCLASS
-        0b11100 => {
+        Some(
+            InstructionId::FmvXW
+            | InstructionId::FmvXD
+            | InstructionId::FclassS
+            | InstructionId::FclassD,
+        ) => {
             match rm {
                 0 => {
                     // FMV.X.{W,D}
@@ -802,7 +910,7 @@ fn exec_fp_op(
             }
         }
         // FMV.{W,D}.X
-        0b11110 => {
+        Some(InstructionId::FmvWX | InstructionId::FmvDX) => {
             let src = regs.read_x(rs1);
             let bits = match fmt {
                 0 => 0xFFFF_FFFF_0000_0000u64 | (src & 0xFFFF_FFFF),
@@ -816,14 +924,14 @@ fn exec_fp_op(
 }
 
 fn exec_fmac(
-    op: &FMacOp,
+    instruction_id: Option<InstructionId>,
     fmt: u8,
     rm: u8,
     rd: usize,
     rs1: usize,
     rs2: usize,
     rs3: usize,
-    regs: &Registers,
+    regs: &ExecuteOperands<'_>,
     csrs: &CsrFile,
     pc: u64,
 ) -> Result<ExecResult, VmError> {
@@ -839,22 +947,24 @@ fn exec_fmac(
             let a = regs.read_f32(rs1);
             let b = regs.read_f32(rs2);
             let c = regs.read_f32(rs3);
-            match op {
-                FMacOp::Fmadd => alu::fp_fmadd_s(a, b, c, rm),
-                FMacOp::Fmsub => alu::fp_fmsub_s(a, b, c, rm),
-                FMacOp::Fnmsub => alu::fp_fnmsub_s(a, b, c, rm),
-                FMacOp::Fnmadd => alu::fp_fnmadd_s(a, b, c, rm),
+            match instruction_id {
+                Some(InstructionId::FmaddS) => alu::fp_fmadd_s(a, b, c, rm),
+                Some(InstructionId::FmsubS) => alu::fp_fmsub_s(a, b, c, rm),
+                Some(InstructionId::FnmsubS) => alu::fp_fnmsub_s(a, b, c, rm),
+                Some(InstructionId::FnmaddS) => alu::fp_fnmadd_s(a, b, c, rm),
+                _ => return Err(VmError::IllegalInstruction(fmt as u32)),
             }
         }
         1 => {
             let a = regs.read_f64(rs1);
             let b = regs.read_f64(rs2);
             let c = regs.read_f64(rs3);
-            match op {
-                FMacOp::Fmadd => alu::fp_fmadd_d(a, b, c, rm),
-                FMacOp::Fmsub => alu::fp_fmsub_d(a, b, c, rm),
-                FMacOp::Fnmsub => alu::fp_fnmsub_d(a, b, c, rm),
-                FMacOp::Fnmadd => alu::fp_fnmadd_d(a, b, c, rm),
+            match instruction_id {
+                Some(InstructionId::FmaddD) => alu::fp_fmadd_d(a, b, c, rm),
+                Some(InstructionId::FmsubD) => alu::fp_fmsub_d(a, b, c, rm),
+                Some(InstructionId::FnmsubD) => alu::fp_fnmsub_d(a, b, c, rm),
+                Some(InstructionId::FnmaddD) => alu::fp_fnmadd_d(a, b, c, rm),
+                _ => return Err(VmError::IllegalInstruction(fmt as u32)),
             }
         }
         _ => return Err(VmError::IllegalInstruction(fmt as u32)),
@@ -995,4 +1105,94 @@ fn sat_f64_to_u64(val: f64, rm: u8) -> (u64, u8) {
     }
     let flags = if val != rounded { NX } else { 0 };
     (rounded as u64, flags)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn forwarded_integer_operands_do_not_mutate_registers() {
+        let mut registers = Registers::new();
+        registers.write_x(1, 10);
+        registers.write_x(2, 20);
+        let operands = ExecuteOperands::new(&registers, (1, 40), (2, 2), (0, 0), (0, 0));
+        let csrs = CsrFile::new();
+        let insn = DecodedInsn::Alu {
+            funct3: 0,
+            funct7: 0,
+            rd: 3,
+            rs1: 1,
+            rs2: 2,
+        };
+
+        let result = execute(&insn, &operands, &csrs, 0x1000).expect("valid add");
+
+        assert!(matches!(
+            result,
+            ExecResult::WriteInt {
+                rd: 3,
+                val: 42,
+                next_pc: 0x1004
+            }
+        ));
+        assert_eq!(registers.read_x(1), 10);
+        assert_eq!(registers.read_x(2), 20);
+    }
+
+    #[test]
+    fn forwarded_fp_operands_do_not_mutate_registers() {
+        let mut registers = Registers::new();
+        registers.write_f64(1, 10.0);
+        registers.write_f64(2, 20.0);
+        let operands = ExecuteOperands::new(
+            &registers,
+            (0, 0),
+            (0, 0),
+            (1, 1.5f64.to_bits()),
+            (2, 2.25f64.to_bits()),
+        );
+        let csrs = CsrFile::new();
+        let insn = DecodedInsn::FOp {
+            funct5: 0,
+            fmt: 1,
+            rm: 0,
+            rd: 3,
+            rs1: 1,
+            rs2: 2,
+        };
+
+        let result = execute(&insn, &operands, &csrs, 0x2000).expect("valid fadd.d");
+
+        assert!(matches!(
+            result,
+            ExecResult::WriteFpFlags {
+                rd: 3,
+                bits,
+                next_pc: 0x2004,
+                ..
+            } if bits == 3.75f64.to_bits()
+        ));
+        assert_eq!(registers.read_f64(1), 10.0);
+        assert_eq!(registers.read_f64(2), 20.0);
+    }
+
+    #[test]
+    fn x0_stays_zero_when_an_operand_slot_targets_it() {
+        let registers = Registers::new();
+        let operands =
+            ExecuteOperands::new(&registers, (0, u64::MAX), (0, u64::MAX), (0, 0), (0, 0));
+        let csrs = CsrFile::new();
+        let insn = DecodedInsn::AluImm {
+            funct3: 0,
+            funct7: 0,
+            rd: 1,
+            rs1: 0,
+            imm: 7,
+        };
+
+        let result = execute(&insn, &operands, &csrs, 0).expect("valid addi");
+
+        assert!(matches!(result, ExecResult::WriteInt { val: 7, .. }));
+    }
 }

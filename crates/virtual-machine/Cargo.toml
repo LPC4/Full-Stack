@@ -11,6 +11,7 @@ path = "src/lib.rs"
 [dependencies]
 os_runtime    = { path = "../os-runtime" }
 asm_to_binary = { path = "../asm-to-binary" }
+riscv_model   = { path = "../riscv-model" }
 
 [lints]
 workspace = true

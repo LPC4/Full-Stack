@@ -15,11 +15,11 @@ use crate::cpu::architectural::ArchitecturalState;
 use crate::cpu::csr::CsrSnapshot;
 use crate::cpu::decoder::{DecodedInsn, decode as decode_insn};
 use crate::cpu::hazard_unit::{
-    compute_forwarding, insn_is_atomic, insn_is_fp_dest, insn_is_load, insn_rd, insn_rs1, insn_rs2,
-    load_use_hazard,
+    compute_forwarding, insn_frs1, insn_frs2, insn_is_atomic, insn_is_fp_dest, insn_is_load,
+    insn_rd, insn_rs1, insn_rs2, load_use_hazard,
 };
 use crate::cpu::mmu;
-use crate::cpu::pipeline::execute::ExecResult;
+use crate::cpu::pipeline::execute::{ExecResult, ExecuteOperands};
 use crate::cpu::pipeline::memory::MemResult;
 use crate::cpu::pipeline::registers::{EXMEMReg, IDEXReg, IFIDReg, MEMWBReg};
 use crate::cpu::predictor::BranchPredictor;
@@ -475,23 +475,15 @@ impl Pipeline {
         let rd = insn_rd(&insn);
         let is_fp_dest = insn_is_fp_dest(&insn);
         let is_load = insn_is_load(&insn);
-        let is_fp_load = matches!(insn, DecodedInsn::FLoad { .. });
+        let is_fp_load = is_load && is_fp_dest;
 
         // Detect MRET/SRET to prevent speculative fetch past these instructions
         if matches!(insn, DecodedInsn::Mret | DecodedInsn::Sret) {
             self.mret_in_flight = true;
         }
 
-        let (frs1, frs2) = match &insn {
-            DecodedInsn::FStore { rs2, .. } => (rs1, *rs2),
-            DecodedInsn::FOp {
-                rs1: r1, rs2: r2, ..
-            } => (*r1, *r2),
-            DecodedInsn::FMac {
-                rs1: r1, rs2: r2, ..
-            } => (*r1, *r2),
-            _ => (0, 0),
-        };
+        let frs1 = insn_frs1(&insn);
+        let frs2 = insn_frs2(&insn);
 
         Ok(Some(IDEXReg {
             pc: if_id.pc,
@@ -527,42 +519,15 @@ impl Pipeline {
 
         let fwd = compute_forwarding(old_ex_mem, old_mem_wb, id_ex);
 
-        let save_x_rs1 = self.architectural.registers().read_x(id_ex.rs1);
-        let save_x_rs2 = self.architectural.registers().read_x(id_ex.rs2);
-        let save_f_rs1 = self.architectural.registers().read_f_bits(id_ex.frs1);
-        let save_f_rs2 = self.architectural.registers().read_f_bits(id_ex.frs2);
-        self.architectural
-            .registers_mut()
-            .write_x(id_ex.rs1, fwd.rs1);
-        self.architectural
-            .registers_mut()
-            .write_x(id_ex.rs2, fwd.rs2);
-        self.architectural
-            .registers_mut()
-            .write_f_bits(id_ex.frs1, fwd.frs1);
-        self.architectural
-            .registers_mut()
-            .write_f_bits(id_ex.frs2, fwd.frs2);
-
-        let exec_result = execute::execute(
-            &id_ex.insn,
+        let operands = ExecuteOperands::new(
             self.architectural.registers(),
-            self.architectural.csrs(),
-            id_ex.pc,
+            (id_ex.rs1, fwd.rs1),
+            (id_ex.rs2, fwd.rs2),
+            (id_ex.frs1, fwd.frs1),
+            (id_ex.frs2, fwd.frs2),
         );
-
-        self.architectural
-            .registers_mut()
-            .write_x(id_ex.rs1, save_x_rs1);
-        self.architectural
-            .registers_mut()
-            .write_x(id_ex.rs2, save_x_rs2);
-        self.architectural
-            .registers_mut()
-            .write_f_bits(id_ex.frs1, save_f_rs1);
-        self.architectural
-            .registers_mut()
-            .write_f_bits(id_ex.frs2, save_f_rs2);
+        let exec_result =
+            execute::execute(&id_ex.insn, &operands, self.architectural.csrs(), id_ex.pc);
 
         let exec_result = match exec_result {
             Ok(r) => r,

@@ -2,6 +2,7 @@
 members = [
     "crates/fs-utils",
     "crates/os-runtime",
+    "crates/riscv-model",
     "crates/asm-to-binary",
     "crates/virtual-machine",
     "crates/hll-to-ir",

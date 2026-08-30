@@ -3,11 +3,19 @@
 
 use crate::cpu::decoder::DecodedInsn;
 use crate::cpu::pipeline::registers::{EXMEMReg, IDEXReg, MEMWBReg};
+use riscv_model::RegisterFile;
 
 // --- Register-number extraction helpers ---
 
 /// Destination register (integer or FP) of a decoded instruction; 0 = none.
 pub fn insn_rd(insn: &DecodedInsn) -> usize {
+    if insn
+        .instruction_id()
+        .is_none_or(|id| id.register_use().destination.is_none())
+    {
+        return 0;
+    }
+
     match insn {
         DecodedInsn::Lui { rd, .. }
         | DecodedInsn::Auipc { rd, .. }
@@ -29,6 +37,13 @@ pub fn insn_rd(insn: &DecodedInsn) -> usize {
 
 /// First integer source register of a decoded instruction; 0 = none.
 pub fn insn_rs1(insn: &DecodedInsn) -> usize {
+    if insn
+        .instruction_id()
+        .is_none_or(|id| id.register_use().source1 != Some(RegisterFile::Integer))
+    {
+        return 0;
+    }
+
     match insn {
         DecodedInsn::Jalr { rs1, .. }
         | DecodedInsn::Branch { rs1, .. }
@@ -41,10 +56,8 @@ pub fn insn_rs1(insn: &DecodedInsn) -> usize {
         | DecodedInsn::FLoad { rs1, .. }
         | DecodedInsn::FStore { rs1, .. }
         | DecodedInsn::FOp { rs1, .. }
-        | DecodedInsn::FMac { rs1, .. }
         | DecodedInsn::Atomic { rs1, .. } => *rs1,
-        // CSR immediate variants (funct3 5-7) carry a literal here; execute ignores the
-        // bogus forward and save/restore undoes it, so returning unconditionally is safe.
+        // CSR immediate variants carry a literal here; execute ignores the forwarded slot.
         DecodedInsn::Csr { rs1_uimm, .. } => *rs1_uimm,
         _ => 0,
     }
@@ -52,37 +65,70 @@ pub fn insn_rs1(insn: &DecodedInsn) -> usize {
 
 /// Second integer source register of a decoded instruction; 0 = none.
 pub fn insn_rs2(insn: &DecodedInsn) -> usize {
+    if insn
+        .instruction_id()
+        .is_none_or(|id| id.register_use().source2 != Some(RegisterFile::Integer))
+    {
+        return 0;
+    }
+
     match insn {
         DecodedInsn::Branch { rs2, .. }
         | DecodedInsn::Store { rs2, .. }
         | DecodedInsn::Alu { rs2, .. }
         | DecodedInsn::Alu32 { rs2, .. }
-        | DecodedInsn::FStore { rs2, .. }
-        | DecodedInsn::FOp { rs2, .. }
-        | DecodedInsn::FMac { rs2, .. }
         | DecodedInsn::Atomic { rs2, .. } => *rs2,
+        _ => 0,
+    }
+}
+
+/// First floating-point source register of a decoded instruction; 0 = none.
+pub fn insn_frs1(insn: &DecodedInsn) -> usize {
+    if insn
+        .instruction_id()
+        .is_none_or(|id| id.register_use().source1 != Some(RegisterFile::FloatingPoint))
+    {
+        return 0;
+    }
+
+    match insn {
+        DecodedInsn::FOp { rs1, .. } | DecodedInsn::FMac { rs1, .. } => *rs1,
+        _ => 0,
+    }
+}
+
+/// Second floating-point source register of a decoded instruction; 0 = none.
+pub fn insn_frs2(insn: &DecodedInsn) -> usize {
+    if insn
+        .instruction_id()
+        .is_none_or(|id| id.register_use().source2 != Some(RegisterFile::FloatingPoint))
+    {
+        return 0;
+    }
+
+    match insn {
+        DecodedInsn::FStore { rs2, .. }
+        | DecodedInsn::FOp { rs2, .. }
+        | DecodedInsn::FMac { rs2, .. } => *rs2,
         _ => 0,
     }
 }
 
 /// True when the instruction is a (potentially FP) memory load.
 pub fn insn_is_load(insn: &DecodedInsn) -> bool {
-    matches!(insn, DecodedInsn::Load { .. } | DecodedInsn::FLoad { .. })
+    insn.instruction_id().is_some_and(|id| id.is_load())
 }
 
 /// True when the instruction is an atomic (acts as load for hazard purposes).
 pub fn insn_is_atomic(insn: &DecodedInsn) -> bool {
-    matches!(insn, DecodedInsn::Atomic { .. })
+    insn.instruction_id().is_some_and(|id| id.is_atomic())
 }
 
 /// True when the destination is an FP register. FP-to-int converts, compares, and
 /// `fmv.x`/`fclass` (funct5 below) write integer rd; FP-forwarding those starves the consumer.
 pub fn insn_is_fp_dest(insn: &DecodedInsn) -> bool {
-    match insn {
-        DecodedInsn::FLoad { .. } | DecodedInsn::FMac { .. } => true,
-        DecodedInsn::FOp { funct5, .. } => !matches!(*funct5, 0b11000 | 0b10100 | 0b11100),
-        _ => false,
-    }
+    insn.instruction_id()
+        .is_some_and(|id| id.register_use().destination == Some(RegisterFile::FloatingPoint))
 }
 
 // --- Load-use hazard detection ---
@@ -171,5 +217,37 @@ pub fn compute_forwarding(
         rs2,
         frs1,
         frs2,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{insn_frs1, insn_frs2, insn_is_fp_dest, insn_rs1, insn_rs2};
+    use crate::cpu::decoder::DecodedInsn;
+
+    #[test]
+    fn shared_metadata_selects_integer_and_fp_operand_files() {
+        let store = DecodedInsn::FStore {
+            funct3: 3,
+            rs1: 4,
+            rs2: 5,
+            imm: 0,
+        };
+        assert_eq!(insn_rs1(&store), 4);
+        assert_eq!(insn_rs2(&store), 0);
+        assert_eq!(insn_frs1(&store), 0);
+        assert_eq!(insn_frs2(&store), 5);
+
+        let conversion = DecodedInsn::FOp {
+            funct5: 0b11010,
+            fmt: 1,
+            rm: 0,
+            rd: 1,
+            rs1: 6,
+            rs2: 0,
+        };
+        assert_eq!(insn_rs1(&conversion), 6);
+        assert_eq!(insn_frs1(&conversion), 0);
+        assert!(insn_is_fp_dest(&conversion));
     }
 }

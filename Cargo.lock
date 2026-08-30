@@ -3109,6 +3109,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "riscv_model"
+version = "0.1.0"
+
+[[package]]
 name = "ron"
 version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3836,6 +3840,7 @@ version = "1.0.0"
 dependencies = [
  "asm_to_binary",
  "os_runtime",
+ "riscv_model",
 ]
 
 [[package]]
