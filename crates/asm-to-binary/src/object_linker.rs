@@ -476,7 +476,7 @@ fn patch_call_pair(
     let offset = (target_abs as i64)
         .wrapping_add(addend)
         .wrapping_sub(site_abs as i64);
-    let (hi20, lo12) = crate::isa::pcrel_split(offset);
+    let (hi20, lo12) = riscv_model::pcrel_split(offset);
 
     let auipc_patched = (auipc_word & 0x0000_0FFF) | (((hi20 << 12) as u32) & 0xFFFF_F000);
     let jalr_patched = (jalr_word & !(0xFFF << 20)) | (((lo12 as u32) & 0xFFF) << 20);
@@ -533,7 +533,7 @@ fn patch_la(
     let offset = (target_abs as i64)
         .wrapping_add(addend)
         .wrapping_sub(site_abs as i64);
-    let (hi20, lo12) = crate::isa::pcrel_split(offset);
+    let (hi20, lo12) = riscv_model::pcrel_split(offset);
 
     let auipc_patched = (auipc_word & 0x0000_0FFF) | (((hi20 << 12) as u32) & 0xFFFF_F000);
     let addi_patched = (addi_word & !0xFFF0_0000) | (((lo12 as u32) & 0xFFF) << 20);

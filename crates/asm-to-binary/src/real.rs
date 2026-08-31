@@ -396,6 +396,11 @@ impl RealInstruction {
     pub fn encode(&self) -> u32 {
         delegate!(self, encode)
     }
+    pub fn instruction_id(&self) -> riscv_model::InstructionId {
+        riscv_model::decode_instruction(self.encode())
+            .expect("encoded real instruction must have a shared descriptor")
+            .id
+    }
     pub fn to_asm(&self) -> String {
         delegate!(self, to_asm)
     }

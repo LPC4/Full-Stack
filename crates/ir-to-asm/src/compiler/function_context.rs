@@ -1,6 +1,5 @@
-use super::frame_context::FrameContext;
+use super::{frame_context::FrameContext, reg_name};
 use asm_to_binary::encode_decode::Reg;
-use asm_to_binary::utils::reg_name;
 use hll_to_ir::{IrFunction, IrLabel, IrRegister, IrType};
 use std::collections::{HashMap, HashSet};
 
@@ -197,7 +196,7 @@ impl FunctionContext {
         for (reg, offset) in self.saved_regs() {
             backend.emit_comment(&format!(
                 "Save callee-saved register {} at offset {offset}",
-                reg_name(*reg, false)
+                reg_name(*reg)
             ));
             backend.emit_sd(SP, *reg, *offset as i32);
         }
@@ -214,7 +213,7 @@ impl FunctionContext {
         for (reg, offset) in self.saved_regs().iter().rev() {
             backend.emit_comment(&format!(
                 "Restore callee-saved register {} from offset {offset}",
-                reg_name(*reg, false)
+                reg_name(*reg)
             ));
             backend.emit_ld(*reg, SP, *offset as i32);
         }

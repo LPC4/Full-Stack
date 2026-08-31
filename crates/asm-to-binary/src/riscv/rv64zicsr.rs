@@ -29,7 +29,7 @@ pub mod csr {
 // --- Register-operand CSR instructions (funct3 = 1-3) ---
 
 macro_rules! csr_reg_inst {
-    ($name:ident, $mnem:literal $(,)?) => {
+    ($name:ident $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $name {
             /// Destination register (rd). If rd = x0 the old CSR value is discarded.
@@ -43,12 +43,20 @@ macro_rules! csr_reg_inst {
 
         impl $name {
             pub fn new(rd: Reg, csr: u16, rs1: Reg) -> Self {
-                assert!(rd < 32, "{}: register x{rd} is out of range", $mnem);
-                assert!(rs1 < 32, "{}: register x{rs1} is out of range", $mnem);
+                assert!(
+                    rd < 32,
+                    "{}: register x{rd} is out of range",
+                    instruction_mnemonic!($name)
+                );
+                assert!(
+                    rs1 < 32,
+                    "{}: register x{rs1} is out of range",
+                    instruction_mnemonic!($name)
+                );
                 assert!(
                     csr <= 0xFFF,
                     "{}: CSR address {:#x} out of range [0x000, 0xFFF]",
-                    $mnem,
+                    instruction_mnemonic!($name),
                     csr
                 );
                 Self { rd, csr, rs1 }
@@ -66,13 +74,18 @@ macro_rules! csr_reg_inst {
                         csr: self.csr,
                     },
                 )
-                .unwrap_or_else(|error| panic!("{} descriptor error: {error:?}", $mnem))
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "{} descriptor error: {error:?}",
+                        instruction_mnemonic!($name)
+                    )
+                })
             }
 
             fn to_asm(&self) -> String {
                 format!(
                     "{:<6} {}, {}, {}",
-                    $mnem,
+                    instruction_mnemonic!($name),
                     reg_name(self.rd, false),
                     self.csr,
                     reg_name(self.rs1, false),
@@ -80,20 +93,20 @@ macro_rules! csr_reg_inst {
             }
 
             fn mnemonic(&self) -> &'static str {
-                $mnem
+                instruction_mnemonic!($name)
             }
         }
     };
 }
 
-csr_reg_inst!(Csrrw, "csrrw");
-csr_reg_inst!(Csrrs, "csrrs");
-csr_reg_inst!(Csrrc, "csrrc");
+csr_reg_inst!(Csrrw);
+csr_reg_inst!(Csrrs);
+csr_reg_inst!(Csrrc);
 
 // --- Immediate-operand CSR instructions (funct3 = 5-7) ---
 
 macro_rules! csr_imm_inst {
-    ($name:ident, $mnem:literal $(,)?) => {
+    ($name:ident $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $name {
             /// Destination register (rd).
@@ -106,17 +119,21 @@ macro_rules! csr_imm_inst {
 
         impl $name {
             pub fn new(rd: Reg, csr: u16, uimm: u8) -> Self {
-                assert!(rd < 32, "{}: register x{rd} is out of range", $mnem);
+                assert!(
+                    rd < 32,
+                    "{}: register x{rd} is out of range",
+                    instruction_mnemonic!($name)
+                );
                 assert!(
                     csr <= 0xFFF,
                     "{}: CSR address {:#x} out of range [0x000, 0xFFF]",
-                    $mnem,
+                    instruction_mnemonic!($name),
                     csr
                 );
                 assert!(
                     uimm < 32,
                     "{}: immediate {uimm} out of range [0, 31]",
-                    $mnem
+                    instruction_mnemonic!($name)
                 );
                 Self { rd, csr, uimm }
             }
@@ -133,13 +150,18 @@ macro_rules! csr_imm_inst {
                         csr: self.csr,
                     },
                 )
-                .unwrap_or_else(|error| panic!("{} descriptor error: {error:?}", $mnem))
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "{} descriptor error: {error:?}",
+                        instruction_mnemonic!($name)
+                    )
+                })
             }
 
             fn to_asm(&self) -> String {
                 format!(
                     "{:<6} {}, {}, {}",
-                    $mnem,
+                    instruction_mnemonic!($name),
                     reg_name(self.rd, false),
                     self.csr,
                     self.uimm,
@@ -147,12 +169,12 @@ macro_rules! csr_imm_inst {
             }
 
             fn mnemonic(&self) -> &'static str {
-                $mnem
+                instruction_mnemonic!($name)
             }
         }
     };
 }
 
-csr_imm_inst!(Csrrwi, "csrrwi");
-csr_imm_inst!(Csrrsi, "csrrsi");
-csr_imm_inst!(Csrrci, "csrrci");
+csr_imm_inst!(Csrrwi);
+csr_imm_inst!(Csrrsi);
+csr_imm_inst!(Csrrci);

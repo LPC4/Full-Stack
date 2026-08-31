@@ -51,7 +51,7 @@ export enum StringError {
 }
 
 export struct OwnedString {
-	bytes: vec.Vec<u8>,
+	bytes: vec.Vec<u8>
 }
 
 export impl OwnedString {

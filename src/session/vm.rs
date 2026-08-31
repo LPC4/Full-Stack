@@ -21,5 +21,5 @@ pub struct RegisterSnapshot {
 
 impl RegisterSnapshot {
     /// RISC-V integer register ABI names, indexed by register number x0..x31.
-    pub const ABI_NAMES: [&'static str; 32] = asm_to_binary::INTEGER_REGISTER_NAMES;
+    pub const ABI_NAMES: [&'static str; 32] = riscv_model::INTEGER_REGISTER_NAMES;
 }

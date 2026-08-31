@@ -386,7 +386,7 @@ fn resolve_absolute_symbol(
 
 // Compute PC-relative (hi20, lo12) for a target address relative to `current_addr`.
 fn pcrel_offsets(target_addr: u64, current_addr: u64) -> (i32, i32) {
-    crate::isa::pcrel_split((target_addr as i64) - (current_addr as i64))
+    riscv_model::pcrel_split((target_addr as i64) - (current_addr as i64))
 }
 
 // Encode `call symbol` -> `auipc ra, %pcrel_hi(symbol); jalr ra, ra, %pcrel_lo(symbol)`.

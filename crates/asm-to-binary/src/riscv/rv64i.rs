@@ -27,61 +27,61 @@ fn encode_fixed(id: riscv_model::InstructionId) -> u32 {
 
 // --- Integer register-register instructions ---
 
-r_inst!(Add, mnemonic = "add");
-r_inst!(Sub, mnemonic = "sub");
-r_inst!(Sll, mnemonic = "sll");
-r_inst!(Slt, mnemonic = "slt");
-r_inst!(Sltu, mnemonic = "sltu");
-r_inst!(Xor, mnemonic = "xor");
-r_inst!(Srl, mnemonic = "srl");
-r_inst!(Sra, mnemonic = "sra");
-r_inst!(Or, mnemonic = "or");
-r_inst!(And, mnemonic = "and");
+r_inst!(Add);
+r_inst!(Sub);
+r_inst!(Sll);
+r_inst!(Slt);
+r_inst!(Sltu);
+r_inst!(Xor);
+r_inst!(Srl);
+r_inst!(Sra);
+r_inst!(Or);
+r_inst!(And);
 
-r_inst!(Addw, mnemonic = "addw");
-r_inst!(Subw, mnemonic = "subw");
-r_inst!(Sllw, mnemonic = "sllw");
-r_inst!(Srlw, mnemonic = "srlw");
-r_inst!(Sraw, mnemonic = "sraw");
+r_inst!(Addw);
+r_inst!(Subw);
+r_inst!(Sllw);
+r_inst!(Srlw);
+r_inst!(Sraw);
 
 // --- Integer immediate arithmetic / shifts ---
 
-i_imm_inst!(Addi, mnemonic = "addi");
-i_imm_inst!(Slti, mnemonic = "slti");
-i_imm_inst!(Sltiu, mnemonic = "sltiu");
-i_imm_inst!(Xori, mnemonic = "xori");
-i_imm_inst!(Ori, mnemonic = "ori");
-i_imm_inst!(Andi, mnemonic = "andi");
+i_imm_inst!(Addi);
+i_imm_inst!(Slti);
+i_imm_inst!(Sltiu);
+i_imm_inst!(Xori);
+i_imm_inst!(Ori);
+i_imm_inst!(Andi);
 
 // RV64W immediate instructions use opcode 0x1B.
-i_imm_inst!(Addiw, mnemonic = "addiw");
+i_imm_inst!(Addiw);
 
 // --- Loads / stores / branches / upper-immediate / jumps ---
 
-i_load_inst!(Lb, mnemonic = "lb");
-i_load_inst!(Lh, mnemonic = "lh");
-i_load_inst!(Lw, mnemonic = "lw");
-i_load_inst!(Ld, mnemonic = "ld");
-i_load_inst!(Lbu, mnemonic = "lbu");
-i_load_inst!(Lhu, mnemonic = "lhu");
-i_load_inst!(Lwu, mnemonic = "lwu");
+i_load_inst!(Lb);
+i_load_inst!(Lh);
+i_load_inst!(Lw);
+i_load_inst!(Ld);
+i_load_inst!(Lbu);
+i_load_inst!(Lhu);
+i_load_inst!(Lwu);
 
-s_inst!(Sb, mnemonic = "sb");
-s_inst!(Sh, mnemonic = "sh");
-s_inst!(Sw, mnemonic = "sw");
-s_inst!(Sd, mnemonic = "sd");
+s_inst!(Sb);
+s_inst!(Sh);
+s_inst!(Sw);
+s_inst!(Sd);
 
-b_inst!(Beq, mnemonic = "beq");
-b_inst!(Bne, mnemonic = "bne");
-b_inst!(Blt, mnemonic = "blt");
-b_inst!(Bge, mnemonic = "bge");
-b_inst!(Bltu, mnemonic = "bltu");
-b_inst!(Bgeu, mnemonic = "bgeu");
+b_inst!(Beq);
+b_inst!(Bne);
+b_inst!(Blt);
+b_inst!(Bge);
+b_inst!(Bltu);
+b_inst!(Bgeu);
 
-u_inst!(Lui, mnemonic = "lui");
-u_inst!(Auipc, mnemonic = "auipc");
+u_inst!(Lui);
+u_inst!(Auipc);
 
-j_inst!(Jal, mnemonic = "jal");
+j_inst!(Jal);
 
 // --- Special-case instructions ---
 
@@ -94,11 +94,20 @@ pub struct Slli {
 }
 impl Slli {
     pub fn new(rd: Reg, rs1: Reg, shamt: u8) -> Self {
-        assert!(rd < 32, "slli: register x{rd} is out of range");
-        assert!(rs1 < 32, "slli: register x{rs1} is out of range");
+        assert!(
+            rd < 32,
+            "{}: register x{rd} is out of range",
+            instruction_mnemonic!(Slli)
+        );
+        assert!(
+            rs1 < 32,
+            "{}: register x{rs1} is out of range",
+            instruction_mnemonic!(Slli)
+        );
         assert!(
             shamt <= 63,
-            "slli: shift amount {shamt} out of range [0, 63]"
+            "{}: shift amount {shamt} out of range [0, 63]",
+            instruction_mnemonic!(Slli)
         );
         Self { rd, rs1, shamt }
     }
@@ -114,14 +123,15 @@ impl Instruction for Slli {
     }
     fn to_asm(&self) -> String {
         format!(
-            "slli  {}, {}, {}",
+            "{}  {}, {}, {}",
+            instruction_mnemonic!(Slli),
             reg_name(self.rd, false),
             reg_name(self.rs1, false),
             self.shamt
         )
     }
     fn mnemonic(&self) -> &'static str {
-        "slli"
+        instruction_mnemonic!(Slli)
     }
 }
 
@@ -133,11 +143,20 @@ pub struct Srli {
 }
 impl Srli {
     pub fn new(rd: Reg, rs1: Reg, shamt: u8) -> Self {
-        assert!(rd < 32, "srli: register x{rd} is out of range");
-        assert!(rs1 < 32, "srli: register x{rs1} is out of range");
+        assert!(
+            rd < 32,
+            "{}: register x{rd} is out of range",
+            instruction_mnemonic!(Srli)
+        );
+        assert!(
+            rs1 < 32,
+            "{}: register x{rs1} is out of range",
+            instruction_mnemonic!(Srli)
+        );
         assert!(
             shamt <= 63,
-            "srli: shift amount {shamt} out of range [0, 63]"
+            "{}: shift amount {shamt} out of range [0, 63]",
+            instruction_mnemonic!(Srli)
         );
         Self { rd, rs1, shamt }
     }
@@ -153,14 +172,15 @@ impl Instruction for Srli {
     }
     fn to_asm(&self) -> String {
         format!(
-            "srli  {}, {}, {}",
+            "{}  {}, {}, {}",
+            instruction_mnemonic!(Srli),
             reg_name(self.rd, false),
             reg_name(self.rs1, false),
             self.shamt
         )
     }
     fn mnemonic(&self) -> &'static str {
-        "srli"
+        instruction_mnemonic!(Srli)
     }
 }
 
@@ -172,11 +192,20 @@ pub struct Srai {
 }
 impl Srai {
     pub fn new(rd: Reg, rs1: Reg, shamt: u8) -> Self {
-        assert!(rd < 32, "srai: register x{rd} is out of range");
-        assert!(rs1 < 32, "srai: register x{rs1} is out of range");
+        assert!(
+            rd < 32,
+            "{}: register x{rd} is out of range",
+            instruction_mnemonic!(Srai)
+        );
+        assert!(
+            rs1 < 32,
+            "{}: register x{rs1} is out of range",
+            instruction_mnemonic!(Srai)
+        );
         assert!(
             shamt <= 63,
-            "srai: shift amount {shamt} out of range [0, 63]"
+            "{}: shift amount {shamt} out of range [0, 63]",
+            instruction_mnemonic!(Srai)
         );
         Self { rd, rs1, shamt }
     }
@@ -192,14 +221,15 @@ impl Instruction for Srai {
     }
     fn to_asm(&self) -> String {
         format!(
-            "srai  {}, {}, {}",
+            "{}  {}, {}, {}",
+            instruction_mnemonic!(Srai),
             reg_name(self.rd, false),
             reg_name(self.rs1, false),
             self.shamt
         )
     }
     fn mnemonic(&self) -> &'static str {
-        "srai"
+        instruction_mnemonic!(Srai)
     }
 }
 
@@ -212,11 +242,20 @@ pub struct Slliw {
 }
 impl Slliw {
     pub fn new(rd: Reg, rs1: Reg, shamt: u8) -> Self {
-        assert!(rd < 32, "slliw: register x{rd} is out of range");
-        assert!(rs1 < 32, "slliw: register x{rs1} is out of range");
+        assert!(
+            rd < 32,
+            "{}: register x{rd} is out of range",
+            instruction_mnemonic!(Slliw)
+        );
+        assert!(
+            rs1 < 32,
+            "{}: register x{rs1} is out of range",
+            instruction_mnemonic!(Slliw)
+        );
         assert!(
             shamt <= 31,
-            "slliw: shift amount {shamt} out of range [0, 31]"
+            "{}: shift amount {shamt} out of range [0, 31]",
+            instruction_mnemonic!(Slliw)
         );
         Self { rd, rs1, shamt }
     }
@@ -232,14 +271,15 @@ impl Instruction for Slliw {
     }
     fn to_asm(&self) -> String {
         format!(
-            "slliw {}, {}, {}",
+            "{} {}, {}, {}",
+            instruction_mnemonic!(Slliw),
             reg_name(self.rd, false),
             reg_name(self.rs1, false),
             self.shamt
         )
     }
     fn mnemonic(&self) -> &'static str {
-        "slliw"
+        instruction_mnemonic!(Slliw)
     }
 }
 
@@ -251,11 +291,20 @@ pub struct Srliw {
 }
 impl Srliw {
     pub fn new(rd: Reg, rs1: Reg, shamt: u8) -> Self {
-        assert!(rd < 32, "srliw: register x{rd} is out of range");
-        assert!(rs1 < 32, "srliw: register x{rs1} is out of range");
+        assert!(
+            rd < 32,
+            "{}: register x{rd} is out of range",
+            instruction_mnemonic!(Srliw)
+        );
+        assert!(
+            rs1 < 32,
+            "{}: register x{rs1} is out of range",
+            instruction_mnemonic!(Srliw)
+        );
         assert!(
             shamt <= 31,
-            "srliw: shift amount {shamt} out of range [0, 31]"
+            "{}: shift amount {shamt} out of range [0, 31]",
+            instruction_mnemonic!(Srliw)
         );
         Self { rd, rs1, shamt }
     }
@@ -271,14 +320,15 @@ impl Instruction for Srliw {
     }
     fn to_asm(&self) -> String {
         format!(
-            "srliw {}, {}, {}",
+            "{} {}, {}, {}",
+            instruction_mnemonic!(Srliw),
             reg_name(self.rd, false),
             reg_name(self.rs1, false),
             self.shamt
         )
     }
     fn mnemonic(&self) -> &'static str {
-        "srliw"
+        instruction_mnemonic!(Srliw)
     }
 }
 
@@ -290,11 +340,20 @@ pub struct Sraiw {
 }
 impl Sraiw {
     pub fn new(rd: Reg, rs1: Reg, shamt: u8) -> Self {
-        assert!(rd < 32, "sraiw: register x{rd} is out of range");
-        assert!(rs1 < 32, "sraiw: register x{rs1} is out of range");
+        assert!(
+            rd < 32,
+            "{}: register x{rd} is out of range",
+            instruction_mnemonic!(Sraiw)
+        );
+        assert!(
+            rs1 < 32,
+            "{}: register x{rs1} is out of range",
+            instruction_mnemonic!(Sraiw)
+        );
         assert!(
             shamt <= 31,
-            "sraiw: shift amount {shamt} out of range [0, 31]"
+            "{}: shift amount {shamt} out of range [0, 31]",
+            instruction_mnemonic!(Sraiw)
         );
         Self { rd, rs1, shamt }
     }
@@ -310,14 +369,15 @@ impl Instruction for Sraiw {
     }
     fn to_asm(&self) -> String {
         format!(
-            "sraiw {}, {}, {}",
+            "{} {}, {}, {}",
+            instruction_mnemonic!(Sraiw),
             reg_name(self.rd, false),
             reg_name(self.rs1, false),
             self.shamt
         )
     }
     fn mnemonic(&self) -> &'static str {
-        "sraiw"
+        instruction_mnemonic!(Sraiw)
     }
 }
 
@@ -331,11 +391,20 @@ pub struct Jalr {
 
 impl Jalr {
     pub fn new(rd: Reg, rs1: Reg, imm: i32) -> Self {
-        assert!(rd < 32, "jalr: register x{rd} is out of range");
-        assert!(rs1 < 32, "jalr: register x{rs1} is out of range");
+        assert!(
+            rd < 32,
+            "{}: register x{rd} is out of range",
+            instruction_mnemonic!(Jalr)
+        );
+        assert!(
+            rs1 < 32,
+            "{}: register x{rs1} is out of range",
+            instruction_mnemonic!(Jalr)
+        );
         assert!(
             (-2048..=2047).contains(&imm),
-            "jalr: immediate {imm} out of range [-2048, 2047]"
+            "{}: immediate {imm} out of range [-2048, 2047]",
+            instruction_mnemonic!(Jalr)
         );
         Self { rd, rs1, imm }
     }
@@ -354,7 +423,7 @@ impl Instruction for Jalr {
     fn to_asm(&self) -> String {
         format!(
             "{:<6} {}, {}({})",
-            "jalr",
+            instruction_mnemonic!(Jalr),
             reg_name(self.rd, false),
             self.imm,
             reg_name(self.rs1, false),
@@ -362,7 +431,7 @@ impl Instruction for Jalr {
     }
 
     fn mnemonic(&self) -> &'static str {
-        "jalr"
+        instruction_mnemonic!(Jalr)
     }
 }
 
@@ -388,11 +457,11 @@ impl Instruction for Ecall {
     }
 
     fn to_asm(&self) -> String {
-        "ecall".into()
+        instruction_mnemonic!(Ecall).into()
     }
 
     fn mnemonic(&self) -> &'static str {
-        "ecall"
+        instruction_mnemonic!(Ecall)
     }
 }
 
@@ -418,11 +487,11 @@ impl Instruction for Ebreak {
     }
 
     fn to_asm(&self) -> String {
-        "ebreak".into()
+        instruction_mnemonic!(Ebreak).into()
     }
 
     fn mnemonic(&self) -> &'static str {
-        "ebreak"
+        instruction_mnemonic!(Ebreak)
     }
 }
 
@@ -448,11 +517,11 @@ impl Instruction for Mret {
     }
 
     fn to_asm(&self) -> String {
-        "mret".into()
+        instruction_mnemonic!(Mret).into()
     }
 
     fn mnemonic(&self) -> &'static str {
-        "mret"
+        instruction_mnemonic!(Mret)
     }
 }
 
@@ -478,11 +547,11 @@ impl Instruction for Sret {
     }
 
     fn to_asm(&self) -> String {
-        "sret".into()
+        instruction_mnemonic!(Sret).into()
     }
 
     fn mnemonic(&self) -> &'static str {
-        "sret"
+        instruction_mnemonic!(Sret)
     }
 }
 
@@ -508,11 +577,11 @@ impl Instruction for SfenceVma {
     }
 
     fn to_asm(&self) -> String {
-        "sfence.vma x0, x0".into()
+        format!("{} x0, x0", instruction_mnemonic!(SfenceVma))
     }
 
     fn mnemonic(&self) -> &'static str {
-        "sfence.vma"
+        instruction_mnemonic!(SfenceVma)
     }
 }
 
@@ -538,11 +607,11 @@ impl Instruction for Wfi {
     }
 
     fn to_asm(&self) -> String {
-        "wfi".into()
+        instruction_mnemonic!(Wfi).into()
     }
 
     fn mnemonic(&self) -> &'static str {
-        "wfi"
+        instruction_mnemonic!(Wfi)
     }
 }
 
@@ -558,11 +627,13 @@ impl Fence {
     pub fn new(pred: u8, succ: u8) -> Self {
         assert!(
             pred <= 0xf,
-            "fence: predecessor mask {pred:#x} is out of range"
+            "{}: predecessor mask {pred:#x} is out of range",
+            instruction_mnemonic!(Fence)
         );
         assert!(
             succ <= 0xf,
-            "fence: successor mask {succ:#x} is out of range"
+            "{}: successor mask {succ:#x} is out of range",
+            instruction_mnemonic!(Fence)
         );
         Self { fm: 0, pred, succ }
     }
@@ -578,7 +649,12 @@ impl Instruction for Fence {
                 successor: self.succ,
             },
         )
-        .unwrap_or_else(|error| panic!("fence descriptor error: {error:?}"))
+        .unwrap_or_else(|error| {
+            panic!(
+                "{} descriptor error: {error:?}",
+                instruction_mnemonic!(Fence)
+            )
+        })
     }
 
     fn to_asm(&self) -> String {
@@ -603,10 +679,16 @@ impl Instruction for Fence {
         }
 
         if self.fm == 0 {
-            format!("fence {}, {}", fence_mask(self.pred), fence_mask(self.succ))
+            format!(
+                "{} {}, {}",
+                instruction_mnemonic!(Fence),
+                fence_mask(self.pred),
+                fence_mask(self.succ)
+            )
         } else {
             format!(
-                "fence {}, {}, fm={:#x}",
+                "{} {}, {}, fm={:#x}",
+                instruction_mnemonic!(Fence),
                 fence_mask(self.pred),
                 fence_mask(self.succ),
                 self.fm
@@ -615,7 +697,7 @@ impl Instruction for Fence {
     }
 
     fn mnemonic(&self) -> &'static str {
-        "fence"
+        instruction_mnemonic!(Fence)
     }
 }
 
@@ -641,10 +723,10 @@ impl Instruction for FenceI {
     }
 
     fn to_asm(&self) -> String {
-        "fence.i".into()
+        instruction_mnemonic!(FenceI).into()
     }
 
     fn mnemonic(&self) -> &'static str {
-        "fence.i"
+        instruction_mnemonic!(FenceI)
     }
 }

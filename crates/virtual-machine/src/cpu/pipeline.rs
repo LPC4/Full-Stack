@@ -13,7 +13,7 @@ pub mod writeback;
 use crate::bus::SystemBus;
 use crate::cpu::architectural::ArchitecturalState;
 use crate::cpu::csr::CsrSnapshot;
-use crate::cpu::decoder::{DecodedInsn, decode as decode_insn};
+use crate::cpu::decoder::decode as decode_insn;
 use crate::cpu::hazard_unit::{
     compute_forwarding, insn_frs1, insn_frs2, insn_is_atomic, insn_is_fp_dest, insn_is_load,
     insn_rd, insn_rs1, insn_rs2, load_use_hazard,
@@ -477,8 +477,11 @@ impl Pipeline {
         let is_load = insn_is_load(&insn);
         let is_fp_load = is_load && is_fp_dest;
 
-        // Detect MRET/SRET to prevent speculative fetch past these instructions
-        if matches!(insn, DecodedInsn::Mret | DecodedInsn::Sret) {
+        // Trap returns cannot allow younger speculative fetches to escape.
+        if insn
+            .instruction_id()
+            .is_some_and(riscv_model::InstructionId::is_trap_return)
+        {
             self.mret_in_flight = true;
         }
 

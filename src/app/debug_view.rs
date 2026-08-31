@@ -809,7 +809,7 @@ fn format_target_operand(target: u64, symbol: Option<(&str, u64)>) -> String {
 }
 
 fn xreg_name(reg: usize) -> &'static str {
-    asm_to_binary::integer_register_name(reg).unwrap_or("??")
+    riscv_model::integer_register_name(reg).unwrap_or("??")
 }
 
 fn source_loc_row(ui: &mut egui::Ui, file: &str, line: u32, text: Option<&str>) {

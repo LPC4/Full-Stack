@@ -18,7 +18,7 @@ use wasm_bindgen::prelude::*;
 const SNIPPET: &str = "snippet";
 const SNIPPET_DONE: &str = "__full_stack_guide_snippet_done";
 
-const ABI_NAMES: [&str; 32] = asm_to_binary::INTEGER_REGISTER_NAMES;
+const ABI_NAMES: [&str; 32] = riscv_model::INTEGER_REGISTER_NAMES;
 
 #[derive(Serialize, Default)]
 pub struct Register {

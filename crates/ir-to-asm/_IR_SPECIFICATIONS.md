@@ -102,6 +102,13 @@ extern declarations, globals, function signatures, and typed instructions. `Comp
 and `compile_with_tokens` return a code-generation error for an invalid layout; they never assign
 a placeholder size to an unresolved type.
 
+The backend also validates selected real instructions against its `riscv_model::IsaProfile` after
+peephole optimization. The default `FULL_STACK` profile preserves the complete implemented ISA;
+callers may select a narrower profile with `set_isa_profile`. Pseudo-instructions are checked after
+expansion. A disabled extension returns `CodegenError::UnsupportedInstruction` with the canonical
+instruction identity and required extension. Authored inline assembly remains raw directive text,
+so this backend profile gate does not classify it.
+
 ## 4. Top-level declarations
 
 ### 4.1 Type aliases
@@ -492,8 +499,9 @@ Stable structural invariant codes are:
 | `IR016` | Value returned from a void function |
 
 The RV64 backend invokes structural verification before lowering in debug and test builds. Type
-layout validation remains unconditional. Instruction typing, def-use, phi-edge, dominance, call,
-inline-assembly, and target-legality checks are added by later verifier layers.
+layout validation remains unconditional. Final structured instruction selection is checked against
+the configured ISA profile. Instruction typing, def-use, phi-edge, dominance, call, and authored
+inline-assembly legality checks are added by later verifier layers.
 
 ### 9.1 Backend assumption ownership
 

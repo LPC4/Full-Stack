@@ -34,6 +34,7 @@ os_runtime      = { path = "crates/os-runtime" }
 hll_to_ir       = { path = "crates/hll-to-ir" }
 ir_to_asm       = { path = "crates/ir-to-asm" }
 asm_to_binary   = { path = "crates/asm-to-binary" }
+riscv_model     = { path = "crates/riscv-model" }
 virtual_machine = { path = "crates/virtual-machine" }
 egui            = "0.35.0"
 eframe          = { version = "0.35.0", features = ["persistence"] }

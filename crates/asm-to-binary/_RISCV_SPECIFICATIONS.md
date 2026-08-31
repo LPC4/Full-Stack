@@ -25,14 +25,22 @@ and relocations this implementation emits.
 ## 2. Register File
 
 The dependency-light `riscv-model` crate owns register numbers, canonical ABI names, accepted
-aliases, and PC-relative immediate splitting. The assembler retains compatibility re-exports but
-does not define a separate register vocabulary.
+aliases, and PC-relative immediate splitting. Consumers depend on that crate directly; the
+assembler does not re-export or define a separate register vocabulary.
 
 The same crate owns one descriptor for each of the 160 canonical instructions in the supported
 RV64IMAFD, Zicsr, Zifencei, and privileged subset. Real-instruction constructors delegate mask,
 match, field packing, operand validation, extension metadata, and canonical identity to those
-descriptors. The assembler retains generic format structs only as a compatibility API and for
-format-level tests; real ISA modules no longer use them as a second encoding authority.
+descriptors. The old generic format encoders are not public API; format validation and tests use
+the shared descriptors. Concrete instruction diagnostics, `mnemonic()`, and the leading token of
+`to_asm()` derive their canonical spelling from the shared `InstructionId`.
+
+`riscv-model::IsaProfile` represents the extensions enabled for instruction selection.
+`IsaProfile::FULL_STACK` contains the complete implemented subset, while `IsaProfile::RV64I`
+contains only the base ISA and may be extended explicitly. The RV64 backend defaults to the full
+profile and validates its final structured token stream, including pseudo-instruction expansions,
+against shared `InstructionId::extension()` metadata. Raw assembly carried in directive text is
+outside this backend gate; the assembler still owns its syntax and encoding validation.
 
 ### Integer Registers (x0-x31)
 

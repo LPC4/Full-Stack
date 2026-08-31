@@ -14,6 +14,7 @@ path = "src/lib.rs"
 
 [dependencies]
 asm_to_binary = { path = "../../crates/asm-to-binary" }
+riscv_model = { path = "../../crates/riscv-model" }
 hll_to_ir = { path = "../../crates/hll-to-ir" }
 ir_to_asm = { path = "../../crates/ir-to-asm" }
 virtual_machine = { path = "../../crates/virtual-machine" }

@@ -1,5 +1,8 @@
-//! Inverse of `utils::reg_name`: map an ABI register name back to its number (0-31).
+pub(crate) fn parse_int_reg(name: &str) -> Option<u8> {
+    riscv_model::IntReg::parse(name).map(Into::into)
+}
 
 #[cfg(test)]
-pub use crate::isa::parse_float_register as parse_float_reg;
-pub use crate::isa::parse_integer_register as parse_int_reg;
+pub(crate) fn parse_float_reg(name: &str) -> Option<u8> {
+    riscv_model::FpReg::parse(name).map(Into::into)
+}

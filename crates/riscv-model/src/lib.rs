@@ -149,6 +149,73 @@ pub enum Extension {
     Privileged,
 }
 
+impl Extension {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Rv64I => "RV64I",
+            Self::M => "M",
+            Self::A => "A",
+            Self::F => "F",
+            Self::D => "D",
+            Self::Zicsr => "Zicsr",
+            Self::Zifencei => "Zifencei",
+            Self::Privileged => "privileged",
+        }
+    }
+}
+
+impl std::fmt::Display for Extension {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+/// Extensions enabled for an instruction-selection target.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct IsaProfile(u16);
+
+impl IsaProfile {
+    /// The base RV64I instruction set without optional extensions.
+    pub const RV64I: Self = Self(extension_bit(Extension::Rv64I));
+
+    /// Every extension implemented by this workspace.
+    pub const FULL_STACK: Self = Self(
+        extension_bit(Extension::Rv64I)
+            | extension_bit(Extension::M)
+            | extension_bit(Extension::A)
+            | extension_bit(Extension::F)
+            | extension_bit(Extension::D)
+            | extension_bit(Extension::Zicsr)
+            | extension_bit(Extension::Zifencei)
+            | extension_bit(Extension::Privileged),
+    );
+
+    pub const fn with_extension(self, extension: Extension) -> Self {
+        Self(self.0 | extension_bit(extension))
+    }
+
+    pub const fn supports_extension(self, extension: Extension) -> bool {
+        self.0 & extension_bit(extension) != 0
+    }
+
+    pub const fn supports_instruction(self, instruction: InstructionId) -> bool {
+        self.supports_extension(instruction.extension())
+    }
+}
+
+const fn extension_bit(extension: Extension) -> u16 {
+    match extension {
+        Extension::Rv64I => 1 << 0,
+        Extension::M => 1 << 1,
+        Extension::A => 1 << 2,
+        Extension::F => 1 << 3,
+        Extension::D => 1 << 4,
+        Extension::Zicsr => 1 << 5,
+        Extension::Zifencei => 1 << 6,
+        Extension::Privileged => 1 << 7,
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PrivilegeRequirement {
     Any,
@@ -1539,6 +1606,10 @@ impl InstructionId {
         }
     }
 
+    pub const fn is_trap_return(self) -> bool {
+        matches!(self, Self::Mret | Self::Sret)
+    }
+
     pub const fn parity(self) -> InstructionParity {
         let assembler = match self {
             Self::SfenceVma => SupportStatus::Partial,
@@ -1892,7 +1963,7 @@ impl InstructionId {
 mod tests {
     use super::{
         DecodeError, DecodedOperands, EncodingError, Extension, FpReg, ImmediateKind,
-        InstructionFormat, InstructionId, IntReg, LatencyClass, PrivilegeRequirement,
+        InstructionFormat, InstructionId, IntReg, IsaProfile, LatencyClass, PrivilegeRequirement,
         REGISTER_REGISTER_SPECS, RegisterFile, SupportStatus, UPPER_IMMEDIATE_SPECS,
         decode_instruction, decode_register_register, decode_upper_immediate,
         encode_register_register, encode_upper_immediate, instruction_spec, instruction_specs,
@@ -1992,6 +2063,24 @@ mod tests {
                 InstructionId::SfenceVma,
                 InstructionId::Wfi
             ]
+        );
+    }
+
+    #[test]
+    fn isa_profiles_check_shared_extension_metadata() {
+        assert!(
+            InstructionId::ALL
+                .iter()
+                .all(|id| IsaProfile::FULL_STACK.supports_instruction(*id))
+        );
+        assert!(IsaProfile::RV64I.supports_instruction(InstructionId::Add));
+        assert!(!IsaProfile::RV64I.supports_instruction(InstructionId::Mul));
+        assert!(!IsaProfile::RV64I.supports_instruction(InstructionId::FaddD));
+        assert!(!IsaProfile::RV64I.supports_instruction(InstructionId::Mret));
+        assert!(
+            IsaProfile::RV64I
+                .with_extension(Extension::M)
+                .supports_instruction(InstructionId::Mul)
         );
     }
 

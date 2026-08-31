@@ -11,6 +11,7 @@ path = "src/lib.rs"
 [dependencies]
 hll_to_ir = { path = "../hll-to-ir" }
 asm_to_binary = { path = "../asm-to-binary" }
+riscv_model = { path = "../riscv-model" }
 
 [lints]
 workspace = true

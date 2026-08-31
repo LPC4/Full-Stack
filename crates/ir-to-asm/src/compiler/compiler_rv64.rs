@@ -1,6 +1,6 @@
 use super::{
     assembly_emitter::AssemblyEmitter, data_section::DataSection,
-    function_context::FunctionContext, peephole, stack_slots, type_utils,
+    function_context::FunctionContext, peephole, reg_name, stack_slots, type_utils,
 };
 use asm_to_binary::encode_decode::Reg;
 use asm_to_binary::real::RealInstruction;
@@ -9,11 +9,12 @@ use asm_to_binary::riscv::rv64fd::{
     FsgnjnD, fmv_d,
 };
 use asm_to_binary::riscv::rv64i::{Lb, Ld, Lh, Lw, Sb, Sh, Sw};
-use asm_to_binary::utils::reg_name;
+use asm_to_binary::rv_instruction::RvInstruction;
 use hll_to_ir::{
     IrCastMode, IrCmpOp, IrInstruction, IrMathOp, IrProgram, IrTerminator, IrType, IrUnaryOp,
     IrValue, TypeLayoutError, VerifierErrors,
 };
+use riscv_model::{Extension, InstructionId, IsaProfile};
 use std::collections::HashMap;
 
 const ZERO: Reg = 0;
@@ -28,6 +29,10 @@ const FA0: Reg = 10;
 pub enum CodegenError {
     TypeLayout(TypeLayoutError),
     InvalidIr(VerifierErrors),
+    UnsupportedInstruction {
+        instruction: InstructionId,
+        required_extension: Extension,
+    },
 }
 
 impl std::fmt::Display for CodegenError {
@@ -35,6 +40,14 @@ impl std::fmt::Display for CodegenError {
         match self {
             Self::TypeLayout(error) => write!(f, "code generation failed: {error}"),
             Self::InvalidIr(errors) => write!(f, "code generation rejected invalid IR: {errors}"),
+            Self::UnsupportedInstruction {
+                instruction,
+                required_extension,
+            } => write!(
+                f,
+                "code generation selected `{}`, which requires the {required_extension} extension",
+                instruction.mnemonic()
+            ),
         }
     }
 }
@@ -44,6 +57,7 @@ impl std::error::Error for CodegenError {
         match self {
             Self::TypeLayout(error) => Some(error),
             Self::InvalidIr(errors) => Some(errors),
+            Self::UnsupportedInstruction { .. } => None,
         }
     }
 }
@@ -85,6 +99,7 @@ pub struct CompilerRv64 {
     peephole: bool,
     regalloc: bool,
     omit_frame_pointer: bool,
+    isa_profile: IsaProfile,
     heap_alloc_counter: usize,
 }
 
@@ -106,6 +121,7 @@ impl CompilerRv64 {
             peephole: false,
             regalloc: false,
             omit_frame_pointer: false,
+            isa_profile: IsaProfile::FULL_STACK,
             heap_alloc_counter: 0,
         }
     }
@@ -118,31 +134,40 @@ impl CompilerRv64 {
         self.regalloc = enabled;
     }
 
+    pub fn set_isa_profile(&mut self, profile: IsaProfile) {
+        self.isa_profile = profile;
+    }
+
     /// Omit the redundant frame pointer (s0); locals are addressed via sp.
     pub fn set_omit_frame_pointer(&mut self, enabled: bool) {
         self.omit_frame_pointer = enabled;
     }
 
     /// # Errors
-    /// Returns `CodegenError` when the IR is structurally invalid or has no valid target layout.
+    /// Returns `CodegenError` for invalid IR, invalid layouts, or unsupported selected instructions.
     pub fn compile(&mut self, program: &IrProgram) -> Result<String, CodegenError> {
         self.compile_with_tokens(program).map(|output| output.0)
     }
 
     /// # Errors
-    /// Returns `CodegenError` when the IR is structurally invalid or has no valid target layout.
+    /// Returns `CodegenError` for invalid IR, invalid layouts, or unsupported selected instructions.
     pub fn compile_with_tokens(
         &mut self,
         program: &IrProgram,
-    ) -> Result<(String, Vec<asm_to_binary::rv_instruction::RvInstruction>), CodegenError> {
+    ) -> Result<(String, Vec<RvInstruction>), CodegenError> {
         program.validate_types()?;
         #[cfg(any(test, debug_assertions))]
         hll_to_ir::verify_program(program)?;
         self.compile_inner(program);
-        if self.peephole {
+        let tokens = if self.peephole {
             // Render the text from the optimized tokens so the `.s` view matches
             // the bytes the assembler will actually consume.
-            let tokens = peephole::optimize(&self.emitter.finish_tokens());
+            peephole::optimize(&self.emitter.finish_tokens())
+        } else {
+            self.emitter.finish_tokens()
+        };
+        self.validate_isa_profile(&tokens)?;
+        if self.peephole {
             let text = tokens
                 .iter()
                 .filter(|t| {
@@ -156,8 +181,38 @@ impl CompilerRv64 {
                 .join("\n");
             Ok((text, tokens))
         } else {
-            Ok((self.emitter.finish(), self.emitter.finish_tokens()))
+            Ok((self.emitter.finish(), tokens))
         }
+    }
+
+    fn validate_isa_profile(&self, tokens: &[RvInstruction]) -> Result<(), CodegenError> {
+        let validate = |instruction: &RealInstruction| {
+            let instruction = instruction.instruction_id();
+            if self.isa_profile.supports_instruction(instruction) {
+                Ok(())
+            } else {
+                Err(CodegenError::UnsupportedInstruction {
+                    instruction,
+                    required_extension: instruction.extension(),
+                })
+            }
+        };
+
+        for token in tokens {
+            match token {
+                RvInstruction::Real(instruction) => validate(instruction)?,
+                RvInstruction::Pseudo(instruction) => {
+                    for expanded in instruction.expand() {
+                        validate(&expanded)?;
+                    }
+                }
+                RvInstruction::Label(_)
+                | RvInstruction::Comment(_)
+                | RvInstruction::Directive(_)
+                | RvInstruction::SourceLoc { .. } => {}
+            }
+        }
+        Ok(())
     }
 
     fn compile_inner(&mut self, program: &IrProgram) {
@@ -399,7 +454,7 @@ impl CompilerRv64 {
             IrValue::GlobalString(name) => {
                 let tmp = self.emitter.alloc_temp_reg();
                 self.emitter
-                    .emit_raw(&format!("\tla {}, {}", reg_name(tmp, false), name));
+                    .emit_raw(&format!("\tla {}, {}", reg_name(tmp), name));
                 tmp
             }
         }
@@ -1214,25 +1269,31 @@ impl CompilerRv64 {
         self.emitter.reset_temp_counter();
         let temp = self.result_reg_for(dest, ctx);
         self.emitter
-            .emit_raw(&format!("\tla {}, {}", reg_name(temp, false), name));
+            .emit_raw(&format!("\tla {}, {}", reg_name(temp), name));
         let ptr_ty = IrType::Pointer(Box::new(IrType::Void));
         self.commit_canonical_result(dest, temp, &ptr_ty, ctx);
     }
 
     fn lower_asm_load(&mut self, reg: &str, place: &hll_to_ir::IrAsmPlace, ctx: &FunctionContext) {
-        let dest = asm_to_binary::parse_int_reg(reg).expect("validated asm bridge register");
+        let dest = riscv_model::IntReg::parse(reg)
+            .expect("validated asm bridge register")
+            .number();
         self.emit_asm_place_address(dest, place, ctx);
         let ty = self.resolve_ir_type(&place.ty);
         self.emitter.emit_load_typed(dest, dest, &ty, 0);
     }
 
     fn lower_asm_addr(&mut self, reg: &str, place: &hll_to_ir::IrAsmPlace, ctx: &FunctionContext) {
-        let dest = asm_to_binary::parse_int_reg(reg).expect("validated asm bridge register");
+        let dest = riscv_model::IntReg::parse(reg)
+            .expect("validated asm bridge register")
+            .number();
         self.emit_asm_place_address(dest, place, ctx);
     }
 
     fn lower_asm_store(&mut self, place: &hll_to_ir::IrAsmPlace, reg: &str, ctx: &FunctionContext) {
-        let source = asm_to_binary::parse_int_reg(reg).expect("validated asm bridge register");
+        let source = riscv_model::IntReg::parse(reg)
+            .expect("validated asm bridge register")
+            .number();
         let ty = self.resolve_ir_type(&place.ty);
         if let Some(offset) = Self::asm_local_offset(place, ctx)
             && let Ok(offset) = i32::try_from(offset)
@@ -1265,7 +1326,7 @@ impl CompilerRv64 {
                 self.emitter.emit_addi(dest, SP, offset as i32);
             } else {
                 self.emitter
-                    .emit_raw(&format!("\tli {}, {offset}", reg_name(dest, false)));
+                    .emit_raw(&format!("\tli {}, {offset}", reg_name(dest)));
                 self.emitter.emit_add(dest, SP, dest);
             }
             return;
@@ -1273,7 +1334,7 @@ impl CompilerRv64 {
 
         let symbol = place.symbol.as_deref().expect("global asm place symbol");
         self.emitter
-            .emit_raw(&format!("\tla {}, {symbol}", reg_name(dest, false)));
+            .emit_raw(&format!("\tla {}, {symbol}", reg_name(dest)));
         if place.offset == 0 {
             return;
         }
@@ -1287,11 +1348,8 @@ impl CompilerRv64 {
             .asm_scratch_slots()
             .expect("bridge functions reserve scratch slots");
         self.emitter.emit_sd(SP, scratch, scratch_slot as i32);
-        self.emitter.emit_raw(&format!(
-            "\tli {}, {}",
-            reg_name(scratch, false),
-            place.offset
-        ));
+        self.emitter
+            .emit_raw(&format!("\tli {}, {}", reg_name(scratch), place.offset));
         self.emitter.emit_add(dest, dest, scratch);
         self.emitter.emit_ld(scratch, SP, scratch_slot as i32);
     }
@@ -1305,20 +1363,17 @@ impl CompilerRv64 {
     ) {
         if let Some(offset) = Self::asm_local_offset(place, ctx) {
             self.emitter
-                .emit_raw(&format!("\tli {}, {offset}", reg_name(address, false)));
+                .emit_raw(&format!("\tli {}, {offset}", reg_name(address)));
             self.emitter.emit_add(address, SP, address);
             return;
         }
 
         let symbol = place.symbol.as_deref().expect("global asm place symbol");
         self.emitter
-            .emit_raw(&format!("\tla {}, {symbol}", reg_name(address, false)));
+            .emit_raw(&format!("\tla {}, {symbol}", reg_name(address)));
         if place.offset != 0 {
-            self.emitter.emit_raw(&format!(
-                "\tli {}, {}",
-                reg_name(auxiliary, false),
-                place.offset
-            ));
+            self.emitter
+                .emit_raw(&format!("\tli {}, {}", reg_name(auxiliary), place.offset));
             self.emitter.emit_add(address, address, auxiliary);
         }
     }
@@ -1350,7 +1405,7 @@ impl CompilerRv64 {
         self.emitter.reset_temp_counter();
         let temp = self.result_reg_for(dest, ctx);
         self.emitter
-            .emit_raw(&format!("\tla {}, {}", reg_name(temp, false), name));
+            .emit_raw(&format!("\tla {}, {}", reg_name(temp), name));
         let ptr_ty = IrType::FunctionPointer {
             params: Vec::new(),
             return_type: Box::new(IrType::Void),
@@ -1548,12 +1603,7 @@ impl CompilerRv64 {
                 let count_tmp = self.load_value_to_temp(count_val, ctx);
                 let size_tmp = self.emitter.alloc_temp_reg();
                 self.emitter.emit_li(size_tmp, type_size as i64);
-                self.emitter.emit_raw(&format!(
-                    "\tmul {}, {}, {}",
-                    reg_name(A0, false),
-                    reg_name(count_tmp, false),
-                    reg_name(size_tmp, false)
-                ));
+                self.emitter.emit_mul(A0, count_tmp, size_tmp);
             }
         }
 
@@ -1574,13 +1624,13 @@ impl CompilerRv64 {
         let zero_done = format!(".Lheap_zero_done_{alloc_id}");
         self.emitter.emit_raw(&format!(
             "\tbeq {}, {}, {zero_done}",
-            reg_name(A0, false),
-            reg_name(ZERO, false)
+            reg_name(A0),
+            reg_name(ZERO)
         ));
         self.emitter.emit_raw(&format!(
             "\tbeq {}, {}, {zero_done}",
-            reg_name(A1, false),
-            reg_name(ZERO, false)
+            reg_name(A1),
+            reg_name(ZERO)
         ));
         let ptr_tmp = self.emitter.alloc_temp_reg();
         self.emitter.emit_mv(ptr_tmp, A0);
@@ -1889,7 +1939,7 @@ impl CompilerRv64 {
             }
             IrValue::GlobalString(symbol) => {
                 self.emitter
-                    .emit_raw(&format!("\tla {}, {}", reg_name(temp, false), symbol));
+                    .emit_raw(&format!("\tla {}, {}", reg_name(temp), symbol));
             }
         }
         temp
@@ -2074,11 +2124,56 @@ fn reg_for_arg(i: usize) -> Reg {
 
 #[cfg(test)]
 mod tests {
-    use super::{CompilerRv64, reg_for_arg};
+    use super::{CodegenError, CompilerRv64, reg_for_arg};
     use hll_to_ir::{
-        IntWidth, IrBlock, IrCastMode, IrFunction, IrInstruction, IrProgram, IrRegister,
+        IntWidth, IrBlock, IrCastMode, IrFunction, IrInstruction, IrMathOp, IrProgram, IrRegister,
         IrTerminator, IrType, IrValue,
     };
+
+    #[test]
+    fn target_profile_rejects_selected_extension_instruction() {
+        let result = IrRegister::Named("result".to_owned());
+        let mut entry = IrBlock::new("entry");
+        entry.push_instruction(IrInstruction::Math {
+            dest: result.clone(),
+            op: IrMathOp::Mul,
+            ty: IrType::Integer(IntWidth::I64),
+            lhs: IrValue::Integer(6),
+            rhs: IrValue::Integer(7),
+        });
+        entry.set_terminator(IrTerminator::Return(Some(IrValue::Register(result))));
+        let mut function = IrFunction::new("main", IrType::Integer(IntWidth::I64));
+        function.push_block(entry);
+        let mut program = IrProgram::new("profile");
+        program.push_function(function);
+
+        let mut compiler = CompilerRv64::new();
+        compiler.set_isa_profile(riscv_model::IsaProfile::RV64I);
+        assert_eq!(
+            compiler.compile(&program),
+            Err(CodegenError::UnsupportedInstruction {
+                instruction: riscv_model::InstructionId::Mul,
+                required_extension: riscv_model::Extension::M,
+            })
+        );
+    }
+
+    #[test]
+    fn target_profile_checks_pseudo_instruction_expansions() {
+        let mut compiler = CompilerRv64::new();
+        compiler.set_isa_profile(riscv_model::IsaProfile::RV64I);
+        let tokens = [asm_to_binary::rv_instruction::RvInstruction::Pseudo(
+            asm_to_binary::pseudo::PseudoInstruction::FnegD { fd: 0, fs: 1 },
+        )];
+
+        assert_eq!(
+            compiler.validate_isa_profile(&tokens),
+            Err(CodegenError::UnsupportedInstruction {
+                instruction: riscv_model::InstructionId::FsgnjnD,
+                required_extension: riscv_model::Extension::D,
+            })
+        );
+    }
 
     #[test]
     fn source_line_marker_flows_to_line_table() {

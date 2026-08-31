@@ -1,6 +1,5 @@
 #![allow(non_snake_case)]
 
-use asm_to_binary::encode_decode::*;
 use asm_to_binary::pseudo::PseudoInstruction;
 use asm_to_binary::real::RealInstruction;
 use asm_to_binary::riscv::rv64a::*;
@@ -9,7 +8,7 @@ use asm_to_binary::riscv::rv64i::*;
 use asm_to_binary::riscv::rv64m::*;
 use asm_to_binary::riscv::rv64zicsr::*;
 use asm_to_binary::traits::Instruction as _;
-use asm_to_binary::utils::reg_name;
+use riscv_model::InstructionId;
 
 macro_rules! assert_enc {
     ($instr:expr, $expected:expr) => {{
@@ -145,18 +144,6 @@ fn rv64i_upper() {
         Auipc::new(5, 0xABCD_E000_u32.cast_signed()),
         0xABCD_E297_u32
     );
-}
-
-#[test]
-fn utype_compatibility_round_trip() {
-    let format = UType {
-        opcode: 0x17,
-        rd: 5,
-        imm: 0xabcd_e000_u32.cast_signed(),
-    };
-    let word = format.encode();
-    assert_eq!(word, 0xabcd_e297);
-    assert_eq!(UType::decode(word), format);
 }
 
 // --- RV64I - System / fence ---
@@ -343,6 +330,71 @@ fn real_inst_enum_encoding() {
     assert_eq!(i.encode(), 0x02c58553u32);
 }
 
+#[test]
+fn real_instruction_mnemonics_match_shared_identities() {
+    let samples = [
+        (RealInstruction::Add(Add::new(1, 2, 3)), InstructionId::Add),
+        (
+            RealInstruction::Slli(Slli::new(1, 2, 3)),
+            InstructionId::Slli,
+        ),
+        (
+            RealInstruction::AmoaddW(AmoaddW::new(1, 2, 3)),
+            InstructionId::AmoaddW,
+        ),
+        (RealInstruction::Lr(Lr::w(1, 2)), InstructionId::LrW),
+        (RealInstruction::Flw(Flw::new(1, 2, 0)), InstructionId::Flw),
+        (
+            RealInstruction::Fadd(Fadd::new(1, 2, 3)),
+            InstructionId::FaddS,
+        ),
+        (
+            RealInstruction::FsqrtS(FsqrtS::new(1, 2)),
+            InstructionId::FsqrtS,
+        ),
+        (
+            RealInstruction::FleqS(FleqS::new(1, 2, 3)),
+            InstructionId::FleS,
+        ),
+        (
+            RealInstruction::FclassS(FclassS::new(1, 2)),
+            InstructionId::FclassS,
+        ),
+        (
+            RealInstruction::FmvXW(FmvXW::new(1, 2)),
+            InstructionId::FmvXW,
+        ),
+        (
+            RealInstruction::FcvtWUS(FcvtWUS::new(1, 2)),
+            InstructionId::FcvtWuS,
+        ),
+        (
+            RealInstruction::FcvtSWU(FcvtSWU::new(1, 2)),
+            InstructionId::FcvtSWu,
+        ),
+        (
+            RealInstruction::FcvtSD(FcvtSD::new(1, 2)),
+            InstructionId::FcvtSD,
+        ),
+        (
+            RealInstruction::FmaddS(FmaddS::new(1, 2, 3, 4)),
+            InstructionId::FmaddS,
+        ),
+        (
+            RealInstruction::Csrrw(Csrrw::new(1, 0x300, 2)),
+            InstructionId::Csrrw,
+        ),
+    ];
+
+    for (instruction, id) in samples {
+        assert_eq!(instruction.mnemonic(), id.mnemonic());
+        assert_eq!(
+            instruction.to_asm().split_whitespace().next(),
+            Some(id.mnemonic())
+        );
+    }
+}
+
 // --- Pseudoinstruction expansions ---
 
 #[test]
@@ -517,52 +569,4 @@ fn bad_fp_rounding_mode() {
 #[should_panic(expected = "immediate")]
 fn addi_imm_out_of_range() {
     Addi::new(1, 2, 2048);
-}
-
-// --- Register name generation ---
-
-#[test]
-fn reg_name_integer() {
-    assert_eq!(reg_name(0, false), "zero");
-    assert_eq!(reg_name(1, false), "ra");
-    assert_eq!(reg_name(2, false), "sp");
-    assert_eq!(reg_name(5, false), "t0");
-    assert_eq!(reg_name(8, false), "s0");
-    assert_eq!(reg_name(10, false), "a0");
-    assert_eq!(reg_name(28, false), "t3");
-    assert_eq!(reg_name(31, false), "t6");
-    assert_eq!(reg_name(32, false), "x32");
-}
-
-#[test]
-fn reg_name_fp() {
-    assert_eq!(reg_name(0, true), "ft0");
-    assert_eq!(reg_name(8, true), "fs0");
-    assert_eq!(reg_name(10, true), "fa0");
-    assert_eq!(reg_name(28, true), "ft8");
-    assert_eq!(reg_name(31, true), "ft11");
-    assert_eq!(reg_name(32, true), "f32");
-}
-
-// --- Decode roundtrip ---
-
-#[test]
-fn rtype_decode() {
-    let word: u32 = 0x003100b3;
-    let dec = RType::decode(word);
-    assert_eq!(dec.opcode, 0x33);
-    assert_eq!(dec.rd, 1);
-    assert_eq!(dec.rs1, 2);
-    assert_eq!(dec.rs2, 3);
-    assert_eq!(dec.funct3, 0);
-    assert_eq!(dec.funct7, 0x00);
-}
-
-#[test]
-fn itype_decode() {
-    let word: u32 = 0x02a10093;
-    let dec = IType::decode(word);
-    assert_eq!(dec.rd, 1);
-    assert_eq!(dec.rs1, 2);
-    assert_eq!(dec.imm, 42);
 }

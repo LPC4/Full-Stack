@@ -1,4 +1,4 @@
-use super::{data_section::DataSection, function_context::Rv64Backend};
+use super::{data_section::DataSection, function_context::Rv64Backend, reg_name};
 use asm_to_binary::encode_decode::Reg;
 use asm_to_binary::real::RealInstruction;
 use asm_to_binary::riscv::rv64fd::{
@@ -11,7 +11,6 @@ use asm_to_binary::riscv::rv64i::{
 };
 use asm_to_binary::riscv::rv64m::{Div, Divu, Mul, Rem, Remu};
 use asm_to_binary::rv_instruction::RvInstruction;
-use asm_to_binary::utils::reg_name;
 use hll_to_ir::IrType;
 
 const ZERO: Reg = 0;
@@ -423,8 +422,8 @@ impl AssemblyEmitter {
     pub fn emit_bne(&mut self, rs1: Reg, rs2: Reg, target: &str) {
         self.emit_raw(&format!(
             "\tbne {}, {}, {}",
-            reg_name(rs1, false),
-            reg_name(rs2, false),
+            reg_name(rs1),
+            reg_name(rs2),
             target
         ));
     }
@@ -432,7 +431,7 @@ impl AssemblyEmitter {
         if rd == ZERO {
             self.emit_raw(&format!("\tj {target}"));
         } else {
-            self.emit_raw(&format!("\tjal {}, {}", reg_name(rd, false), target));
+            self.emit_raw(&format!("\tjal {}, {}", reg_name(rd), target));
         }
     }
 

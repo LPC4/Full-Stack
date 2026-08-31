@@ -1,10 +1,13 @@
+macro_rules! instruction_mnemonic {
+    ($id:ident) => {
+        riscv_model::InstructionId::$id.mnemonic()
+    };
+}
+
 /// Generates an R-type instruction struct with fields `rd`, `rs1`, `rs2`
 /// implementing [`Instruction`](super::traits::Instruction).
 macro_rules! r_inst {
-    (
-        $name:ident,
-        mnemonic = $mnemonic:literal $(,)?
-    ) => {
+    ($name:ident $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $name {
             pub rd: crate::encode_decode::Reg,
@@ -18,9 +21,21 @@ macro_rules! r_inst {
                 rs1: crate::encode_decode::Reg,
                 rs2: crate::encode_decode::Reg,
             ) -> Self {
-                assert!(rd < 32, "{}: register x{rd} is out of range", $mnemonic);
-                assert!(rs1 < 32, "{}: register x{rs1} is out of range", $mnemonic);
-                assert!(rs2 < 32, "{}: register x{rs2} is out of range", $mnemonic);
+                assert!(
+                    rd < 32,
+                    "{}: register x{rd} is out of range",
+                    instruction_mnemonic!($name)
+                );
+                assert!(
+                    rs1 < 32,
+                    "{}: register x{rs1} is out of range",
+                    instruction_mnemonic!($name)
+                );
+                assert!(
+                    rs2 < 32,
+                    "{}: register x{rs2} is out of range",
+                    instruction_mnemonic!($name)
+                );
                 Self { rd, rs1, rs2 }
             }
         }
@@ -28,13 +43,25 @@ macro_rules! r_inst {
         impl crate::traits::Instruction for $name {
             fn encode(&self) -> u32 {
                 let Some(rd) = riscv_model::IntReg::new(self.rd) else {
-                    panic!("{}: register x{} is out of range", $mnemonic, self.rd);
+                    panic!(
+                        "{}: register x{} is out of range",
+                        instruction_mnemonic!($name),
+                        self.rd
+                    );
                 };
                 let Some(rs1) = riscv_model::IntReg::new(self.rs1) else {
-                    panic!("{}: register x{} is out of range", $mnemonic, self.rs1);
+                    panic!(
+                        "{}: register x{} is out of range",
+                        instruction_mnemonic!($name),
+                        self.rs1
+                    );
                 };
                 let Some(rs2) = riscv_model::IntReg::new(self.rs2) else {
-                    panic!("{}: register x{} is out of range", $mnemonic, self.rs2);
+                    panic!(
+                        "{}: register x{} is out of range",
+                        instruction_mnemonic!($name),
+                        self.rs2
+                    );
                 };
                 match riscv_model::encode_register_register(
                     riscv_model::InstructionId::$name,
@@ -43,7 +70,10 @@ macro_rules! r_inst {
                     rs2,
                 ) {
                     Ok(word) => word,
-                    Err(error) => panic!("{} descriptor error: {error:?}", $mnemonic),
+                    Err(error) => panic!(
+                        "{} descriptor error: {error:?}",
+                        instruction_mnemonic!($name)
+                    ),
                 }
             }
 
@@ -51,7 +81,7 @@ macro_rules! r_inst {
                 use crate::utils::reg_name;
                 format!(
                     "{:<6} {}, {}, {}",
-                    $mnemonic,
+                    instruction_mnemonic!($name),
                     reg_name(self.rd, false),
                     reg_name(self.rs1, false),
                     reg_name(self.rs2, false),
@@ -59,7 +89,7 @@ macro_rules! r_inst {
             }
 
             fn mnemonic(&self) -> &'static str {
-                $mnemonic
+                instruction_mnemonic!($name)
             }
         }
     };
@@ -68,10 +98,7 @@ macro_rules! r_inst {
 /// Generates an I-type immediate instruction (opcode 0x13).
 /// Operand order in `to_asm`: `rd, rs1, imm`
 macro_rules! i_imm_inst {
-    (
-        $name:ident,
-        mnemonic = $mnemonic:literal $(,)?
-    ) => {
+    ($name:ident $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $name {
             pub rd: crate::encode_decode::Reg,
@@ -85,12 +112,20 @@ macro_rules! i_imm_inst {
                 rs1: crate::encode_decode::Reg,
                 imm: i32,
             ) -> Self {
-                assert!(rd < 32, "{}: register x{rd} is out of range", $mnemonic);
-                assert!(rs1 < 32, "{}: register x{rs1} is out of range", $mnemonic);
+                assert!(
+                    rd < 32,
+                    "{}: register x{rd} is out of range",
+                    instruction_mnemonic!($name)
+                );
+                assert!(
+                    rs1 < 32,
+                    "{}: register x{rs1} is out of range",
+                    instruction_mnemonic!($name)
+                );
                 assert!(
                     (-2048..=2047).contains(&imm),
                     "{}: immediate {} out of range [-2048, 2047]",
-                    $mnemonic,
+                    instruction_mnemonic!($name),
                     imm
                 );
                 Self { rd, rs1, imm }
@@ -109,14 +144,19 @@ macro_rules! i_imm_inst {
                         immediate: self.imm,
                     },
                 )
-                .unwrap_or_else(|error| panic!("{} descriptor error: {error:?}", $mnemonic))
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "{} descriptor error: {error:?}",
+                        instruction_mnemonic!($name)
+                    )
+                })
             }
 
             fn to_asm(&self) -> String {
                 use crate::utils::reg_name;
                 format!(
                     "{:<6} {}, {}, {}",
-                    $mnemonic,
+                    instruction_mnemonic!($name),
                     reg_name(self.rd, false),
                     reg_name(self.rs1, false),
                     self.imm,
@@ -124,7 +164,7 @@ macro_rules! i_imm_inst {
             }
 
             fn mnemonic(&self) -> &'static str {
-                $mnemonic
+                instruction_mnemonic!($name)
             }
         }
     };
@@ -133,10 +173,7 @@ macro_rules! i_imm_inst {
 /// Generates an I-type load instruction (opcode 0x03).
 /// Operand order in `to_asm` is `rd, imm(rs1)`, the standard RISC-V load syntax.
 macro_rules! i_load_inst {
-    (
-        $name:ident,
-        mnemonic = $mnemonic:literal $(,)?
-    ) => {
+    ($name:ident $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $name {
             /// Destination register.
@@ -153,12 +190,20 @@ macro_rules! i_load_inst {
                 base: crate::encode_decode::Reg,
                 offset: i32,
             ) -> Self {
-                assert!(rd < 32, "{}: register x{rd} is out of range", $mnemonic);
-                assert!(base < 32, "{}: register x{base} is out of range", $mnemonic);
+                assert!(
+                    rd < 32,
+                    "{}: register x{rd} is out of range",
+                    instruction_mnemonic!($name)
+                );
+                assert!(
+                    base < 32,
+                    "{}: register x{base} is out of range",
+                    instruction_mnemonic!($name)
+                );
                 assert!(
                     (-2048..=2047).contains(&offset),
                     "{}: offset {} out of range [-2048, 2047]",
-                    $mnemonic,
+                    instruction_mnemonic!($name),
                     offset
                 );
                 Self { rd, base, offset }
@@ -177,14 +222,19 @@ macro_rules! i_load_inst {
                         immediate: self.offset,
                     },
                 )
-                .unwrap_or_else(|error| panic!("{} descriptor error: {error:?}", $mnemonic))
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "{} descriptor error: {error:?}",
+                        instruction_mnemonic!($name)
+                    )
+                })
             }
 
             fn to_asm(&self) -> String {
                 use crate::utils::reg_name;
                 format!(
                     "{:<6} {}, {}({})",
-                    $mnemonic,
+                    instruction_mnemonic!($name),
                     reg_name(self.rd, false),
                     self.offset,
                     reg_name(self.base, false),
@@ -192,7 +242,7 @@ macro_rules! i_load_inst {
             }
 
             fn mnemonic(&self) -> &'static str {
-                $mnemonic
+                instruction_mnemonic!($name)
             }
         }
     };
@@ -201,10 +251,7 @@ macro_rules! i_load_inst {
 /// Generates an S-type store instruction (opcode 0x23).
 /// Operand order in `to_asm` is `rs2, offset(rs1)`, the standard RISC-V store syntax.
 macro_rules! s_inst {
-    (
-        $name:ident,
-        mnemonic = $mnemonic:literal $(,)?
-    ) => {
+    ($name:ident $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $name {
             /// Base address register.
@@ -221,12 +268,20 @@ macro_rules! s_inst {
                 src: crate::encode_decode::Reg,
                 offset: i32,
             ) -> Self {
-                assert!(base < 32, "{}: register x{base} is out of range", $mnemonic);
-                assert!(src < 32, "{}: register x{src} is out of range", $mnemonic);
+                assert!(
+                    base < 32,
+                    "{}: register x{base} is out of range",
+                    instruction_mnemonic!($name)
+                );
+                assert!(
+                    src < 32,
+                    "{}: register x{src} is out of range",
+                    instruction_mnemonic!($name)
+                );
                 assert!(
                     (-2048..=2047).contains(&offset),
                     "{}: offset {} out of range [-2048, 2047]",
-                    $mnemonic,
+                    instruction_mnemonic!($name),
                     offset
                 );
                 Self { base, src, offset }
@@ -245,14 +300,19 @@ macro_rules! s_inst {
                         immediate: self.offset,
                     },
                 )
-                .unwrap_or_else(|error| panic!("{} descriptor error: {error:?}", $mnemonic))
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "{} descriptor error: {error:?}",
+                        instruction_mnemonic!($name)
+                    )
+                })
             }
 
             fn to_asm(&self) -> String {
                 use crate::utils::reg_name;
                 format!(
                     "{:<6} {}, {}({})",
-                    $mnemonic,
+                    instruction_mnemonic!($name),
                     reg_name(self.src, false),
                     self.offset,
                     reg_name(self.base, false),
@@ -260,7 +320,7 @@ macro_rules! s_inst {
             }
 
             fn mnemonic(&self) -> &'static str {
-                $mnemonic
+                instruction_mnemonic!($name)
             }
         }
     };
@@ -269,10 +329,7 @@ macro_rules! s_inst {
 /// Generates a B-type branch instruction (opcode 0x63).
 /// Operand order in `to_asm`: `rs1, rs2, offset`
 macro_rules! b_inst {
-    (
-        $name:ident,
-        mnemonic = $mnemonic:literal $(,)?
-    ) => {
+    ($name:ident $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $name {
             pub rs1: crate::encode_decode::Reg,
@@ -287,18 +344,26 @@ macro_rules! b_inst {
                 rs2: crate::encode_decode::Reg,
                 offset: i32,
             ) -> Self {
-                assert!(rs1 < 32, "{}: register x{rs1} is out of range", $mnemonic);
-                assert!(rs2 < 32, "{}: register x{rs2} is out of range", $mnemonic);
+                assert!(
+                    rs1 < 32,
+                    "{}: register x{rs1} is out of range",
+                    instruction_mnemonic!($name)
+                );
+                assert!(
+                    rs2 < 32,
+                    "{}: register x{rs2} is out of range",
+                    instruction_mnemonic!($name)
+                );
                 assert!(
                     (offset & 1) == 0,
                     "{}: offset {} must be even",
-                    $mnemonic,
+                    instruction_mnemonic!($name),
                     offset
                 );
                 assert!(
                     (-4096..=4094).contains(&offset),
                     "{}: offset {} out of range [-4096, 4094]",
-                    $mnemonic,
+                    instruction_mnemonic!($name),
                     offset
                 );
                 Self { rs1, rs2, offset }
@@ -319,14 +384,19 @@ macro_rules! b_inst {
                         offset: self.offset,
                     },
                 )
-                .unwrap_or_else(|error| panic!("{} descriptor error: {error:?}", $mnemonic))
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "{} descriptor error: {error:?}",
+                        instruction_mnemonic!($name)
+                    )
+                })
             }
 
             fn to_asm(&self) -> String {
                 use crate::utils::reg_name;
                 format!(
                     "{:<6} {}, {}, {}",
-                    $mnemonic,
+                    instruction_mnemonic!($name),
                     reg_name(self.rs1, false),
                     reg_name(self.rs2, false),
                     self.offset,
@@ -334,7 +404,7 @@ macro_rules! b_inst {
             }
 
             fn mnemonic(&self) -> &'static str {
-                $mnemonic
+                instruction_mnemonic!($name)
             }
         }
     };
@@ -343,10 +413,7 @@ macro_rules! b_inst {
 /// Generates a U-type instruction (`lui` or `auipc`).
 /// Operand order in `to_asm`: `rd, imm` (imm printed as upper-20-bit hex)
 macro_rules! u_inst {
-    (
-        $name:ident,
-        mnemonic = $mnemonic:literal $(,)?
-    ) => {
+    ($name:ident $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $name {
             pub rd: crate::encode_decode::Reg,
@@ -357,7 +424,11 @@ macro_rules! u_inst {
 
         impl $name {
             pub fn new(rd: crate::encode_decode::Reg, imm: i32) -> Self {
-                assert!(rd < 32, "{}: register x{rd} is out of range", $mnemonic);
+                assert!(
+                    rd < 32,
+                    "{}: register x{rd} is out of range",
+                    instruction_mnemonic!($name)
+                );
                 Self { rd, imm }
             }
         }
@@ -365,7 +436,11 @@ macro_rules! u_inst {
         impl crate::traits::Instruction for $name {
             fn encode(&self) -> u32 {
                 let Some(rd) = riscv_model::IntReg::new(self.rd) else {
-                    panic!("{}: register x{} is out of range", $mnemonic, self.rd);
+                    panic!(
+                        "{}: register x{} is out of range",
+                        instruction_mnemonic!($name),
+                        self.rd
+                    );
                 };
                 match riscv_model::encode_upper_immediate(
                     riscv_model::InstructionId::$name,
@@ -373,7 +448,10 @@ macro_rules! u_inst {
                     self.imm,
                 ) {
                     Ok(word) => word,
-                    Err(error) => panic!("{} descriptor error: {error:?}", $mnemonic),
+                    Err(error) => panic!(
+                        "{} descriptor error: {error:?}",
+                        instruction_mnemonic!($name)
+                    ),
                 }
             }
 
@@ -381,14 +459,14 @@ macro_rules! u_inst {
                 use crate::utils::reg_name;
                 format!(
                     "{:<6} {}, {:#x}",
-                    $mnemonic,
+                    instruction_mnemonic!($name),
                     reg_name(self.rd, false),
                     (self.imm as u32) >> 12,
                 )
             }
 
             fn mnemonic(&self) -> &'static str {
-                $mnemonic
+                instruction_mnemonic!($name)
             }
         }
     };
@@ -397,10 +475,7 @@ macro_rules! u_inst {
 /// Generates a J-type instruction (`jal`).
 /// Operand order in `to_asm`: `rd, offset`
 macro_rules! j_inst {
-    (
-        $name:ident,
-        mnemonic = $mnemonic:literal $(,)?
-    ) => {
+    ($name:ident $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $name {
             pub rd: crate::encode_decode::Reg,
@@ -410,17 +485,21 @@ macro_rules! j_inst {
 
         impl $name {
             pub fn new(rd: crate::encode_decode::Reg, offset: i32) -> Self {
-                assert!(rd < 32, "{}: register x{rd} is out of range", $mnemonic);
+                assert!(
+                    rd < 32,
+                    "{}: register x{rd} is out of range",
+                    instruction_mnemonic!($name)
+                );
                 assert!(
                     (offset & 1) == 0,
                     "{}: offset {} must be even",
-                    $mnemonic,
+                    instruction_mnemonic!($name),
                     offset
                 );
                 assert!(
                     (-1048576..=1048574).contains(&offset),
                     "{}: offset {} out of range [-1048576, 1048574]",
-                    $mnemonic,
+                    instruction_mnemonic!($name),
                     offset
                 );
                 Self { rd, offset }
@@ -437,21 +516,26 @@ macro_rules! j_inst {
                         offset: self.offset,
                     },
                 )
-                .unwrap_or_else(|error| panic!("{} descriptor error: {error:?}", $mnemonic))
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "{} descriptor error: {error:?}",
+                        instruction_mnemonic!($name)
+                    )
+                })
             }
 
             fn to_asm(&self) -> String {
                 use crate::utils::reg_name;
                 format!(
                     "{:<6} {}, {}",
-                    $mnemonic,
+                    instruction_mnemonic!($name),
                     reg_name(self.rd, false),
                     self.offset,
                 )
             }
 
             fn mnemonic(&self) -> &'static str {
-                $mnemonic
+                instruction_mnemonic!($name)
             }
         }
     };

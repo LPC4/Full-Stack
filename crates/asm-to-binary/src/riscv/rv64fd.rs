@@ -34,7 +34,7 @@ fn encode_fp(
 
 /// FP load (single or double).  Opcode = 0x07.
 macro_rules! fp_load_inst {
-    ($name:ident, $mnem:literal $(,)?) => {
+    ($name:ident $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $name {
             pub rd: Reg,     // FP destination
@@ -44,12 +44,20 @@ macro_rules! fp_load_inst {
 
         impl $name {
             pub fn new(rd: Reg, base: Reg, offset: i32) -> Self {
-                assert!(rd < 32, "{}: register f{rd} is out of range", $mnem);
-                assert!(base < 32, "{}: register x{base} is out of range", $mnem);
+                assert!(
+                    rd < 32,
+                    "{}: register f{rd} is out of range",
+                    instruction_mnemonic!($name)
+                );
+                assert!(
+                    base < 32,
+                    "{}: register x{base} is out of range",
+                    instruction_mnemonic!($name)
+                );
                 assert!(
                     (-2048..=2047).contains(&offset),
                     "{}: offset {offset} out of range",
-                    $mnem
+                    instruction_mnemonic!($name)
                 );
                 Self { rd, base, offset }
             }
@@ -71,7 +79,7 @@ macro_rules! fp_load_inst {
             fn to_asm(&self) -> String {
                 format!(
                     "{:<6} {}, {}({})",
-                    $mnem,
+                    instruction_mnemonic!($name),
                     reg_name(self.rd, true),
                     self.offset,
                     reg_name(self.base, false),
@@ -79,18 +87,18 @@ macro_rules! fp_load_inst {
             }
 
             fn mnemonic(&self) -> &'static str {
-                $mnem
+                instruction_mnemonic!($name)
             }
         }
     };
 }
 
-fp_load_inst!(Flw, "flw");
-fp_load_inst!(Fld, "fld");
+fp_load_inst!(Flw);
+fp_load_inst!(Fld);
 
 /// FP store (single or double).  Opcode = 0x27.
 macro_rules! fp_store_inst {
-    ($name:ident, $mnem:literal $(,)?) => {
+    ($name:ident $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $name {
             pub base: Reg, // integer base
@@ -100,12 +108,20 @@ macro_rules! fp_store_inst {
 
         impl $name {
             pub fn new(base: Reg, src: Reg, offset: i32) -> Self {
-                assert!(base < 32, "{}: register x{base} is out of range", $mnem);
-                assert!(src < 32, "{}: register f{src} is out of range", $mnem);
+                assert!(
+                    base < 32,
+                    "{}: register x{base} is out of range",
+                    instruction_mnemonic!($name)
+                );
+                assert!(
+                    src < 32,
+                    "{}: register f{src} is out of range",
+                    instruction_mnemonic!($name)
+                );
                 assert!(
                     (-2048..=2047).contains(&offset),
                     "{}: offset {offset} out of range",
-                    $mnem
+                    instruction_mnemonic!($name)
                 );
                 Self { base, src, offset }
             }
@@ -127,7 +143,7 @@ macro_rules! fp_store_inst {
             fn to_asm(&self) -> String {
                 format!(
                     "{:<6} {}, {}({})",
-                    $mnem,
+                    instruction_mnemonic!($name),
                     reg_name(self.src, true),
                     self.offset,
                     reg_name(self.base, false),
@@ -135,19 +151,19 @@ macro_rules! fp_store_inst {
             }
 
             fn mnemonic(&self) -> &'static str {
-                $mnem
+                instruction_mnemonic!($name)
             }
         }
     };
 }
 
-fp_store_inst!(Fsw, "fsw");
-fp_store_inst!(Fsd, "fsd");
+fp_store_inst!(Fsw);
+fp_store_inst!(Fsd);
 
 // --- FP ALU - generic macro for 2-source FP operations ---
 
 macro_rules! fp_alu_inst {
-    ($name:ident, $id:ident, $suffix:literal, $mnem:literal $(,)?) => {
+    ($name:ident, $id:ident $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $name {
             pub rd: Reg,
@@ -161,7 +177,7 @@ macro_rules! fp_alu_inst {
                 assert!(
                     rd < 32 && rs1 < 32 && rs2 < 32,
                     "{}: register out of range",
-                    $mnem
+                    instruction_mnemonic!($id)
                 );
                 Self {
                     rd,
@@ -177,7 +193,7 @@ macro_rules! fp_alu_inst {
                 assert!(
                     rm <= 4 || rm == 7,
                     "{}: invalid rounding mode {} (must be 0-4 or 7)",
-                    $mnem,
+                    instruction_mnemonic!($id),
                     rm
                 );
                 self.rm = rm;
@@ -200,9 +216,8 @@ macro_rules! fp_alu_inst {
 
             fn to_asm(&self) -> String {
                 format!(
-                    "{}.{} {}, {}, {}",
-                    $mnem,
-                    $suffix,
+                    "{} {}, {}, {}",
+                    instruction_mnemonic!($id),
                     reg_name(self.rd, true),
                     reg_name(self.rs1, true),
                     reg_name(self.rs2, true),
@@ -210,38 +225,38 @@ macro_rules! fp_alu_inst {
             }
 
             fn mnemonic(&self) -> &'static str {
-                $mnem
+                instruction_mnemonic!($id)
             }
         }
     };
 }
 
 // Standard ALU ops (RNE default)
-fp_alu_inst!(Fadd, FaddS, 's', "fadd");
-fp_alu_inst!(Fsub, FsubS, 's', "fsub");
-fp_alu_inst!(Fmul, FmulS, 's', "fmul");
-fp_alu_inst!(Fdiv, FdivS, 's', "fdiv");
+fp_alu_inst!(Fadd, FaddS);
+fp_alu_inst!(Fsub, FsubS);
+fp_alu_inst!(Fmul, FmulS);
+fp_alu_inst!(Fdiv, FdivS);
 // fsqrt is special (rs2 = 0)
-fp_alu_inst!(Fsgnj, FsgnjS, 's', "fsgnj");
-fp_alu_inst!(Fsgnjn, FsgnjnS, 's', "fsgnjn");
-fp_alu_inst!(Fsgnjx, FsgnjxS, 's', "fsgnjx");
-fp_alu_inst!(Fmin, FminS, 's', "fmin");
-fp_alu_inst!(Fmax, FmaxS, 's', "fmax");
+fp_alu_inst!(Fsgnj, FsgnjS);
+fp_alu_inst!(Fsgnjn, FsgnjnS);
+fp_alu_inst!(Fsgnjx, FsgnjxS);
+fp_alu_inst!(Fmin, FminS);
+fp_alu_inst!(Fmax, FmaxS);
 
 // Double-precision versions
-fp_alu_inst!(FaddD, FaddD, 'd', "fadd");
-fp_alu_inst!(FsubD, FsubD, 'd', "fsub");
-fp_alu_inst!(FmulD, FmulD, 'd', "fmul");
-fp_alu_inst!(FdivD, FdivD, 'd', "fdiv");
-fp_alu_inst!(FsgnjD, FsgnjD, 'd', "fsgnj");
-fp_alu_inst!(FsgnjnD, FsgnjnD, 'd', "fsgnjn");
-fp_alu_inst!(FsgnjxD, FsgnjxD, 'd', "fsgnjx");
-fp_alu_inst!(FminD, FminD, 'd', "fmin");
-fp_alu_inst!(FmaxD, FmaxD, 'd', "fmax");
+fp_alu_inst!(FaddD, FaddD);
+fp_alu_inst!(FsubD, FsubD);
+fp_alu_inst!(FmulD, FmulD);
+fp_alu_inst!(FdivD, FdivD);
+fp_alu_inst!(FsgnjD, FsgnjD);
+fp_alu_inst!(FsgnjnD, FsgnjnD);
+fp_alu_inst!(FsgnjxD, FsgnjxD);
+fp_alu_inst!(FminD, FminD);
+fp_alu_inst!(FmaxD, FmaxD);
 
 // --- FSQRT - single source, rs2 = 0 ---
 macro_rules! fsqrt_inst {
-    ($name:ident, $suffix:literal, $mnem:literal $(,)?) => {
+    ($name:ident $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $name {
             pub rd: Reg,
@@ -251,14 +266,18 @@ macro_rules! fsqrt_inst {
 
         impl $name {
             pub fn new(rd: Reg, rs1: Reg) -> Self {
-                assert!(rd < 32 && rs1 < 32, "{}: register out of range", $mnem);
+                assert!(
+                    rd < 32 && rs1 < 32,
+                    "{}: register out of range",
+                    instruction_mnemonic!($name)
+                );
                 Self { rd, rs1, rm: RNE }
             }
             pub fn with_rm(mut self, rm: u8) -> Self {
                 assert!(
                     rm <= 4 || rm == 7,
                     "{}: invalid rounding mode {} (must be 0-4 or 7)",
-                    $mnem,
+                    instruction_mnemonic!($name),
                     rm
                 );
                 self.rm = rm;
@@ -281,26 +300,26 @@ macro_rules! fsqrt_inst {
 
             fn to_asm(&self) -> String {
                 format!(
-                    "fsqrt.{} {}, {}",
-                    $suffix,
+                    "{} {}, {}",
+                    instruction_mnemonic!($name),
                     reg_name(self.rd, true),
                     reg_name(self.rs1, true),
                 )
             }
 
             fn mnemonic(&self) -> &'static str {
-                "fsqrt"
+                instruction_mnemonic!($name)
             }
         }
     };
 }
 
-fsqrt_inst!(FsqrtS, 's', "fsqrt");
-fsqrt_inst!(FsqrtD, 'd', "fsqrt");
+fsqrt_inst!(FsqrtS);
+fsqrt_inst!(FsqrtD);
 
 // --- FP Compare - funct5 = 10100, rm selects comparison ---
 macro_rules! fcmp_inst {
-    ($name:ident, $id:ident, $suffix:literal, $mnem:literal $(,)?) => {
+    ($name:ident, $id:ident $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $name {
             pub rd: Reg,  // integer destination
@@ -313,7 +332,7 @@ macro_rules! fcmp_inst {
                 assert!(
                     rd < 32 && rs1 < 32 && rs2 < 32,
                     "{}: register out of range",
-                    $mnem
+                    instruction_mnemonic!($id)
                 );
                 Self { rd, rs1, rs2 }
             }
@@ -335,9 +354,8 @@ macro_rules! fcmp_inst {
 
             fn to_asm(&self) -> String {
                 format!(
-                    "{}.{} {}, {}, {}",
-                    $mnem,
-                    $suffix,
+                    "{} {}, {}, {}",
+                    instruction_mnemonic!($id),
                     reg_name(self.rd, false), // integer result
                     reg_name(self.rs1, true),
                     reg_name(self.rs2, true),
@@ -345,22 +363,22 @@ macro_rules! fcmp_inst {
             }
 
             fn mnemonic(&self) -> &'static str {
-                $mnem
+                instruction_mnemonic!($id)
             }
         }
     };
 }
 
-fcmp_inst!(FleqS, FleS, 's', "fle");
-fcmp_inst!(FltS, FltS, 's', "flt");
-fcmp_inst!(FeqS, FeqS, 's', "feq");
-fcmp_inst!(FleqD, FleD, 'd', "fle");
-fcmp_inst!(FltD, FltD, 'd', "flt");
-fcmp_inst!(FeqD, FeqD, 'd', "feq");
+fcmp_inst!(FleqS, FleS);
+fcmp_inst!(FltS, FltS);
+fcmp_inst!(FeqS, FeqS);
+fcmp_inst!(FleqD, FleD);
+fcmp_inst!(FltD, FltD);
+fcmp_inst!(FeqD, FeqD);
 
 // --- FCLASS - rs2 = 0, funct5 = 11100, rm = 001 ---
 macro_rules! fclass_inst {
-    ($name:ident, $suffix:literal, $mnem:literal $(,)?) => {
+    ($name:ident $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $name {
             pub rd: Reg, // integer result
@@ -369,7 +387,11 @@ macro_rules! fclass_inst {
 
         impl $name {
             pub fn new(rd: Reg, rs1: Reg) -> Self {
-                assert!(rd < 32 && rs1 < 32, "{}: register out of range", $mnem);
+                assert!(
+                    rd < 32 && rs1 < 32,
+                    "{}: register out of range",
+                    instruction_mnemonic!($name)
+                );
                 Self { rd, rs1 }
             }
         }
@@ -389,26 +411,26 @@ macro_rules! fclass_inst {
 
             fn to_asm(&self) -> String {
                 format!(
-                    "fclass.{} {}, {}",
-                    $suffix,
+                    "{} {}, {}",
+                    instruction_mnemonic!($name),
                     reg_name(self.rd, false),
                     reg_name(self.rs1, true),
                 )
             }
 
             fn mnemonic(&self) -> &'static str {
-                "fclass"
+                instruction_mnemonic!($name)
             }
         }
     };
 }
 
-fclass_inst!(FclassS, 's', "fclass");
-fclass_inst!(FclassD, 'd', "fclass");
+fclass_inst!(FclassS);
+fclass_inst!(FclassD);
 
 // --- FP Move (bitwise) - funct5 = 11100 (FP->int) or 11110 (int->FP) ---
 macro_rules! fmv_x_f {
-    ($name:ident, $dest_fp:literal, $src_fp:literal, $mnem:literal $(,)?) => {
+    ($name:ident, $dest_fp:literal, $src_fp:literal $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $name {
             pub rd: Reg, // destination (integer if $to_int, else FP)
@@ -417,7 +439,11 @@ macro_rules! fmv_x_f {
 
         impl $name {
             pub fn new(rd: Reg, rs: Reg) -> Self {
-                assert!(rd < 32 && rs < 32, "{}: register out of range", $mnem);
+                assert!(
+                    rd < 32 && rs < 32,
+                    "{}: register out of range",
+                    instruction_mnemonic!($name)
+                );
                 Self { rd, rs }
             }
         }
@@ -438,29 +464,29 @@ macro_rules! fmv_x_f {
             fn to_asm(&self) -> String {
                 format!(
                     "{:<6} {}, {}",
-                    $mnem,
+                    instruction_mnemonic!($name),
                     reg_name(self.rd, $dest_fp),
                     reg_name(self.rs, $src_fp),
                 )
             }
 
             fn mnemonic(&self) -> &'static str {
-                $mnem
+                instruction_mnemonic!($name)
             }
         }
     };
 }
 
-fmv_x_f!(FmvXW, false, true, "fmv.x.w");
-fmv_x_f!(FmvWX, true, false, "fmv.w.x");
-fmv_x_f!(FmvXD, false, true, "fmv.x.d");
-fmv_x_f!(FmvDX, true, false, "fmv.d.x");
+fmv_x_f!(FmvXW, false, true);
+fmv_x_f!(FmvWX, true, false);
+fmv_x_f!(FmvXD, false, true);
+fmv_x_f!(FmvDX, true, false);
 
 // --- FP Conversions - funct5 indicates direction, rs2 encodes integer type ---
 
 /// FP -> Integer conversion (funct5 = 0b11000)
 macro_rules! fcvt_f2i {
-    ($name:ident, $id:ident, $mnem:literal $(,)?) => {
+    ($name:ident, $id:ident $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $name {
             pub rd: Reg,  // integer destination
@@ -470,14 +496,18 @@ macro_rules! fcvt_f2i {
 
         impl $name {
             pub fn new(rd: Reg, rs1: Reg) -> Self {
-                assert!(rd < 32 && rs1 < 32, "{}: register out of range", $mnem);
+                assert!(
+                    rd < 32 && rs1 < 32,
+                    "{}: register out of range",
+                    instruction_mnemonic!($id)
+                );
                 Self { rd, rs1, rm: RNE }
             }
             pub fn with_rm(mut self, rm: u8) -> Self {
                 assert!(
                     rm <= 4 || rm == 7,
                     "{}: invalid rounding mode {} (must be 0-4 or 7)",
-                    $mnem,
+                    instruction_mnemonic!($id),
                     rm
                 );
                 self.rm = rm;
@@ -501,14 +531,14 @@ macro_rules! fcvt_f2i {
             fn to_asm(&self) -> String {
                 format!(
                     "{:<6} {}, {}",
-                    $mnem,
+                    instruction_mnemonic!($id),
                     reg_name(self.rd, false),
                     reg_name(self.rs1, true),
                 )
             }
 
             fn mnemonic(&self) -> &'static str {
-                $mnem
+                instruction_mnemonic!($id)
             }
         }
     };
@@ -516,7 +546,7 @@ macro_rules! fcvt_f2i {
 
 /// Integer -> FP conversion (funct5 = 0b11010)
 macro_rules! fcvt_i2f {
-    ($name:ident, $id:ident, $mnem:literal $(,)?) => {
+    ($name:ident, $id:ident $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $name {
             pub rd: Reg,  // FP destination
@@ -526,14 +556,18 @@ macro_rules! fcvt_i2f {
 
         impl $name {
             pub fn new(rd: Reg, rs1: Reg) -> Self {
-                assert!(rd < 32 && rs1 < 32, "{}: register out of range", $mnem);
+                assert!(
+                    rd < 32 && rs1 < 32,
+                    "{}: register out of range",
+                    instruction_mnemonic!($id)
+                );
                 Self { rd, rs1, rm: RNE }
             }
             pub fn with_rm(mut self, rm: u8) -> Self {
                 assert!(
                     rm <= 4 || rm == 7,
                     "{}: invalid rounding mode {} (must be 0-4 or 7)",
-                    $mnem,
+                    instruction_mnemonic!($id),
                     rm
                 );
                 self.rm = rm;
@@ -557,14 +591,14 @@ macro_rules! fcvt_i2f {
             fn to_asm(&self) -> String {
                 format!(
                     "{:<6} {}, {}",
-                    $mnem,
+                    instruction_mnemonic!($id),
                     reg_name(self.rd, true),
                     reg_name(self.rs1, false),
                 )
             }
 
             fn mnemonic(&self) -> &'static str {
-                $mnem
+                instruction_mnemonic!($id)
             }
         }
     };
@@ -572,7 +606,7 @@ macro_rules! fcvt_i2f {
 
 // FP <-> FP conversions (special funct5, rs2 encodes source format)
 macro_rules! fcvt_f2f {
-    ($name:ident, $mnem:literal $(,)?) => {
+    ($name:ident $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $name {
             pub rd: Reg,  // FP destination
@@ -582,14 +616,18 @@ macro_rules! fcvt_f2f {
 
         impl $name {
             pub fn new(rd: Reg, rs1: Reg) -> Self {
-                assert!(rd < 32 && rs1 < 32, "{}: register out of range", $mnem);
+                assert!(
+                    rd < 32 && rs1 < 32,
+                    "{}: register out of range",
+                    instruction_mnemonic!($name)
+                );
                 Self { rd, rs1, rm: RNE }
             }
             pub fn with_rm(mut self, rm: u8) -> Self {
                 assert!(
                     rm <= 4 || rm == 7,
                     "{}: invalid rounding mode {} (must be 0-4 or 7)",
-                    $mnem,
+                    instruction_mnemonic!($name),
                     rm
                 );
                 self.rm = rm;
@@ -613,14 +651,14 @@ macro_rules! fcvt_f2f {
             fn to_asm(&self) -> String {
                 format!(
                     "{:<6} {}, {}",
-                    $mnem,
+                    instruction_mnemonic!($name),
                     reg_name(self.rd, true),
                     reg_name(self.rs1, true),
                 )
             }
 
             fn mnemonic(&self) -> &'static str {
-                $mnem
+                instruction_mnemonic!($name)
             }
         }
     };
@@ -628,34 +666,34 @@ macro_rules! fcvt_f2f {
 
 // Generate all fcvt variants from the specification
 // F -> I: from single
-fcvt_f2i!(FcvtWS, FcvtWS, "fcvt.w.s");
-fcvt_f2i!(FcvtWUS, FcvtWuS, "fcvt.wu.s");
-fcvt_f2i!(FcvtLS, FcvtLS, "fcvt.l.s");
-fcvt_f2i!(FcvtLUS, FcvtLuS, "fcvt.lu.s");
+fcvt_f2i!(FcvtWS, FcvtWS);
+fcvt_f2i!(FcvtWUS, FcvtWuS);
+fcvt_f2i!(FcvtLS, FcvtLS);
+fcvt_f2i!(FcvtLUS, FcvtLuS);
 // F -> I: from double
-fcvt_f2i!(FcvtWD, FcvtWD, "fcvt.w.d");
-fcvt_f2i!(FcvtWUD, FcvtWuD, "fcvt.wu.d");
-fcvt_f2i!(FcvtLD, FcvtLD, "fcvt.l.d");
-fcvt_f2i!(FcvtLUD, FcvtLuD, "fcvt.lu.d");
+fcvt_f2i!(FcvtWD, FcvtWD);
+fcvt_f2i!(FcvtWUD, FcvtWuD);
+fcvt_f2i!(FcvtLD, FcvtLD);
+fcvt_f2i!(FcvtLUD, FcvtLuD);
 
 // I -> F: to single
-fcvt_i2f!(FcvtSW, FcvtSW, "fcvt.s.w");
-fcvt_i2f!(FcvtSWU, FcvtSWu, "fcvt.s.wu");
-fcvt_i2f!(FcvtSL, FcvtSL, "fcvt.s.l");
-fcvt_i2f!(FcvtSLU, FcvtSLu, "fcvt.s.lu");
+fcvt_i2f!(FcvtSW, FcvtSW);
+fcvt_i2f!(FcvtSWU, FcvtSWu);
+fcvt_i2f!(FcvtSL, FcvtSL);
+fcvt_i2f!(FcvtSLU, FcvtSLu);
 // I -> F: to double
-fcvt_i2f!(FcvtDW, FcvtDW, "fcvt.d.w");
-fcvt_i2f!(FcvtDWU, FcvtDWu, "fcvt.d.wu");
-fcvt_i2f!(FcvtDL, FcvtDL, "fcvt.d.l");
-fcvt_i2f!(FcvtDLU, FcvtDLu, "fcvt.d.lu");
+fcvt_i2f!(FcvtDW, FcvtDW);
+fcvt_i2f!(FcvtDWU, FcvtDWu);
+fcvt_i2f!(FcvtDL, FcvtDL);
+fcvt_i2f!(FcvtDLU, FcvtDLu);
 
 // F <-> F
-fcvt_f2f!(FcvtSD, "fcvt.s.d");
-fcvt_f2f!(FcvtDS, "fcvt.d.s");
+fcvt_f2f!(FcvtSD);
+fcvt_f2f!(FcvtDS);
 
 // --- FP Fused Multiply-Add / Subtract (R4-type) ---
 macro_rules! fmac_inst {
-    ($name:ident, $suffix:literal, $mnem:literal $(,)?) => {
+    ($name:ident $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $name {
             pub rd: Reg,
@@ -670,7 +708,7 @@ macro_rules! fmac_inst {
                 assert!(
                     rd < 32 && rs1 < 32 && rs2 < 32 && rs3 < 32,
                     "{}: register out of range",
-                    $mnem
+                    instruction_mnemonic!($name)
                 );
                 Self {
                     rd,
@@ -684,7 +722,7 @@ macro_rules! fmac_inst {
                 assert!(
                     rm <= 4 || rm == 7,
                     "{}: invalid rounding mode {} (must be 0-4 or 7)",
-                    $mnem,
+                    instruction_mnemonic!($name),
                     rm
                 );
                 self.rm = rm;
@@ -707,9 +745,8 @@ macro_rules! fmac_inst {
 
             fn to_asm(&self) -> String {
                 format!(
-                    "{}.{} {}, {}, {}, {}",
-                    $mnem,
-                    $suffix,
+                    "{} {}, {}, {}, {}",
+                    instruction_mnemonic!($name),
                     reg_name(self.rd, true),
                     reg_name(self.rs1, true),
                     reg_name(self.rs2, true),
@@ -718,20 +755,20 @@ macro_rules! fmac_inst {
             }
 
             fn mnemonic(&self) -> &'static str {
-                $mnem
+                instruction_mnemonic!($name)
             }
         }
     };
 }
 
-fmac_inst!(FmaddS, 's', "fmadd");
-fmac_inst!(FmaddD, 'd', "fmadd");
-fmac_inst!(FmsubS, 's', "fmsub");
-fmac_inst!(FmsubD, 'd', "fmsub");
-fmac_inst!(FnmsubS, 's', "fnmsub");
-fmac_inst!(FnmsubD, 'd', "fnmsub");
-fmac_inst!(FnmaddS, 's', "fnmadd");
-fmac_inst!(FnmaddD, 'd', "fnmadd");
+fmac_inst!(FmaddS);
+fmac_inst!(FmaddD);
+fmac_inst!(FmsubS);
+fmac_inst!(FmsubD);
+fmac_inst!(FnmsubS);
+fmac_inst!(FnmsubD);
+fmac_inst!(FnmaddS);
+fmac_inst!(FnmaddD);
 
 // --- FP Pseudo-instructions ---
 

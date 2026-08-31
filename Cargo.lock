@@ -1352,6 +1352,7 @@ dependencies = [
  "log",
  "os_runtime",
  "rfd",
+ "riscv_model",
  "serde",
  "serde_json",
  "virtual_machine",
@@ -1379,6 +1380,7 @@ dependencies = [
  "fs_utils",
  "hll_to_ir",
  "ir_to_asm",
+ "riscv_model",
  "serde",
  "serde-wasm-bindgen",
  "virtual_machine",
@@ -1910,6 +1912,7 @@ version = "1.0.0"
 dependencies = [
  "asm_to_binary",
  "hll_to_ir",
+ "riscv_model",
 ]
 
 [[package]]
