@@ -147,6 +147,18 @@ fn rv64i_upper() {
     );
 }
 
+#[test]
+fn utype_compatibility_round_trip() {
+    let format = UType {
+        opcode: 0x17,
+        rd: 5,
+        imm: 0xabcd_e000_u32.cast_signed(),
+    };
+    let word = format.encode();
+    assert_eq!(word, 0xabcd_e297);
+    assert_eq!(UType::decode(word), format);
+}
+
 // --- RV64I - System / fence ---
 
 #[test]

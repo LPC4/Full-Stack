@@ -8,5 +8,8 @@ rust-version = "1.92"
 name = "asm_to_binary"
 path = "src/lib.rs"
 
+[dependencies]
+riscv_model = { path = "../riscv-model" }
+
 [lints]
 workspace = true

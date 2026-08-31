@@ -5,7 +5,7 @@
 //! methods; they are also available through `PseudoInstruction` in `pseudo.rs`
 //! for the top-level assembler.
 
-use crate::encode_decode::{IType, R4Type, RType, Reg, RiscvFormat as _, SType};
+use crate::encode_decode::Reg;
 use crate::traits::Instruction;
 use crate::utils::reg_name;
 
@@ -17,24 +17,24 @@ pub const RUP: u8 = 0b011; // Round Up (towards +inf)
 pub const RMM: u8 = 0b100; // Round to Nearest, ties to Max Magnitude
 pub const DYN: u8 = 0b111; // Dynamic rounding mode (from fcsr)
 
-// Format field for R/R4 instructions
-const FMT_S: u8 = 0; // single
-const FMT_D: u8 = 1; // double
-
-// FP opcodes
-const OP_LOAD_FP: u8 = 0x07;
-const OP_STORE_FP: u8 = 0x27;
-const OP_FP: u8 = 0x53; // OP-FP (R-type)
-const OP_FMADD: u8 = 0x43;
-const OP_FMSUB: u8 = 0x47;
-const OP_FNMSUB: u8 = 0x4B;
-const OP_FNMADD: u8 = 0x4F;
+fn encode_fp(
+    id: riscv_model::InstructionId,
+    rd: Reg,
+    rs1: Reg,
+    rs2: Reg,
+    rs3: Reg,
+    rounding_mode: u8,
+    immediate: i32,
+) -> u32 {
+    riscv_model::encode_floating(id, rd, rs1, rs2, rs3, rounding_mode, immediate)
+        .unwrap_or_else(|error| panic!("{} descriptor error: {error:?}", id.mnemonic()))
+}
 
 // --- Loads / Stores ---
 
 /// FP load (single or double).  Opcode = 0x07.
 macro_rules! fp_load_inst {
-    ($name:ident, $funct3:expr, $mnem:literal $(,)?) => {
+    ($name:ident, $mnem:literal $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $name {
             pub rd: Reg,     // FP destination
@@ -44,20 +44,28 @@ macro_rules! fp_load_inst {
 
         impl $name {
             pub fn new(rd: Reg, base: Reg, offset: i32) -> Self {
+                assert!(rd < 32, "{}: register f{rd} is out of range", $mnem);
+                assert!(base < 32, "{}: register x{base} is out of range", $mnem);
+                assert!(
+                    (-2048..=2047).contains(&offset),
+                    "{}: offset {offset} out of range",
+                    $mnem
+                );
                 Self { rd, base, offset }
             }
         }
 
         impl Instruction for $name {
             fn encode(&self) -> u32 {
-                IType {
-                    opcode: OP_LOAD_FP,
-                    rd: self.rd,
-                    funct3: $funct3,
-                    rs1: self.base,
-                    imm: self.offset,
-                }
-                .encode()
+                encode_fp(
+                    riscv_model::InstructionId::$name,
+                    self.rd,
+                    self.base,
+                    0,
+                    0,
+                    0,
+                    self.offset,
+                )
             }
 
             fn to_asm(&self) -> String {
@@ -77,12 +85,12 @@ macro_rules! fp_load_inst {
     };
 }
 
-fp_load_inst!(Flw, 2, "flw");
-fp_load_inst!(Fld, 3, "fld");
+fp_load_inst!(Flw, "flw");
+fp_load_inst!(Fld, "fld");
 
 /// FP store (single or double).  Opcode = 0x27.
 macro_rules! fp_store_inst {
-    ($name:ident, $funct3:expr, $mnem:literal $(,)?) => {
+    ($name:ident, $mnem:literal $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $name {
             pub base: Reg, // integer base
@@ -92,20 +100,28 @@ macro_rules! fp_store_inst {
 
         impl $name {
             pub fn new(base: Reg, src: Reg, offset: i32) -> Self {
+                assert!(base < 32, "{}: register x{base} is out of range", $mnem);
+                assert!(src < 32, "{}: register f{src} is out of range", $mnem);
+                assert!(
+                    (-2048..=2047).contains(&offset),
+                    "{}: offset {offset} out of range",
+                    $mnem
+                );
                 Self { base, src, offset }
             }
         }
 
         impl Instruction for $name {
             fn encode(&self) -> u32 {
-                SType {
-                    opcode: OP_STORE_FP,
-                    funct3: $funct3,
-                    rs1: self.base,
-                    rs2: self.src,
-                    imm: self.offset,
-                }
-                .encode()
+                encode_fp(
+                    riscv_model::InstructionId::$name,
+                    0,
+                    self.base,
+                    self.src,
+                    0,
+                    0,
+                    self.offset,
+                )
             }
 
             fn to_asm(&self) -> String {
@@ -125,13 +141,13 @@ macro_rules! fp_store_inst {
     };
 }
 
-fp_store_inst!(Fsw, 2, "fsw");
-fp_store_inst!(Fsd, 3, "fsd");
+fp_store_inst!(Fsw, "fsw");
+fp_store_inst!(Fsd, "fsd");
 
 // --- FP ALU - generic macro for 2-source FP operations ---
 
 macro_rules! fp_alu_inst {
-    ($name:ident, $funct5:expr, $fmt:expr, $rm:expr, $mnem:literal $(,)?) => {
+    ($name:ident, $id:ident, $suffix:literal, $mnem:literal $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $name {
             pub rd: Reg,
@@ -142,11 +158,19 @@ macro_rules! fp_alu_inst {
 
         impl $name {
             pub fn new(rd: Reg, rs1: Reg, rs2: Reg) -> Self {
+                assert!(
+                    rd < 32 && rs1 < 32 && rs2 < 32,
+                    "{}: register out of range",
+                    $mnem
+                );
                 Self {
                     rd,
                     rs1,
                     rs2,
-                    rm: $rm,
+                    rm: riscv_model::floating_default_rounding_mode(
+                        riscv_model::InstructionId::$id,
+                    )
+                    .expect("floating descriptor"),
                 }
             }
             pub fn with_rm(mut self, rm: u8) -> Self {
@@ -163,23 +187,22 @@ macro_rules! fp_alu_inst {
 
         impl Instruction for $name {
             fn encode(&self) -> u32 {
-                RType {
-                    opcode: OP_FP,
-                    rd: self.rd,
-                    funct3: self.rm, // RM field is in funct3 position for OP-FP
-                    rs1: self.rs1,
-                    rs2: self.rs2,
-                    funct7: ($funct5 << 2) | ($fmt & 0b11),
-                }
-                .encode()
+                encode_fp(
+                    riscv_model::InstructionId::$id,
+                    self.rd,
+                    self.rs1,
+                    self.rs2,
+                    0,
+                    self.rm,
+                    0,
+                )
             }
 
             fn to_asm(&self) -> String {
-                let fmt_char = if $fmt == FMT_S { 's' } else { 'd' };
                 format!(
                     "{}.{} {}, {}, {}",
                     $mnem,
-                    fmt_char,
+                    $suffix,
                     reg_name(self.rd, true),
                     reg_name(self.rs1, true),
                     reg_name(self.rs2, true),
@@ -194,31 +217,31 @@ macro_rules! fp_alu_inst {
 }
 
 // Standard ALU ops (RNE default)
-fp_alu_inst!(Fadd, 0b00000, FMT_S, RNE, "fadd");
-fp_alu_inst!(Fsub, 0b00001, FMT_S, RNE, "fsub");
-fp_alu_inst!(Fmul, 0b00010, FMT_S, RNE, "fmul");
-fp_alu_inst!(Fdiv, 0b00011, FMT_S, RNE, "fdiv");
+fp_alu_inst!(Fadd, FaddS, 's', "fadd");
+fp_alu_inst!(Fsub, FsubS, 's', "fsub");
+fp_alu_inst!(Fmul, FmulS, 's', "fmul");
+fp_alu_inst!(Fdiv, FdivS, 's', "fdiv");
 // fsqrt is special (rs2 = 0)
-fp_alu_inst!(Fsgnj, 0b00100, FMT_S, 0b000, "fsgnj");
-fp_alu_inst!(Fsgnjn, 0b00100, FMT_S, 0b001, "fsgnjn");
-fp_alu_inst!(Fsgnjx, 0b00100, FMT_S, 0b010, "fsgnjx");
-fp_alu_inst!(Fmin, 0b00101, FMT_S, 0b000, "fmin");
-fp_alu_inst!(Fmax, 0b00101, FMT_S, 0b001, "fmax");
+fp_alu_inst!(Fsgnj, FsgnjS, 's', "fsgnj");
+fp_alu_inst!(Fsgnjn, FsgnjnS, 's', "fsgnjn");
+fp_alu_inst!(Fsgnjx, FsgnjxS, 's', "fsgnjx");
+fp_alu_inst!(Fmin, FminS, 's', "fmin");
+fp_alu_inst!(Fmax, FmaxS, 's', "fmax");
 
 // Double-precision versions
-fp_alu_inst!(FaddD, 0b00000, FMT_D, RNE, "fadd");
-fp_alu_inst!(FsubD, 0b00001, FMT_D, RNE, "fsub");
-fp_alu_inst!(FmulD, 0b00010, FMT_D, RNE, "fmul");
-fp_alu_inst!(FdivD, 0b00011, FMT_D, RNE, "fdiv");
-fp_alu_inst!(FsgnjD, 0b00100, FMT_D, 0b000, "fsgnj");
-fp_alu_inst!(FsgnjnD, 0b00100, FMT_D, 0b001, "fsgnjn");
-fp_alu_inst!(FsgnjxD, 0b00100, FMT_D, 0b010, "fsgnjx");
-fp_alu_inst!(FminD, 0b00101, FMT_D, 0b000, "fmin");
-fp_alu_inst!(FmaxD, 0b00101, FMT_D, 0b001, "fmax");
+fp_alu_inst!(FaddD, FaddD, 'd', "fadd");
+fp_alu_inst!(FsubD, FsubD, 'd', "fsub");
+fp_alu_inst!(FmulD, FmulD, 'd', "fmul");
+fp_alu_inst!(FdivD, FdivD, 'd', "fdiv");
+fp_alu_inst!(FsgnjD, FsgnjD, 'd', "fsgnj");
+fp_alu_inst!(FsgnjnD, FsgnjnD, 'd', "fsgnjn");
+fp_alu_inst!(FsgnjxD, FsgnjxD, 'd', "fsgnjx");
+fp_alu_inst!(FminD, FminD, 'd', "fmin");
+fp_alu_inst!(FmaxD, FmaxD, 'd', "fmax");
 
 // --- FSQRT - single source, rs2 = 0 ---
 macro_rules! fsqrt_inst {
-    ($name:ident, $fmt:expr, $mnem:literal $(,)?) => {
+    ($name:ident, $suffix:literal, $mnem:literal $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $name {
             pub rd: Reg,
@@ -228,6 +251,7 @@ macro_rules! fsqrt_inst {
 
         impl $name {
             pub fn new(rd: Reg, rs1: Reg) -> Self {
+                assert!(rd < 32 && rs1 < 32, "{}: register out of range", $mnem);
                 Self { rd, rs1, rm: RNE }
             }
             pub fn with_rm(mut self, rm: u8) -> Self {
@@ -244,22 +268,21 @@ macro_rules! fsqrt_inst {
 
         impl Instruction for $name {
             fn encode(&self) -> u32 {
-                RType {
-                    opcode: OP_FP,
-                    rd: self.rd,
-                    funct3: self.rm,
-                    rs1: self.rs1,
-                    rs2: 0, // must be x0 / f0
-                    funct7: (0b01011 << 2) | ($fmt & 0b11),
-                }
-                .encode()
+                encode_fp(
+                    riscv_model::InstructionId::$name,
+                    self.rd,
+                    self.rs1,
+                    0,
+                    0,
+                    self.rm,
+                    0,
+                )
             }
 
             fn to_asm(&self) -> String {
-                let fmt_char = if $fmt == FMT_S { 's' } else { 'd' };
                 format!(
                     "fsqrt.{} {}, {}",
-                    fmt_char,
+                    $suffix,
                     reg_name(self.rd, true),
                     reg_name(self.rs1, true),
                 )
@@ -272,12 +295,12 @@ macro_rules! fsqrt_inst {
     };
 }
 
-fsqrt_inst!(FsqrtS, FMT_S, "fsqrt");
-fsqrt_inst!(FsqrtD, FMT_D, "fsqrt");
+fsqrt_inst!(FsqrtS, 's', "fsqrt");
+fsqrt_inst!(FsqrtD, 'd', "fsqrt");
 
 // --- FP Compare - funct5 = 10100, rm selects comparison ---
 macro_rules! fcmp_inst {
-    ($name:ident, $fmt:expr, $rm:expr, $mnem:literal $(,)?) => {
+    ($name:ident, $id:ident, $suffix:literal, $mnem:literal $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $name {
             pub rd: Reg,  // integer destination
@@ -287,29 +310,34 @@ macro_rules! fcmp_inst {
 
         impl $name {
             pub fn new(rd: Reg, rs1: Reg, rs2: Reg) -> Self {
+                assert!(
+                    rd < 32 && rs1 < 32 && rs2 < 32,
+                    "{}: register out of range",
+                    $mnem
+                );
                 Self { rd, rs1, rs2 }
             }
         }
 
         impl Instruction for $name {
             fn encode(&self) -> u32 {
-                RType {
-                    opcode: OP_FP,
-                    rd: self.rd,
-                    funct3: $rm,
-                    rs1: self.rs1,
-                    rs2: self.rs2,
-                    funct7: (0b10100 << 2) | ($fmt & 0b11),
-                }
-                .encode()
+                encode_fp(
+                    riscv_model::InstructionId::$id,
+                    self.rd,
+                    self.rs1,
+                    self.rs2,
+                    0,
+                    riscv_model::floating_default_rounding_mode(riscv_model::InstructionId::$id)
+                        .expect("floating descriptor"),
+                    0,
+                )
             }
 
             fn to_asm(&self) -> String {
-                let fmt_char = if $fmt == FMT_S { 's' } else { 'd' };
                 format!(
                     "{}.{} {}, {}, {}",
                     $mnem,
-                    fmt_char,
+                    $suffix,
                     reg_name(self.rd, false), // integer result
                     reg_name(self.rs1, true),
                     reg_name(self.rs2, true),
@@ -323,16 +351,16 @@ macro_rules! fcmp_inst {
     };
 }
 
-fcmp_inst!(FleqS, FMT_S, 0b000, "fle");
-fcmp_inst!(FltS, FMT_S, 0b001, "flt");
-fcmp_inst!(FeqS, FMT_S, 0b010, "feq");
-fcmp_inst!(FleqD, FMT_D, 0b000, "fle");
-fcmp_inst!(FltD, FMT_D, 0b001, "flt");
-fcmp_inst!(FeqD, FMT_D, 0b010, "feq");
+fcmp_inst!(FleqS, FleS, 's', "fle");
+fcmp_inst!(FltS, FltS, 's', "flt");
+fcmp_inst!(FeqS, FeqS, 's', "feq");
+fcmp_inst!(FleqD, FleD, 'd', "fle");
+fcmp_inst!(FltD, FltD, 'd', "flt");
+fcmp_inst!(FeqD, FeqD, 'd', "feq");
 
 // --- FCLASS - rs2 = 0, funct5 = 11100, rm = 001 ---
 macro_rules! fclass_inst {
-    ($name:ident, $fmt:expr, $mnem:literal $(,)?) => {
+    ($name:ident, $suffix:literal, $mnem:literal $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $name {
             pub rd: Reg, // integer result
@@ -341,28 +369,28 @@ macro_rules! fclass_inst {
 
         impl $name {
             pub fn new(rd: Reg, rs1: Reg) -> Self {
+                assert!(rd < 32 && rs1 < 32, "{}: register out of range", $mnem);
                 Self { rd, rs1 }
             }
         }
 
         impl Instruction for $name {
             fn encode(&self) -> u32 {
-                RType {
-                    opcode: OP_FP,
-                    rd: self.rd,
-                    funct3: 0b001,
-                    rs1: self.rs1,
-                    rs2: 0,
-                    funct7: (0b11100 << 2) | ($fmt & 0b11),
-                }
-                .encode()
+                encode_fp(
+                    riscv_model::InstructionId::$name,
+                    self.rd,
+                    self.rs1,
+                    0,
+                    0,
+                    1,
+                    0,
+                )
             }
 
             fn to_asm(&self) -> String {
-                let fmt_char = if $fmt == FMT_S { 's' } else { 'd' };
                 format!(
                     "fclass.{} {}, {}",
-                    fmt_char,
+                    $suffix,
                     reg_name(self.rd, false),
                     reg_name(self.rs1, true),
                 )
@@ -375,12 +403,12 @@ macro_rules! fclass_inst {
     };
 }
 
-fclass_inst!(FclassS, FMT_S, "fclass");
-fclass_inst!(FclassD, FMT_D, "fclass");
+fclass_inst!(FclassS, 's', "fclass");
+fclass_inst!(FclassD, 'd', "fclass");
 
 // --- FP Move (bitwise) - funct5 = 11100 (FP->int) or 11110 (int->FP) ---
 macro_rules! fmv_x_f {
-    ($name:ident, $funct5:expr, $fmt:expr, $to_int:expr, $mnem:literal $(,)?) => {
+    ($name:ident, $dest_fp:literal, $src_fp:literal, $mnem:literal $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $name {
             pub rd: Reg, // destination (integer if $to_int, else FP)
@@ -389,34 +417,30 @@ macro_rules! fmv_x_f {
 
         impl $name {
             pub fn new(rd: Reg, rs: Reg) -> Self {
+                assert!(rd < 32 && rs < 32, "{}: register out of range", $mnem);
                 Self { rd, rs }
             }
         }
 
         impl Instruction for $name {
             fn encode(&self) -> u32 {
-                RType {
-                    opcode: OP_FP,
-                    rd: self.rd,
-                    funct3: 0b000, // rm = 0
-                    rs1: self.rs,
-                    rs2: 0,
-                    funct7: ($funct5 << 2) | ($fmt & 0b11),
-                }
-                .encode()
+                encode_fp(
+                    riscv_model::InstructionId::$name,
+                    self.rd,
+                    self.rs,
+                    0,
+                    0,
+                    0,
+                    0,
+                )
             }
 
             fn to_asm(&self) -> String {
-                let (dest_fp, src_fp) = if $to_int {
-                    (false, true)
-                } else {
-                    (true, false)
-                };
                 format!(
                     "{:<6} {}, {}",
                     $mnem,
-                    reg_name(self.rd, dest_fp),
-                    reg_name(self.rs, src_fp),
+                    reg_name(self.rd, $dest_fp),
+                    reg_name(self.rs, $src_fp),
                 )
             }
 
@@ -427,24 +451,16 @@ macro_rules! fmv_x_f {
     };
 }
 
-fmv_x_f!(FmvXW, 0b11100, FMT_S, true, "fmv.x.w");
-fmv_x_f!(FmvWX, 0b11110, FMT_S, false, "fmv.w.x");
-fmv_x_f!(FmvXD, 0b11100, FMT_D, true, "fmv.x.d");
-fmv_x_f!(FmvDX, 0b11110, FMT_D, false, "fmv.d.x");
+fmv_x_f!(FmvXW, false, true, "fmv.x.w");
+fmv_x_f!(FmvWX, true, false, "fmv.w.x");
+fmv_x_f!(FmvXD, false, true, "fmv.x.d");
+fmv_x_f!(FmvDX, true, false, "fmv.d.x");
 
 // --- FP Conversions - funct5 indicates direction, rs2 encodes integer type ---
 
-// Integer type codes used in the `rs2` field of fcvt instructions.
-mod int_type {
-    pub const W: u8 = 0b00000;
-    pub const WU: u8 = 0b00001;
-    pub const L: u8 = 0b00010;
-    pub const LU: u8 = 0b00011;
-}
-
 /// FP -> Integer conversion (funct5 = 0b11000)
 macro_rules! fcvt_f2i {
-    ($name:ident, $fmt:expr, $int_rs2:expr, $mnem:literal $(,)?) => {
+    ($name:ident, $id:ident, $mnem:literal $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $name {
             pub rd: Reg,  // integer destination
@@ -454,6 +470,7 @@ macro_rules! fcvt_f2i {
 
         impl $name {
             pub fn new(rd: Reg, rs1: Reg) -> Self {
+                assert!(rd < 32 && rs1 < 32, "{}: register out of range", $mnem);
                 Self { rd, rs1, rm: RNE }
             }
             pub fn with_rm(mut self, rm: u8) -> Self {
@@ -470,15 +487,15 @@ macro_rules! fcvt_f2i {
 
         impl Instruction for $name {
             fn encode(&self) -> u32 {
-                RType {
-                    opcode: OP_FP,
-                    rd: self.rd,
-                    funct3: self.rm,
-                    rs1: self.rs1,
-                    rs2: $int_rs2,
-                    funct7: (0b11000 << 2) | ($fmt & 0b11),
-                }
-                .encode()
+                encode_fp(
+                    riscv_model::InstructionId::$id,
+                    self.rd,
+                    self.rs1,
+                    0,
+                    0,
+                    self.rm,
+                    0,
+                )
             }
 
             fn to_asm(&self) -> String {
@@ -499,7 +516,7 @@ macro_rules! fcvt_f2i {
 
 /// Integer -> FP conversion (funct5 = 0b11010)
 macro_rules! fcvt_i2f {
-    ($name:ident, $fmt:expr, $int_rs2:expr, $mnem:literal $(,)?) => {
+    ($name:ident, $id:ident, $mnem:literal $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $name {
             pub rd: Reg,  // FP destination
@@ -509,6 +526,7 @@ macro_rules! fcvt_i2f {
 
         impl $name {
             pub fn new(rd: Reg, rs1: Reg) -> Self {
+                assert!(rd < 32 && rs1 < 32, "{}: register out of range", $mnem);
                 Self { rd, rs1, rm: RNE }
             }
             pub fn with_rm(mut self, rm: u8) -> Self {
@@ -525,15 +543,15 @@ macro_rules! fcvt_i2f {
 
         impl Instruction for $name {
             fn encode(&self) -> u32 {
-                RType {
-                    opcode: OP_FP,
-                    rd: self.rd,
-                    funct3: self.rm,
-                    rs1: self.rs1,
-                    rs2: $int_rs2,
-                    funct7: (0b11010 << 2) | ($fmt & 0b11),
-                }
-                .encode()
+                encode_fp(
+                    riscv_model::InstructionId::$id,
+                    self.rd,
+                    self.rs1,
+                    0,
+                    0,
+                    self.rm,
+                    0,
+                )
             }
 
             fn to_asm(&self) -> String {
@@ -554,7 +572,7 @@ macro_rules! fcvt_i2f {
 
 // FP <-> FP conversions (special funct5, rs2 encodes source format)
 macro_rules! fcvt_f2f {
-    ($name:ident, $funct5:expr, $dst_fmt:expr, $src_fmt:expr, $mnem:literal $(,)?) => {
+    ($name:ident, $mnem:literal $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $name {
             pub rd: Reg,  // FP destination
@@ -564,6 +582,7 @@ macro_rules! fcvt_f2f {
 
         impl $name {
             pub fn new(rd: Reg, rs1: Reg) -> Self {
+                assert!(rd < 32 && rs1 < 32, "{}: register out of range", $mnem);
                 Self { rd, rs1, rm: RNE }
             }
             pub fn with_rm(mut self, rm: u8) -> Self {
@@ -580,15 +599,15 @@ macro_rules! fcvt_f2f {
 
         impl Instruction for $name {
             fn encode(&self) -> u32 {
-                RType {
-                    opcode: OP_FP,
-                    rd: self.rd,
-                    funct3: self.rm,
-                    rs1: self.rs1,
-                    rs2: $src_fmt, // source format
-                    funct7: ($funct5 << 2) | ($dst_fmt & 0b11),
-                }
-                .encode()
+                encode_fp(
+                    riscv_model::InstructionId::$name,
+                    self.rd,
+                    self.rs1,
+                    0,
+                    0,
+                    self.rm,
+                    0,
+                )
             }
 
             fn to_asm(&self) -> String {
@@ -609,34 +628,34 @@ macro_rules! fcvt_f2f {
 
 // Generate all fcvt variants from the specification
 // F -> I: from single
-fcvt_f2i!(FcvtWS, FMT_S, int_type::W, "fcvt.w.s");
-fcvt_f2i!(FcvtWUS, FMT_S, int_type::WU, "fcvt.wu.s");
-fcvt_f2i!(FcvtLS, FMT_S, int_type::L, "fcvt.l.s");
-fcvt_f2i!(FcvtLUS, FMT_S, int_type::LU, "fcvt.lu.s");
+fcvt_f2i!(FcvtWS, FcvtWS, "fcvt.w.s");
+fcvt_f2i!(FcvtWUS, FcvtWuS, "fcvt.wu.s");
+fcvt_f2i!(FcvtLS, FcvtLS, "fcvt.l.s");
+fcvt_f2i!(FcvtLUS, FcvtLuS, "fcvt.lu.s");
 // F -> I: from double
-fcvt_f2i!(FcvtWD, FMT_D, int_type::W, "fcvt.w.d");
-fcvt_f2i!(FcvtWUD, FMT_D, int_type::WU, "fcvt.wu.d");
-fcvt_f2i!(FcvtLD, FMT_D, int_type::L, "fcvt.l.d");
-fcvt_f2i!(FcvtLUD, FMT_D, int_type::LU, "fcvt.lu.d");
+fcvt_f2i!(FcvtWD, FcvtWD, "fcvt.w.d");
+fcvt_f2i!(FcvtWUD, FcvtWuD, "fcvt.wu.d");
+fcvt_f2i!(FcvtLD, FcvtLD, "fcvt.l.d");
+fcvt_f2i!(FcvtLUD, FcvtLuD, "fcvt.lu.d");
 
 // I -> F: to single
-fcvt_i2f!(FcvtSW, FMT_S, int_type::W, "fcvt.s.w");
-fcvt_i2f!(FcvtSWU, FMT_S, int_type::WU, "fcvt.s.wu");
-fcvt_i2f!(FcvtSL, FMT_S, int_type::L, "fcvt.s.l");
-fcvt_i2f!(FcvtSLU, FMT_S, int_type::LU, "fcvt.s.lu");
+fcvt_i2f!(FcvtSW, FcvtSW, "fcvt.s.w");
+fcvt_i2f!(FcvtSWU, FcvtSWu, "fcvt.s.wu");
+fcvt_i2f!(FcvtSL, FcvtSL, "fcvt.s.l");
+fcvt_i2f!(FcvtSLU, FcvtSLu, "fcvt.s.lu");
 // I -> F: to double
-fcvt_i2f!(FcvtDW, FMT_D, int_type::W, "fcvt.d.w");
-fcvt_i2f!(FcvtDWU, FMT_D, int_type::WU, "fcvt.d.wu");
-fcvt_i2f!(FcvtDL, FMT_D, int_type::L, "fcvt.d.l");
-fcvt_i2f!(FcvtDLU, FMT_D, int_type::LU, "fcvt.d.lu");
+fcvt_i2f!(FcvtDW, FcvtDW, "fcvt.d.w");
+fcvt_i2f!(FcvtDWU, FcvtDWu, "fcvt.d.wu");
+fcvt_i2f!(FcvtDL, FcvtDL, "fcvt.d.l");
+fcvt_i2f!(FcvtDLU, FcvtDLu, "fcvt.d.lu");
 
 // F <-> F
-fcvt_f2f!(FcvtSD, 0b01000, FMT_S, FMT_D, "fcvt.s.d"); // double->single
-fcvt_f2f!(FcvtDS, 0b01001, FMT_D, FMT_S, "fcvt.d.s"); // single->double
+fcvt_f2f!(FcvtSD, "fcvt.s.d");
+fcvt_f2f!(FcvtDS, "fcvt.d.s");
 
 // --- FP Fused Multiply-Add / Subtract (R4-type) ---
 macro_rules! fmac_inst {
-    ($name:ident, $opcode:expr, $fmt:expr, $mnem:literal $(,)?) => {
+    ($name:ident, $suffix:literal, $mnem:literal $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $name {
             pub rd: Reg,
@@ -648,6 +667,11 @@ macro_rules! fmac_inst {
 
         impl $name {
             pub fn new(rd: Reg, rs1: Reg, rs2: Reg, rs3: Reg) -> Self {
+                assert!(
+                    rd < 32 && rs1 < 32 && rs2 < 32 && rs3 < 32,
+                    "{}: register out of range",
+                    $mnem
+                );
                 Self {
                     rd,
                     rs1,
@@ -670,24 +694,22 @@ macro_rules! fmac_inst {
 
         impl Instruction for $name {
             fn encode(&self) -> u32 {
-                R4Type {
-                    opcode: $opcode,
-                    rd: self.rd,
-                    rm: self.rm,
-                    rs1: self.rs1,
-                    rs2: self.rs2,
-                    fmt: $fmt,
-                    rs3: self.rs3,
-                }
-                .encode()
+                encode_fp(
+                    riscv_model::InstructionId::$name,
+                    self.rd,
+                    self.rs1,
+                    self.rs2,
+                    self.rs3,
+                    self.rm,
+                    0,
+                )
             }
 
             fn to_asm(&self) -> String {
-                let fmt_char = if $fmt == FMT_S { 's' } else { 'd' };
                 format!(
                     "{}.{} {}, {}, {}, {}",
                     $mnem,
-                    fmt_char,
+                    $suffix,
                     reg_name(self.rd, true),
                     reg_name(self.rs1, true),
                     reg_name(self.rs2, true),
@@ -702,14 +724,14 @@ macro_rules! fmac_inst {
     };
 }
 
-fmac_inst!(FmaddS, OP_FMADD, FMT_S, "fmadd");
-fmac_inst!(FmaddD, OP_FMADD, FMT_D, "fmadd");
-fmac_inst!(FmsubS, OP_FMSUB, FMT_S, "fmsub");
-fmac_inst!(FmsubD, OP_FMSUB, FMT_D, "fmsub");
-fmac_inst!(FnmsubS, OP_FNMSUB, FMT_S, "fnmsub");
-fmac_inst!(FnmsubD, OP_FNMSUB, FMT_D, "fnmsub");
-fmac_inst!(FnmaddS, OP_FNMADD, FMT_S, "fnmadd");
-fmac_inst!(FnmaddD, OP_FNMADD, FMT_D, "fnmadd");
+fmac_inst!(FmaddS, 's', "fmadd");
+fmac_inst!(FmaddD, 'd', "fmadd");
+fmac_inst!(FmsubS, 's', "fmsub");
+fmac_inst!(FmsubD, 'd', "fmsub");
+fmac_inst!(FnmsubS, 's', "fnmsub");
+fmac_inst!(FnmsubD, 'd', "fnmsub");
+fmac_inst!(FnmaddS, 's', "fnmadd");
+fmac_inst!(FnmaddD, 'd', "fnmadd");
 
 // --- FP Pseudo-instructions ---
 

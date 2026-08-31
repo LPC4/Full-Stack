@@ -6,11 +6,9 @@
 //! register is `rs1`. For immediate variants (CSRRWI, CSRRSI, CSRRCI)
 //! the 5-bit unsigned immediate is placed in the `rs1` field bits.
 
-use crate::encode_decode::{IType, Reg, RiscvFormat as _};
+use crate::encode_decode::Reg;
 use crate::traits::Instruction;
 use crate::utils::reg_name;
-
-const OP_SYSTEM: u8 = 0x73;
 
 // --- Common CSR addresses ---
 pub mod csr {
@@ -31,7 +29,7 @@ pub mod csr {
 // --- Register-operand CSR instructions (funct3 = 1-3) ---
 
 macro_rules! csr_reg_inst {
-    ($name:ident, $funct3:expr, $mnem:literal $(,)?) => {
+    ($name:ident, $mnem:literal $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $name {
             /// Destination register (rd). If rd = x0 the old CSR value is discarded.
@@ -45,6 +43,8 @@ macro_rules! csr_reg_inst {
 
         impl $name {
             pub fn new(rd: Reg, csr: u16, rs1: Reg) -> Self {
+                assert!(rd < 32, "{}: register x{rd} is out of range", $mnem);
+                assert!(rs1 < 32, "{}: register x{rs1} is out of range", $mnem);
                 assert!(
                     csr <= 0xFFF,
                     "{}: CSR address {:#x} out of range [0x000, 0xFFF]",
@@ -57,14 +57,16 @@ macro_rules! csr_reg_inst {
 
         impl Instruction for $name {
             fn encode(&self) -> u32 {
-                IType {
-                    opcode: OP_SYSTEM,
-                    rd: self.rd,
-                    funct3: $funct3,
-                    rs1: self.rs1,
-                    imm: self.csr as i32, // CSR address in imm[11:0]
-                }
-                .encode()
+                let rd = riscv_model::IntReg::new(self.rd).expect("validated destination register");
+                riscv_model::encode_base_integer(
+                    riscv_model::InstructionId::$name,
+                    riscv_model::DecodedOperands::Csr {
+                        rd,
+                        source: self.rs1,
+                        csr: self.csr,
+                    },
+                )
+                .unwrap_or_else(|error| panic!("{} descriptor error: {error:?}", $mnem))
             }
 
             fn to_asm(&self) -> String {
@@ -84,14 +86,14 @@ macro_rules! csr_reg_inst {
     };
 }
 
-csr_reg_inst!(Csrrw, 1, "csrrw");
-csr_reg_inst!(Csrrs, 2, "csrrs");
-csr_reg_inst!(Csrrc, 3, "csrrc");
+csr_reg_inst!(Csrrw, "csrrw");
+csr_reg_inst!(Csrrs, "csrrs");
+csr_reg_inst!(Csrrc, "csrrc");
 
 // --- Immediate-operand CSR instructions (funct3 = 5-7) ---
 
 macro_rules! csr_imm_inst {
-    ($name:ident, $funct3:expr, $mnem:literal $(,)?) => {
+    ($name:ident, $mnem:literal $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct $name {
             /// Destination register (rd).
@@ -104,11 +106,17 @@ macro_rules! csr_imm_inst {
 
         impl $name {
             pub fn new(rd: Reg, csr: u16, uimm: u8) -> Self {
+                assert!(rd < 32, "{}: register x{rd} is out of range", $mnem);
                 assert!(
                     csr <= 0xFFF,
                     "{}: CSR address {:#x} out of range [0x000, 0xFFF]",
                     $mnem,
                     csr
+                );
+                assert!(
+                    uimm < 32,
+                    "{}: immediate {uimm} out of range [0, 31]",
+                    $mnem
                 );
                 Self { rd, csr, uimm }
             }
@@ -116,14 +124,16 @@ macro_rules! csr_imm_inst {
 
         impl Instruction for $name {
             fn encode(&self) -> u32 {
-                IType {
-                    opcode: OP_SYSTEM,
-                    rd: self.rd,
-                    funct3: $funct3,
-                    rs1: self.uimm & 0x1F, // uimm in rs1 field
-                    imm: self.csr as i32,
-                }
-                .encode()
+                let rd = riscv_model::IntReg::new(self.rd).expect("validated destination register");
+                riscv_model::encode_base_integer(
+                    riscv_model::InstructionId::$name,
+                    riscv_model::DecodedOperands::Csr {
+                        rd,
+                        source: self.uimm,
+                        csr: self.csr,
+                    },
+                )
+                .unwrap_or_else(|error| panic!("{} descriptor error: {error:?}", $mnem))
             }
 
             fn to_asm(&self) -> String {
@@ -143,6 +153,6 @@ macro_rules! csr_imm_inst {
     };
 }
 
-csr_imm_inst!(Csrrwi, 5, "csrrwi");
-csr_imm_inst!(Csrrsi, 6, "csrrsi");
-csr_imm_inst!(Csrrci, 7, "csrrci");
+csr_imm_inst!(Csrrwi, "csrrwi");
+csr_imm_inst!(Csrrsi, "csrrsi");
+csr_imm_inst!(Csrrci, "csrrci");

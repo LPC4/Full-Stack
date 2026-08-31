@@ -176,28 +176,29 @@ impl RiscvFormat for BType {
     }
 }
 
-// --- U-Type: Upper Immediate (LUI, AUIPC) ---
+// --- U-Type: Upper Immediate ---
 // [imm[31:12]:31-12][rd:11-7][opcode:6-0]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UType {
     pub opcode: u8,
     pub rd: Reg,
-    pub imm: i32, // Upper 20 bits (imm[31:12])
+    pub imm: i32,
 }
 
 impl RiscvFormat for UType {
     #[inline]
     fn encode(self) -> u32 {
-        // Only bits 31-12 are used; lower 12 must be zero
-        ((self.imm as u32) & 0xFFFFF000) | ((self.rd as u32) << 7) | self.opcode as u32
+        (self.imm.cast_unsigned() & 0xffff_f000)
+            | (u32::from(self.rd) << 7)
+            | u32::from(self.opcode)
     }
 
     #[inline]
     fn decode(word: u32) -> Self {
         Self {
-            imm: (word & 0xFFFFF000) as i32,
-            rd: ((word >> 7) & 0x1F) as u8,
-            opcode: (word & 0x7F) as u8,
+            imm: (word & 0xffff_f000).cast_signed(),
+            rd: ((word >> 7) & 0x1f) as u8,
+            opcode: (word & 0x7f) as u8,
         }
     }
 }

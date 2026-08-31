@@ -5,156 +5,81 @@
 //! invoke them to generate the RV64I instruction set and add the few special
 //! cases that need custom encoding.
 
-use crate::encode_decode::{IType, Reg, RiscvFormat as _};
+use crate::encode_decode::Reg;
 use crate::traits::Instruction;
 use crate::utils::reg_name;
 use std::fmt::Debug;
 
+fn encode_immediate(id: riscv_model::InstructionId, rd: Reg, rs1: Reg, immediate: i32) -> u32 {
+    let rd = riscv_model::IntReg::new(rd).expect("validated destination register");
+    let rs1 = riscv_model::IntReg::new(rs1).expect("validated source register");
+    riscv_model::encode_base_integer(
+        id,
+        riscv_model::DecodedOperands::Immediate { rd, rs1, immediate },
+    )
+    .unwrap_or_else(|error| panic!("{} descriptor error: {error:?}", id.mnemonic()))
+}
+
+fn encode_fixed(id: riscv_model::InstructionId) -> u32 {
+    riscv_model::encode_base_integer(id, riscv_model::DecodedOperands::None)
+        .unwrap_or_else(|error| panic!("{} descriptor error: {error:?}", id.mnemonic()))
+}
+
 // --- Integer register-register instructions ---
 
-r_inst!(
-    Add,
-    opcode = 0x33,
-    funct3 = 0,
-    funct7 = 0x00,
-    mnemonic = "add"
-);
-r_inst!(
-    Sub,
-    opcode = 0x33,
-    funct3 = 0,
-    funct7 = 0x20,
-    mnemonic = "sub"
-);
-r_inst!(
-    Sll,
-    opcode = 0x33,
-    funct3 = 1,
-    funct7 = 0x00,
-    mnemonic = "sll"
-);
-r_inst!(
-    Slt,
-    opcode = 0x33,
-    funct3 = 2,
-    funct7 = 0x00,
-    mnemonic = "slt"
-);
-r_inst!(
-    Sltu,
-    opcode = 0x33,
-    funct3 = 3,
-    funct7 = 0x00,
-    mnemonic = "sltu"
-);
-r_inst!(
-    Xor,
-    opcode = 0x33,
-    funct3 = 4,
-    funct7 = 0x00,
-    mnemonic = "xor"
-);
-r_inst!(
-    Srl,
-    opcode = 0x33,
-    funct3 = 5,
-    funct7 = 0x00,
-    mnemonic = "srl"
-);
-r_inst!(
-    Sra,
-    opcode = 0x33,
-    funct3 = 5,
-    funct7 = 0x20,
-    mnemonic = "sra"
-);
-r_inst!(
-    Or,
-    opcode = 0x33,
-    funct3 = 6,
-    funct7 = 0x00,
-    mnemonic = "or"
-);
-r_inst!(
-    And,
-    opcode = 0x33,
-    funct3 = 7,
-    funct7 = 0x00,
-    mnemonic = "and"
-);
+r_inst!(Add, mnemonic = "add");
+r_inst!(Sub, mnemonic = "sub");
+r_inst!(Sll, mnemonic = "sll");
+r_inst!(Slt, mnemonic = "slt");
+r_inst!(Sltu, mnemonic = "sltu");
+r_inst!(Xor, mnemonic = "xor");
+r_inst!(Srl, mnemonic = "srl");
+r_inst!(Sra, mnemonic = "sra");
+r_inst!(Or, mnemonic = "or");
+r_inst!(And, mnemonic = "and");
 
-r_inst!(
-    Addw,
-    opcode = 0x3B,
-    funct3 = 0,
-    funct7 = 0x00,
-    mnemonic = "addw"
-);
-r_inst!(
-    Subw,
-    opcode = 0x3B,
-    funct3 = 0,
-    funct7 = 0x20,
-    mnemonic = "subw"
-);
-r_inst!(
-    Sllw,
-    opcode = 0x3B,
-    funct3 = 1,
-    funct7 = 0x00,
-    mnemonic = "sllw"
-);
-r_inst!(
-    Srlw,
-    opcode = 0x3B,
-    funct3 = 5,
-    funct7 = 0x00,
-    mnemonic = "srlw"
-);
-r_inst!(
-    Sraw,
-    opcode = 0x3B,
-    funct3 = 5,
-    funct7 = 0x20,
-    mnemonic = "sraw"
-);
+r_inst!(Addw, mnemonic = "addw");
+r_inst!(Subw, mnemonic = "subw");
+r_inst!(Sllw, mnemonic = "sllw");
+r_inst!(Srlw, mnemonic = "srlw");
+r_inst!(Sraw, mnemonic = "sraw");
 
 // --- Integer immediate arithmetic / shifts ---
 
-i_imm_inst!(Addi, opcode = 0x13, funct3 = 0, mnemonic = "addi");
-i_imm_inst!(Slti, opcode = 0x13, funct3 = 2, mnemonic = "slti");
-i_imm_inst!(Sltiu, opcode = 0x13, funct3 = 3, mnemonic = "sltiu");
-i_imm_inst!(Xori, opcode = 0x13, funct3 = 4, mnemonic = "xori");
-i_imm_inst!(Ori, opcode = 0x13, funct3 = 6, mnemonic = "ori");
-i_imm_inst!(Andi, opcode = 0x13, funct3 = 7, mnemonic = "andi");
+i_imm_inst!(Addi, mnemonic = "addi");
+i_imm_inst!(Slti, mnemonic = "slti");
+i_imm_inst!(Sltiu, mnemonic = "sltiu");
+i_imm_inst!(Xori, mnemonic = "xori");
+i_imm_inst!(Ori, mnemonic = "ori");
+i_imm_inst!(Andi, mnemonic = "andi");
 
 // RV64W immediate instructions use opcode 0x1B.
-i_imm_inst!(Addiw, opcode = 0x1B, funct3 = 0, mnemonic = "addiw");
+i_imm_inst!(Addiw, mnemonic = "addiw");
 
 // --- Loads / stores / branches / upper-immediate / jumps ---
 
-i_load_inst!(Lb, funct3 = 0, mnemonic = "lb");
-i_load_inst!(Lh, funct3 = 1, mnemonic = "lh");
-i_load_inst!(Lw, funct3 = 2, mnemonic = "lw");
-i_load_inst!(Ld, funct3 = 3, mnemonic = "ld");
-i_load_inst!(Lbu, funct3 = 4, mnemonic = "lbu");
-i_load_inst!(Lhu, funct3 = 5, mnemonic = "lhu");
-i_load_inst!(Lwu, funct3 = 6, mnemonic = "lwu");
+i_load_inst!(Lb, mnemonic = "lb");
+i_load_inst!(Lh, mnemonic = "lh");
+i_load_inst!(Lw, mnemonic = "lw");
+i_load_inst!(Ld, mnemonic = "ld");
+i_load_inst!(Lbu, mnemonic = "lbu");
+i_load_inst!(Lhu, mnemonic = "lhu");
+i_load_inst!(Lwu, mnemonic = "lwu");
 
-s_inst!(Sb, funct3 = 0, mnemonic = "sb");
-s_inst!(Sh, funct3 = 1, mnemonic = "sh");
-s_inst!(Sw, funct3 = 2, mnemonic = "sw");
-s_inst!(Sd, funct3 = 3, mnemonic = "sd");
+s_inst!(Sb, mnemonic = "sb");
+s_inst!(Sh, mnemonic = "sh");
+s_inst!(Sw, mnemonic = "sw");
+s_inst!(Sd, mnemonic = "sd");
 
-b_inst!(Beq, funct3 = 0, mnemonic = "beq");
-b_inst!(Bne, funct3 = 1, mnemonic = "bne");
-b_inst!(Blt, funct3 = 4, mnemonic = "blt");
-b_inst!(Bge, funct3 = 5, mnemonic = "bge");
-b_inst!(Bltu, funct3 = 6, mnemonic = "bltu");
-b_inst!(Bgeu, funct3 = 7, mnemonic = "bgeu");
+b_inst!(Beq, mnemonic = "beq");
+b_inst!(Bne, mnemonic = "bne");
+b_inst!(Blt, mnemonic = "blt");
+b_inst!(Bge, mnemonic = "bge");
+b_inst!(Bltu, mnemonic = "bltu");
+b_inst!(Bgeu, mnemonic = "bgeu");
 
-u_inst!(Lui, opcode = 0x37, mnemonic = "lui");
-u_inst!(Auipc, opcode = 0x17, mnemonic = "auipc");
+u_inst!(Lui, mnemonic = "lui");
+u_inst!(Auipc, mnemonic = "auipc");
 
 j_inst!(Jal, mnemonic = "jal");
 
@@ -169,6 +94,8 @@ pub struct Slli {
 }
 impl Slli {
     pub fn new(rd: Reg, rs1: Reg, shamt: u8) -> Self {
+        assert!(rd < 32, "slli: register x{rd} is out of range");
+        assert!(rs1 < 32, "slli: register x{rs1} is out of range");
         assert!(
             shamt <= 63,
             "slli: shift amount {shamt} out of range [0, 63]"
@@ -178,15 +105,12 @@ impl Slli {
 }
 impl Instruction for Slli {
     fn encode(&self) -> u32 {
-        let imm = self.shamt as i32; // funct7 = 0x00
-        IType {
-            opcode: 0x13,
-            rd: self.rd,
-            funct3: 1,
-            rs1: self.rs1,
-            imm,
-        }
-        .encode()
+        encode_immediate(
+            riscv_model::InstructionId::Slli,
+            self.rd,
+            self.rs1,
+            i32::from(self.shamt),
+        )
     }
     fn to_asm(&self) -> String {
         format!(
@@ -209,6 +133,8 @@ pub struct Srli {
 }
 impl Srli {
     pub fn new(rd: Reg, rs1: Reg, shamt: u8) -> Self {
+        assert!(rd < 32, "srli: register x{rd} is out of range");
+        assert!(rs1 < 32, "srli: register x{rs1} is out of range");
         assert!(
             shamt <= 63,
             "srli: shift amount {shamt} out of range [0, 63]"
@@ -218,15 +144,12 @@ impl Srli {
 }
 impl Instruction for Srli {
     fn encode(&self) -> u32 {
-        let imm = self.shamt as i32;
-        IType {
-            opcode: 0x13,
-            rd: self.rd,
-            funct3: 5,
-            rs1: self.rs1,
-            imm,
-        }
-        .encode()
+        encode_immediate(
+            riscv_model::InstructionId::Srli,
+            self.rd,
+            self.rs1,
+            i32::from(self.shamt),
+        )
     }
     fn to_asm(&self) -> String {
         format!(
@@ -249,6 +172,8 @@ pub struct Srai {
 }
 impl Srai {
     pub fn new(rd: Reg, rs1: Reg, shamt: u8) -> Self {
+        assert!(rd < 32, "srai: register x{rd} is out of range");
+        assert!(rs1 < 32, "srai: register x{rs1} is out of range");
         assert!(
             shamt <= 63,
             "srai: shift amount {shamt} out of range [0, 63]"
@@ -258,15 +183,12 @@ impl Srai {
 }
 impl Instruction for Srai {
     fn encode(&self) -> u32 {
-        let imm = (self.shamt as i32) | (0x20i32 << 5); // funct7 = 0x20
-        IType {
-            opcode: 0x13,
-            rd: self.rd,
-            funct3: 5,
-            rs1: self.rs1,
-            imm,
-        }
-        .encode()
+        encode_immediate(
+            riscv_model::InstructionId::Srai,
+            self.rd,
+            self.rs1,
+            i32::from(self.shamt),
+        )
     }
     fn to_asm(&self) -> String {
         format!(
@@ -290,6 +212,8 @@ pub struct Slliw {
 }
 impl Slliw {
     pub fn new(rd: Reg, rs1: Reg, shamt: u8) -> Self {
+        assert!(rd < 32, "slliw: register x{rd} is out of range");
+        assert!(rs1 < 32, "slliw: register x{rs1} is out of range");
         assert!(
             shamt <= 31,
             "slliw: shift amount {shamt} out of range [0, 31]"
@@ -299,15 +223,12 @@ impl Slliw {
 }
 impl Instruction for Slliw {
     fn encode(&self) -> u32 {
-        let imm = self.shamt as i32; // funct7 = 0x00
-        IType {
-            opcode: 0x1B,
-            rd: self.rd,
-            funct3: 1,
-            rs1: self.rs1,
-            imm,
-        }
-        .encode()
+        encode_immediate(
+            riscv_model::InstructionId::Slliw,
+            self.rd,
+            self.rs1,
+            i32::from(self.shamt),
+        )
     }
     fn to_asm(&self) -> String {
         format!(
@@ -330,6 +251,8 @@ pub struct Srliw {
 }
 impl Srliw {
     pub fn new(rd: Reg, rs1: Reg, shamt: u8) -> Self {
+        assert!(rd < 32, "srliw: register x{rd} is out of range");
+        assert!(rs1 < 32, "srliw: register x{rs1} is out of range");
         assert!(
             shamt <= 31,
             "srliw: shift amount {shamt} out of range [0, 31]"
@@ -339,15 +262,12 @@ impl Srliw {
 }
 impl Instruction for Srliw {
     fn encode(&self) -> u32 {
-        let imm = self.shamt as i32;
-        IType {
-            opcode: 0x1B,
-            rd: self.rd,
-            funct3: 5,
-            rs1: self.rs1,
-            imm,
-        }
-        .encode()
+        encode_immediate(
+            riscv_model::InstructionId::Srliw,
+            self.rd,
+            self.rs1,
+            i32::from(self.shamt),
+        )
     }
     fn to_asm(&self) -> String {
         format!(
@@ -370,6 +290,8 @@ pub struct Sraiw {
 }
 impl Sraiw {
     pub fn new(rd: Reg, rs1: Reg, shamt: u8) -> Self {
+        assert!(rd < 32, "sraiw: register x{rd} is out of range");
+        assert!(rs1 < 32, "sraiw: register x{rs1} is out of range");
         assert!(
             shamt <= 31,
             "sraiw: shift amount {shamt} out of range [0, 31]"
@@ -379,15 +301,12 @@ impl Sraiw {
 }
 impl Instruction for Sraiw {
     fn encode(&self) -> u32 {
-        let imm = (self.shamt as i32) | (0x20i32 << 5); // funct7 = 0x20
-        IType {
-            opcode: 0x1B,
-            rd: self.rd,
-            funct3: 5,
-            rs1: self.rs1,
-            imm,
-        }
-        .encode()
+        encode_immediate(
+            riscv_model::InstructionId::Sraiw,
+            self.rd,
+            self.rs1,
+            i32::from(self.shamt),
+        )
     }
     fn to_asm(&self) -> String {
         format!(
@@ -412,20 +331,24 @@ pub struct Jalr {
 
 impl Jalr {
     pub fn new(rd: Reg, rs1: Reg, imm: i32) -> Self {
+        assert!(rd < 32, "jalr: register x{rd} is out of range");
+        assert!(rs1 < 32, "jalr: register x{rs1} is out of range");
+        assert!(
+            (-2048..=2047).contains(&imm),
+            "jalr: immediate {imm} out of range [-2048, 2047]"
+        );
         Self { rd, rs1, imm }
     }
 }
 
 impl Instruction for Jalr {
     fn encode(&self) -> u32 {
-        IType {
-            opcode: 0x67,
-            rd: self.rd,
-            funct3: 0,
-            rs1: self.rs1,
-            imm: self.imm,
-        }
-        .encode()
+        encode_immediate(
+            riscv_model::InstructionId::Jalr,
+            self.rd,
+            self.rs1,
+            self.imm,
+        )
     }
 
     fn to_asm(&self) -> String {
@@ -461,14 +384,7 @@ impl Ecall {
 
 impl Instruction for Ecall {
     fn encode(&self) -> u32 {
-        IType {
-            opcode: 0x73,
-            rd: 0,
-            funct3: 0,
-            rs1: 0,
-            imm: 0x000,
-        }
-        .encode()
+        encode_fixed(riscv_model::InstructionId::Ecall)
     }
 
     fn to_asm(&self) -> String {
@@ -498,14 +414,7 @@ impl Ebreak {
 
 impl Instruction for Ebreak {
     fn encode(&self) -> u32 {
-        IType {
-            opcode: 0x73,
-            rd: 0,
-            funct3: 0,
-            rs1: 0,
-            imm: 0x001,
-        }
-        .encode()
+        encode_fixed(riscv_model::InstructionId::Ebreak)
     }
 
     fn to_asm(&self) -> String {
@@ -535,7 +444,7 @@ impl Mret {
 
 impl Instruction for Mret {
     fn encode(&self) -> u32 {
-        0x30200073
+        encode_fixed(riscv_model::InstructionId::Mret)
     }
 
     fn to_asm(&self) -> String {
@@ -565,7 +474,7 @@ impl Sret {
 
 impl Instruction for Sret {
     fn encode(&self) -> u32 {
-        0x10200073
+        encode_fixed(riscv_model::InstructionId::Sret)
     }
 
     fn to_asm(&self) -> String {
@@ -595,7 +504,7 @@ impl SfenceVma {
 
 impl Instruction for SfenceVma {
     fn encode(&self) -> u32 {
-        0x12000073
+        encode_fixed(riscv_model::InstructionId::SfenceVma)
     }
 
     fn to_asm(&self) -> String {
@@ -625,8 +534,7 @@ impl Wfi {
 
 impl Instruction for Wfi {
     fn encode(&self) -> u32 {
-        // WFI is SYSTEM with immediate 0x105 and opcode 0x73.
-        0x10500073
+        encode_fixed(riscv_model::InstructionId::Wfi)
     }
 
     fn to_asm(&self) -> String {
@@ -648,23 +556,29 @@ pub struct Fence {
 
 impl Fence {
     pub fn new(pred: u8, succ: u8) -> Self {
+        assert!(
+            pred <= 0xf,
+            "fence: predecessor mask {pred:#x} is out of range"
+        );
+        assert!(
+            succ <= 0xf,
+            "fence: successor mask {succ:#x} is out of range"
+        );
         Self { fm: 0, pred, succ }
     }
 }
 
 impl Instruction for Fence {
     fn encode(&self) -> u32 {
-        let imm = (((self.fm as i32) & 0xF) << 8)
-            | (((self.pred as i32) & 0xF) << 4)
-            | ((self.succ as i32) & 0xF);
-        IType {
-            opcode: 0x0F,
-            rd: 0,
-            funct3: 0,
-            rs1: 0,
-            imm,
-        }
-        .encode()
+        riscv_model::encode_base_integer(
+            riscv_model::InstructionId::Fence,
+            riscv_model::DecodedOperands::Fence {
+                fm: self.fm,
+                predecessor: self.pred,
+                successor: self.succ,
+            },
+        )
+        .unwrap_or_else(|error| panic!("fence descriptor error: {error:?}"))
     }
 
     fn to_asm(&self) -> String {
@@ -723,14 +637,7 @@ impl FenceI {
 
 impl Instruction for FenceI {
     fn encode(&self) -> u32 {
-        IType {
-            opcode: 0x0F,
-            rd: 0,
-            funct3: 1,
-            rs1: 0,
-            imm: 0,
-        }
-        .encode()
+        encode_fixed(riscv_model::InstructionId::FenceI)
     }
 
     fn to_asm(&self) -> String {

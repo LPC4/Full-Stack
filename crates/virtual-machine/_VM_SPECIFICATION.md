@@ -238,10 +238,26 @@ let instruction = bus.read_word(phys_addr)
 - `InstructionId`: Canonical operation identity from the dependency-light `riscv-model` crate
 - **Error:** `IllegalInstruction(opcode)` if opcode is invalid
 
-`DecodedInsn` remains a VM-local operand carrier during the decoder migration. Operation identity
-and explicit integer/FP register-use classification are shared contracts owned by `riscv-model`.
+`DecodedInsn` remains a VM-local operand carrier. Operation identity, register names and aliases,
+encoding masks, extracted operands, extension/privilege classes, and explicit integer/FP
+register-use classification are shared contracts owned by `riscv-model`.
 The pipeline uses that metadata for hazards and forwarding instead of deriving operation classes
 from decoder variant selectors.
+
+All 160 canonical instructions in the supported RV64IMAFD, Zicsr, Zifencei, and privileged
+subset are decoded through shared descriptor tables. The VM maps shared decoded operands into
+its local execution carrier but does not own an opcode dispatch table. Reserved selectors,
+invalid rounding modes, invalid fixed operands, and unsupported encodings are rejected by the
+shared decoder.
+
+`InstructionId::ALL` and `InstructionId::parity` form the machine-readable support inventory. The
+current inventory contains 160 unique identities. Register metadata is implemented for each, and
+valid-instruction encoding and decoding are implemented except that `sfence.vma` accepts only the
+zero-register form. Pipeline support is marked partial for `mret`, `sfence.vma`, and `wfi`:
+`mret` does not yet reject execution below M-mode, `sfence.vma` does not enforce its privilege
+requirement, and `wfi` is a non-blocking no-op without privilege checks. Operand-validation parity
+is complete for every modeled instruction except the intentionally limited zero-register
+`sfence.vma` form.
 
 **Decode Categories:**
 - **R-type:** ALU operations (add, sub, mul, div, etc.)

@@ -5,10 +5,8 @@
 //! `aq` (acquire) and `rl` (release) ordering bits can be independently set.
 
 use super::super::traits::Instruction;
-use crate::encode_decode::{AtomicType, Reg, RiscvFormat as _};
+use crate::encode_decode::Reg;
 use crate::utils::reg_name;
-
-const AMO_OPCODE: u8 = 0x2F;
 
 /// Ordering annotation appended to an AMO mnemonic string.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -53,8 +51,7 @@ impl Ordering {
 macro_rules! amo_inst {
     (
         $name:ident,
-        funct3   = $f3:expr,
-        funct5   = $f5:expr,
+        suffix   = $suffix:literal,
         mnemonic = $m:literal $(,)?
     ) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,6 +67,9 @@ macro_rules! amo_inst {
 
         impl $name {
             pub fn new(rd: Reg, addr: Reg, src: Reg) -> Self {
+                assert!(rd < 32, "{}: register x{rd} is out of range", $m);
+                assert!(addr < 32, "{}: register x{addr} is out of range", $m);
+                assert!(src < 32, "{}: register x{src} is out of range", $m);
                 Self {
                     rd,
                     addr,
@@ -85,24 +85,25 @@ macro_rules! amo_inst {
 
         impl Instruction for $name {
             fn encode(&self) -> u32 {
-                AtomicType {
-                    opcode: AMO_OPCODE,
-                    rd: self.rd,
-                    funct3: $f3,
-                    rs1: self.addr,
-                    rs2: self.src,
-                    rl: self.ordering.rl,
-                    aq: self.ordering.aq,
-                    funct5: $f5,
-                }
-                .encode()
+                let rd = riscv_model::IntReg::new(self.rd).expect("validated destination register");
+                let rs1 = riscv_model::IntReg::new(self.addr).expect("validated address register");
+                let rs2 = riscv_model::IntReg::new(self.src).expect("validated source register");
+                riscv_model::encode_atomic(
+                    riscv_model::InstructionId::$name,
+                    rd,
+                    rs1,
+                    rs2,
+                    self.ordering.aq,
+                    self.ordering.rl,
+                )
+                .unwrap_or_else(|error| panic!("{} descriptor error: {error:?}", $m))
             }
 
             fn to_asm(&self) -> String {
                 format!(
                     "{}{}{} {}, {}, ({})",
                     $m,
-                    if $f3 == 2 { ".w" } else { ".d" },
+                    $suffix,
                     self.ordering.suffix(),
                     reg_name(self.rd, false),
                     reg_name(self.src, false),
@@ -119,27 +120,27 @@ macro_rules! amo_inst {
 
 // --- Word (.w, funct3=2) AMO instructions - funct5 values per spec ---
 
-amo_inst!(AmoaddW, funct3 = 2, funct5 = 0x00, mnemonic = "amoadd");
-amo_inst!(AmoswapW, funct3 = 2, funct5 = 0x01, mnemonic = "amoswap");
-amo_inst!(AmoxorW, funct3 = 2, funct5 = 0x04, mnemonic = "amoxor");
-amo_inst!(AmoandW, funct3 = 2, funct5 = 0x0C, mnemonic = "amoand");
-amo_inst!(AmoorW, funct3 = 2, funct5 = 0x08, mnemonic = "amoor");
-amo_inst!(AmominW, funct3 = 2, funct5 = 0x10, mnemonic = "amomin");
-amo_inst!(AmomaxW, funct3 = 2, funct5 = 0x14, mnemonic = "amomax");
-amo_inst!(AmominuW, funct3 = 2, funct5 = 0x18, mnemonic = "amominu");
-amo_inst!(AmomaxuW, funct3 = 2, funct5 = 0x1C, mnemonic = "amomaxu");
+amo_inst!(AmoaddW, suffix = ".w", mnemonic = "amoadd");
+amo_inst!(AmoswapW, suffix = ".w", mnemonic = "amoswap");
+amo_inst!(AmoxorW, suffix = ".w", mnemonic = "amoxor");
+amo_inst!(AmoandW, suffix = ".w", mnemonic = "amoand");
+amo_inst!(AmoorW, suffix = ".w", mnemonic = "amoor");
+amo_inst!(AmominW, suffix = ".w", mnemonic = "amomin");
+amo_inst!(AmomaxW, suffix = ".w", mnemonic = "amomax");
+amo_inst!(AmominuW, suffix = ".w", mnemonic = "amominu");
+amo_inst!(AmomaxuW, suffix = ".w", mnemonic = "amomaxu");
 
 // --- Doubleword (.d, funct3=3) AMO instructions ---
 
-amo_inst!(AmoaddD, funct3 = 3, funct5 = 0x00, mnemonic = "amoadd");
-amo_inst!(AmoswapD, funct3 = 3, funct5 = 0x01, mnemonic = "amoswap");
-amo_inst!(AmoxorD, funct3 = 3, funct5 = 0x04, mnemonic = "amoxor");
-amo_inst!(AmoandD, funct3 = 3, funct5 = 0x0C, mnemonic = "amoand");
-amo_inst!(AmoorD, funct3 = 3, funct5 = 0x08, mnemonic = "amoor");
-amo_inst!(AmominD, funct3 = 3, funct5 = 0x10, mnemonic = "amomin");
-amo_inst!(AmomaxD, funct3 = 3, funct5 = 0x14, mnemonic = "amomax");
-amo_inst!(AmominuD, funct3 = 3, funct5 = 0x18, mnemonic = "amominu");
-amo_inst!(AmomaxuD, funct3 = 3, funct5 = 0x1C, mnemonic = "amomaxu");
+amo_inst!(AmoaddD, suffix = ".d", mnemonic = "amoadd");
+amo_inst!(AmoswapD, suffix = ".d", mnemonic = "amoswap");
+amo_inst!(AmoxorD, suffix = ".d", mnemonic = "amoxor");
+amo_inst!(AmoandD, suffix = ".d", mnemonic = "amoand");
+amo_inst!(AmoorD, suffix = ".d", mnemonic = "amoor");
+amo_inst!(AmominD, suffix = ".d", mnemonic = "amomin");
+amo_inst!(AmomaxD, suffix = ".d", mnemonic = "amomax");
+amo_inst!(AmominuD, suffix = ".d", mnemonic = "amominu");
+amo_inst!(AmomaxuD, suffix = ".d", mnemonic = "amomaxu");
 
 // --- Load-Reserved / Store-Conditional  (LR has no rs2; SC has all three) ---
 
@@ -156,6 +157,8 @@ pub struct Lr {
 
 impl Lr {
     pub fn w(rd: Reg, addr: Reg) -> Self {
+        assert!(rd < 32, "lr: register x{rd} is out of range");
+        assert!(addr < 32, "lr: register x{addr} is out of range");
         Self {
             rd,
             addr,
@@ -164,6 +167,8 @@ impl Lr {
         }
     }
     pub fn d(rd: Reg, addr: Reg) -> Self {
+        assert!(rd < 32, "lr: register x{rd} is out of range");
+        assert!(addr < 32, "lr: register x{addr} is out of range");
         Self {
             rd,
             addr,
@@ -179,17 +184,16 @@ impl Lr {
 
 impl Instruction for Lr {
     fn encode(&self) -> u32 {
-        AtomicType {
-            opcode: AMO_OPCODE,
-            rd: self.rd,
-            funct3: if self.double { 3 } else { 2 },
-            rs1: self.addr,
-            rs2: 0, // must be x0
-            rl: self.ordering.rl,
-            aq: self.ordering.aq,
-            funct5: 0x02,
-        }
-        .encode()
+        let rd = riscv_model::IntReg::new(self.rd).expect("validated destination register");
+        let rs1 = riscv_model::IntReg::new(self.addr).expect("validated address register");
+        let rs2 = riscv_model::IntReg::new(0).expect("zero register is valid");
+        let id = if self.double {
+            riscv_model::InstructionId::LrD
+        } else {
+            riscv_model::InstructionId::LrW
+        };
+        riscv_model::encode_atomic(id, rd, rs1, rs2, self.ordering.aq, self.ordering.rl)
+            .unwrap_or_else(|error| panic!("lr descriptor error: {error:?}"))
     }
 
     fn to_asm(&self) -> String {
@@ -222,6 +226,9 @@ pub struct Sc {
 
 impl Sc {
     pub fn w(rd: Reg, addr: Reg, src: Reg) -> Self {
+        assert!(rd < 32, "sc: register x{rd} is out of range");
+        assert!(addr < 32, "sc: register x{addr} is out of range");
+        assert!(src < 32, "sc: register x{src} is out of range");
         Self {
             rd,
             addr,
@@ -231,6 +238,9 @@ impl Sc {
         }
     }
     pub fn d(rd: Reg, addr: Reg, src: Reg) -> Self {
+        assert!(rd < 32, "sc: register x{rd} is out of range");
+        assert!(addr < 32, "sc: register x{addr} is out of range");
+        assert!(src < 32, "sc: register x{src} is out of range");
         Self {
             rd,
             addr,
@@ -247,17 +257,16 @@ impl Sc {
 
 impl Instruction for Sc {
     fn encode(&self) -> u32 {
-        AtomicType {
-            opcode: AMO_OPCODE,
-            rd: self.rd,
-            funct3: if self.double { 3 } else { 2 },
-            rs1: self.addr,
-            rs2: self.src,
-            rl: self.ordering.rl,
-            aq: self.ordering.aq,
-            funct5: 0x03,
-        }
-        .encode()
+        let rd = riscv_model::IntReg::new(self.rd).expect("validated destination register");
+        let rs1 = riscv_model::IntReg::new(self.addr).expect("validated address register");
+        let rs2 = riscv_model::IntReg::new(self.src).expect("validated source register");
+        let id = if self.double {
+            riscv_model::InstructionId::ScD
+        } else {
+            riscv_model::InstructionId::ScW
+        };
+        riscv_model::encode_atomic(id, rd, rs1, rs2, self.ordering.aq, self.ordering.rl)
+            .unwrap_or_else(|error| panic!("sc descriptor error: {error:?}"))
     }
 
     fn to_asm(&self) -> String {

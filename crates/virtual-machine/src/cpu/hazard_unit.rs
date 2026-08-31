@@ -222,7 +222,7 @@ pub fn compute_forwarding(
 
 #[cfg(test)]
 mod tests {
-    use super::{insn_frs1, insn_frs2, insn_is_fp_dest, insn_rs1, insn_rs2};
+    use super::{insn_frs1, insn_frs2, insn_is_fp_dest, insn_rd, insn_rs1, insn_rs2};
     use crate::cpu::decoder::DecodedInsn;
 
     #[test]
@@ -249,5 +249,32 @@ mod tests {
         assert_eq!(insn_rs1(&conversion), 6);
         assert_eq!(insn_frs1(&conversion), 0);
         assert!(insn_is_fp_dest(&conversion));
+    }
+
+    #[test]
+    fn upper_immediate_metadata_has_one_integer_destination() {
+        let instruction = DecodedInsn::Auipc {
+            rd: 12,
+            imm: 0x1000,
+        };
+        assert_eq!(insn_rd(&instruction), 12);
+        assert_eq!(insn_rs1(&instruction), 0);
+        assert_eq!(insn_rs2(&instruction), 0);
+        assert!(!insn_is_fp_dest(&instruction));
+    }
+
+    #[test]
+    fn register_register_metadata_has_two_integer_sources_and_destination() {
+        let instruction = DecodedInsn::Alu {
+            funct3: 0,
+            funct7: 1,
+            rd: 12,
+            rs1: 13,
+            rs2: 14,
+        };
+        assert_eq!(insn_rd(&instruction), 12);
+        assert_eq!(insn_rs1(&instruction), 13);
+        assert_eq!(insn_rs2(&instruction), 14);
+        assert!(!insn_is_fp_dest(&instruction));
     }
 }

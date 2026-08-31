@@ -1,8 +1,102 @@
 use asm_to_binary::riscv::rv64i::*;
 use asm_to_binary::riscv::rv64m::*;
 use asm_to_binary::traits::Instruction as _;
+use riscv_model::{InstructionFormat, REGISTER_REGISTER_SPECS, RETAINED_ENCODING_VECTORS};
 use virtual_machine::cpu::decoder::{DecodedInsn, decode};
 use virtual_machine::error::VmError;
+
+#[test]
+fn decoder_matches_retained_riscv_opcode_vectors() {
+    for vector in RETAINED_ENCODING_VECTORS {
+        let decoded = decode(vector.word).expect("retained encoding should decode");
+        assert_eq!(decoded.instruction_id(), Some(vector.id));
+    }
+}
+
+#[test]
+fn shared_upper_immediate_decoder_matches_legacy_fields() {
+    let immediates = [
+        0x0000_0000,
+        0x0000_1000,
+        0x7fff_f000,
+        0x8000_0000,
+        0xffff_f000,
+    ];
+    for (opcode, expected_id) in [
+        (0x37, riscv_model::InstructionId::Lui),
+        (0x17, riscv_model::InstructionId::Auipc),
+    ] {
+        for rd in 0..32 {
+            for immediate in immediates {
+                let word = immediate | (rd << 7) | opcode;
+                let decoded = decode(word).expect("upper-immediate word should decode");
+                assert_eq!(decoded.instruction_id(), Some(expected_id));
+                match decoded {
+                    DecodedInsn::Lui { rd: actual_rd, imm }
+                    | DecodedInsn::Auipc { rd: actual_rd, imm } => {
+                        assert_eq!(actual_rd, rd as usize);
+                        assert_eq!(imm, i64::from(immediate.cast_signed()));
+                    }
+                    other => panic!("expected upper-immediate instruction, got {other:?}"),
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn shared_register_register_decoder_matches_legacy_fields() {
+    for spec in REGISTER_REGISTER_SPECS {
+        for rd in [0_u8, 1, 30, 31] {
+            for rs1 in [0_u8, 1, 30, 31] {
+                for rs2 in [0_u8, 1, 30, 31] {
+                    let word = spec.match_bits
+                        | (u32::from(rs2) << 20)
+                        | (u32::from(rs1) << 15)
+                        | (u32::from(rd) << 7);
+                    let decoded = decode(word).expect("register-register word should decode");
+                    assert_eq!(decoded.instruction_id(), Some(spec.id));
+                    match (spec.format, decoded) {
+                        (
+                            InstructionFormat::RegisterRegister,
+                            DecodedInsn::Alu {
+                                rd: actual_rd,
+                                rs1: actual_rs1,
+                                rs2: actual_rs2,
+                                ..
+                            },
+                        )
+                        | (
+                            InstructionFormat::RegisterRegisterWord,
+                            DecodedInsn::Alu32 {
+                                rd: actual_rd,
+                                rs1: actual_rs1,
+                                rs2: actual_rs2,
+                                ..
+                            },
+                        ) => {
+                            assert_eq!(
+                                (actual_rd, actual_rs1, actual_rs2),
+                                (usize::from(rd), usize::from(rs1), usize::from(rs2))
+                            );
+                        }
+                        (format, other) => {
+                            panic!(
+                                "expected {format:?} register-register instruction, got {other:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn shared_register_register_decoder_rejects_reserved_selectors() {
+    let word = 0xfe00_0033;
+    assert!(matches!(decode(word), Err(VmError::IllegalInstruction(actual)) if actual == word));
+}
 
 #[test]
 fn decode_lui() {

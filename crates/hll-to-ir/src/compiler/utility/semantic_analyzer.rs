@@ -594,13 +594,13 @@ impl SemanticAnalyzer {
         requires_scalar: bool,
         writes_register: bool,
     ) -> Result<(), ()> {
-        let Some(register) = asm_to_binary::parse_integer_register(reg) else {
+        let Some(register) = riscv_model::IntReg::parse(reg) else {
             self.error(format!(
                 "asm bridge: `{reg}` is not an integer register (mv/la bridges move integer values)"
             ));
             return Err(());
         };
-        if writes_register && matches!(register, 0 | 2) {
+        if writes_register && matches!(register.number(), 0 | 2) {
             self.error(format!(
                 "asm bridge cannot write `{reg}`; zero discards values and sp owns the HLL frame"
             ));

@@ -261,7 +261,7 @@ pub(crate) fn highlight(code: &str, out: &mut Out) {
                 } else if INSTRUCTIONS.contains(&word) {
                     out.push(base + start, base + end, Class::Keyword);
                     start = end;
-                } else if asm_to_binary::isa::is_register_name(word) {
+                } else if riscv_model::is_register_name(word) {
                     out.push(base + start, base + end, Class::Register);
                     start = end;
                 } else if DIRECTIVES.contains(&word) {

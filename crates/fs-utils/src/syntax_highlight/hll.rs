@@ -444,7 +444,7 @@ fn collect_symbols(code: &str) -> HllSymbols {
 }
 
 fn is_register_word(word: &str) -> bool {
-    asm_to_binary::isa::is_register_name(word)
+    riscv_model::is_register_name(word)
 }
 
 fn push_inline_asm_code_part(out: &mut Out, base: usize, code_part: &str) {

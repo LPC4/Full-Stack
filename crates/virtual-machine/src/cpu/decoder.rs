@@ -5,8 +5,11 @@
 //! the execute stage. All immediate values are sign-extended to `i64`.
 
 use crate::error::VmError;
-use asm_to_binary::isa::{float_register_name, integer_register_name};
-use riscv_model::InstructionId;
+use riscv_model::{
+    DecodedOperands, InstructionFormat, InstructionId, decode_atomic, decode_base_integer,
+    decode_floating, decode_register_register, decode_upper_immediate, float_register_name,
+    instruction_spec, integer_register_name, register_register_instruction,
+};
 
 // --- Public types ---
 
@@ -157,85 +160,33 @@ impl DecodedInsn {
             Self::Auipc { .. } => Some(Auipc),
             Self::Jal { .. } => Some(Jal),
             Self::Jalr { .. } => Some(Jalr),
-            Self::Branch { funct3, .. } => match funct3 {
-                0 => Some(Beq),
-                1 => Some(Bne),
-                4 => Some(Blt),
-                5 => Some(Bge),
-                6 => Some(Bltu),
-                7 => Some(Bgeu),
-                _ => None,
-            },
-            Self::Load { funct3, .. } => match funct3 {
-                0 => Some(Lb),
-                1 => Some(Lh),
-                2 => Some(Lw),
-                3 => Some(Ld),
-                4 => Some(Lbu),
-                5 => Some(Lhu),
-                6 => Some(Lwu),
-                _ => None,
-            },
-            Self::Store { funct3, .. } => match funct3 {
-                0 => Some(Sb),
-                1 => Some(Sh),
-                2 => Some(Sw),
-                3 => Some(Sd),
-                _ => None,
-            },
-            Self::AluImm { funct3, funct7, .. } => match funct3 {
-                0 => Some(Addi),
-                1 => Some(Slli),
-                2 => Some(Slti),
-                3 => Some(Sltiu),
-                4 => Some(Xori),
-                5 if funct7 & 0x20 != 0 => Some(Srai),
-                5 => Some(Srli),
-                6 => Some(Ori),
-                7 => Some(Andi),
-                _ => None,
-            },
-            Self::AluImm32 { funct3, funct7, .. } => match funct3 {
-                0 => Some(Addiw),
-                1 => Some(Slliw),
-                5 if funct7 & 0x20 != 0 => Some(Sraiw),
-                5 => Some(Srliw),
-                _ => None,
-            },
-            Self::Alu { funct3, funct7, .. } => match (*funct7, *funct3) {
-                (0, 0) => Some(Add),
-                (0, 1) => Some(Sll),
-                (0, 2) => Some(Slt),
-                (0, 3) => Some(Sltu),
-                (0, 4) => Some(Xor),
-                (0, 5) => Some(Srl),
-                (0, 6) => Some(Or),
-                (0, 7) => Some(And),
-                (0x20, 0) => Some(Sub),
-                (0x20, 5) => Some(Sra),
-                (1, 0) => Some(Mul),
-                (1, 1) => Some(Mulh),
-                (1, 2) => Some(Mulhsu),
-                (1, 3) => Some(Mulhu),
-                (1, 4) => Some(Div),
-                (1, 5) => Some(Divu),
-                (1, 6) => Some(Rem),
-                (1, 7) => Some(Remu),
-                _ => None,
-            },
-            Self::Alu32 { funct3, funct7, .. } => match (*funct7, *funct3) {
-                (0, 0) => Some(Addw),
-                (0, 1) => Some(Sllw),
-                (0, 5) => Some(Srlw),
-                (0x20, 0) => Some(Subw),
-                (0x20, 5) => Some(Sraw),
-                (1, 0) => Some(Mulw),
-                (1, 4) => Some(Divw),
-                (1, 5) => Some(Divuw),
-                (1, 6) => Some(Remw),
-                (1, 7) => Some(Remuw),
-                _ => None,
-            },
+            Self::Branch { funct3, .. } => decode_base_integer((u32::from(*funct3) << 12) | 0x63)
+                .ok()
+                .map(|decoded| decoded.id),
+            Self::Load { funct3, .. } => decode_base_integer((u32::from(*funct3) << 12) | 0x03)
+                .ok()
+                .map(|decoded| decoded.id),
+            Self::Store { funct3, .. } => decode_base_integer((u32::from(*funct3) << 12) | 0x23)
+                .ok()
+                .map(|decoded| decoded.id),
+            Self::AluImm { funct3, funct7, .. } => {
+                decode_base_integer((u32::from(*funct7) << 25) | (u32::from(*funct3) << 12) | 0x13)
+                    .ok()
+                    .map(|decoded| decoded.id)
+            }
+            Self::AluImm32 { funct3, funct7, .. } => {
+                decode_base_integer((u32::from(*funct7) << 25) | (u32::from(*funct3) << 12) | 0x1b)
+                    .ok()
+                    .map(|decoded| decoded.id)
+            }
+            Self::Alu { funct3, funct7, .. } => {
+                register_register_instruction(InstructionFormat::RegisterRegister, *funct3, *funct7)
+            }
+            Self::Alu32 { funct3, funct7, .. } => register_register_instruction(
+                InstructionFormat::RegisterRegisterWord,
+                *funct3,
+                *funct7,
+            ),
             Self::Fence { .. } => Some(Fence),
             Self::FenceI => Some(FenceI),
             Self::Ecall => Some(Ecall),
@@ -244,34 +195,61 @@ impl DecodedInsn {
             Self::Sret => Some(Sret),
             Self::SfenceVma => Some(SfenceVma),
             Self::Wfi => Some(Wfi),
-            Self::Csr { funct3, .. } => match funct3 {
-                1 => Some(Csrrw),
-                2 => Some(Csrrs),
-                3 => Some(Csrrc),
-                5 => Some(Csrrwi),
-                6 => Some(Csrrsi),
-                7 => Some(Csrrci),
-                _ => None,
-            },
-            Self::FLoad { funct3: 2, .. } => Some(Flw),
-            Self::FLoad { funct3: 3, .. } => Some(Fld),
-            Self::FLoad { .. } => None,
-            Self::FStore { funct3: 2, .. } => Some(Fsw),
-            Self::FStore { funct3: 3, .. } => Some(Fsd),
-            Self::FStore { .. } => None,
+            Self::Csr { funct3, .. } => decode_base_integer((u32::from(*funct3) << 12) | 0x73)
+                .ok()
+                .map(|decoded| decoded.id),
+            Self::FLoad { funct3, .. } => decode_floating((u32::from(*funct3) << 12) | 0x07)
+                .ok()
+                .map(|decoded| decoded.id),
+            Self::FStore { funct3, .. } => decode_floating((u32::from(*funct3) << 12) | 0x27)
+                .ok()
+                .map(|decoded| decoded.id),
             Self::FOp {
                 funct5,
                 fmt,
                 rm,
                 rs2,
                 ..
-            } => fp_instruction_id(*funct5, *fmt, *rm, *rs2),
-            Self::FMac { op, fmt, .. } => fmac_instruction_id(op, *fmt),
-            Self::Atomic { funct5, funct3, .. } => atomic_instruction_id(*funct5, *funct3),
+            } => decode_floating(
+                (u32::from(*funct5) << 27)
+                    | (u32::from(*fmt) << 25)
+                    | (u32::try_from(*rs2).ok()? << 20)
+                    | (u32::from(*rm) << 12)
+                    | 0x53,
+            )
+            .ok()
+            .map(|decoded| decoded.id),
+            Self::FMac { op, fmt, .. } => {
+                let opcode = match op {
+                    FMacOp::Fmadd => 0x43,
+                    FMacOp::Fmsub => 0x47,
+                    FMacOp::Fnmsub => 0x4b,
+                    FMacOp::Fnmadd => 0x4f,
+                };
+                decode_floating((u32::from(*fmt) << 25) | opcode)
+                    .ok()
+                    .map(|decoded| decoded.id)
+            }
+            Self::Atomic {
+                funct5,
+                funct3,
+                rs2,
+                ..
+            } => decode_atomic(
+                (u32::from(*funct5) << 27)
+                    | (u32::try_from(*rs2).ok()? << 20)
+                    | (u32::from(*funct3) << 12)
+                    | 0x2f,
+            )
+            .ok()
+            .map(|decoded| decoded.id),
         }
     }
 
     pub fn mnemonic(&self) -> &'static str {
+        if let Some(id) = self.instruction_id() {
+            return id.mnemonic();
+        }
         match self {
             Self::Lui { .. } => "lui",
             Self::Auipc { .. } => "auipc",
@@ -332,56 +310,12 @@ impl DecodedInsn {
                 }
                 _ => "immw??",
             },
-            Self::Alu { funct3, funct7, .. } => {
-                if *funct7 == 1 {
-                    match funct3 {
-                        0 => "mul",
-                        1 => "mulh",
-                        2 => "mulhsu",
-                        3 => "mulhu",
-                        4 => "div",
-                        5 => "divu",
-                        6 => "rem",
-                        7 => "remu",
-                        _ => "m??",
-                    }
-                } else {
-                    match (funct3, funct7 & 0x20 != 0) {
-                        (0, true) => "sub",
-                        (0, false) => "add",
-                        (1, _) => "sll",
-                        (2, _) => "slt",
-                        (3, _) => "sltu",
-                        (4, _) => "xor",
-                        (5, true) => "sra",
-                        (5, false) => "srl",
-                        (6, _) => "or",
-                        (7, _) => "and",
-                        _ => "alu??",
-                    }
-                }
-            }
-            Self::Alu32 { funct3, funct7, .. } => {
-                if *funct7 == 1 {
-                    match funct3 {
-                        0 => "mulw",
-                        4 => "divw",
-                        5 => "divuw",
-                        6 => "remw",
-                        7 => "remuw",
-                        _ => "mw??",
-                    }
-                } else {
-                    match (funct3, funct7 & 0x20 != 0) {
-                        (0, true) => "subw",
-                        (0, false) => "addw",
-                        (1, _) => "sllw",
-                        (5, true) => "sraw",
-                        (5, false) => "srlw",
-                        _ => "alu32??",
-                    }
-                }
-            }
+            Self::Alu { .. } => self
+                .instruction_id()
+                .map_or("alu??", InstructionId::mnemonic),
+            Self::Alu32 { .. } => self
+                .instruction_id()
+                .map_or("alu32??", InstructionId::mnemonic),
             Self::Fence { .. } => "fence",
             Self::FenceI => "fence.i",
             Self::Ecall => "ecall",
@@ -438,110 +372,6 @@ impl DecodedInsn {
     }
 }
 
-fn fp_instruction_id(funct5: u8, fmt: u8, rm: u8, rs2: usize) -> Option<InstructionId> {
-    use InstructionId as Id;
-
-    match (funct5, fmt, rm, rs2) {
-        (0b00000, 0, _, _) => Some(Id::FaddS),
-        (0b00000, 1, _, _) => Some(Id::FaddD),
-        (0b00001, 0, _, _) => Some(Id::FsubS),
-        (0b00001, 1, _, _) => Some(Id::FsubD),
-        (0b00010, 0, _, _) => Some(Id::FmulS),
-        (0b00010, 1, _, _) => Some(Id::FmulD),
-        (0b00011, 0, _, _) => Some(Id::FdivS),
-        (0b00011, 1, _, _) => Some(Id::FdivD),
-        (0b01011, 0, _, _) => Some(Id::FsqrtS),
-        (0b01011, 1, _, _) => Some(Id::FsqrtD),
-        (0b00100, 0, 0, _) => Some(Id::FsgnjS),
-        (0b00100, 1, 0, _) => Some(Id::FsgnjD),
-        (0b00100, 0, 1, _) => Some(Id::FsgnjnS),
-        (0b00100, 1, 1, _) => Some(Id::FsgnjnD),
-        (0b00100, 0, 2, _) => Some(Id::FsgnjxS),
-        (0b00100, 1, 2, _) => Some(Id::FsgnjxD),
-        (0b00101, 0, 0, _) => Some(Id::FminS),
-        (0b00101, 1, 0, _) => Some(Id::FminD),
-        (0b00101, 0, 1, _) => Some(Id::FmaxS),
-        (0b00101, 1, 1, _) => Some(Id::FmaxD),
-        (0b10100, 0, 0, _) => Some(Id::FleS),
-        (0b10100, 1, 0, _) => Some(Id::FleD),
-        (0b10100, 0, 1, _) => Some(Id::FltS),
-        (0b10100, 1, 1, _) => Some(Id::FltD),
-        (0b10100, 0, 2, _) => Some(Id::FeqS),
-        (0b10100, 1, 2, _) => Some(Id::FeqD),
-        (0b11000, 0, _, 0) => Some(Id::FcvtWS),
-        (0b11000, 0, _, 1) => Some(Id::FcvtWuS),
-        (0b11000, 0, _, 2) => Some(Id::FcvtLS),
-        (0b11000, 0, _, 3) => Some(Id::FcvtLuS),
-        (0b11000, 1, _, 0) => Some(Id::FcvtWD),
-        (0b11000, 1, _, 1) => Some(Id::FcvtWuD),
-        (0b11000, 1, _, 2) => Some(Id::FcvtLD),
-        (0b11000, 1, _, 3) => Some(Id::FcvtLuD),
-        (0b11010, 0, _, 0) => Some(Id::FcvtSW),
-        (0b11010, 0, _, 1) => Some(Id::FcvtSWu),
-        (0b11010, 0, _, 2) => Some(Id::FcvtSL),
-        (0b11010, 0, _, 3) => Some(Id::FcvtSLu),
-        (0b11010, 1, _, 0) => Some(Id::FcvtDW),
-        (0b11010, 1, _, 1) => Some(Id::FcvtDWu),
-        (0b11010, 1, _, 2) => Some(Id::FcvtDL),
-        (0b11010, 1, _, 3) => Some(Id::FcvtDLu),
-        (0b01000, 0, _, _) => Some(Id::FcvtSD),
-        (0b01001, 1, _, _) => Some(Id::FcvtDS),
-        (0b11100, 0, 0, _) => Some(Id::FmvXW),
-        (0b11100, 1, 0, _) => Some(Id::FmvXD),
-        (0b11100, 0, 1, _) => Some(Id::FclassS),
-        (0b11100, 1, 1, _) => Some(Id::FclassD),
-        (0b11110, 0, _, _) => Some(Id::FmvWX),
-        (0b11110, 1, _, _) => Some(Id::FmvDX),
-        _ => None,
-    }
-}
-
-fn fmac_instruction_id(op: &FMacOp, fmt: u8) -> Option<InstructionId> {
-    use InstructionId as Id;
-
-    match (op, fmt) {
-        (FMacOp::Fmadd, 0) => Some(Id::FmaddS),
-        (FMacOp::Fmadd, 1) => Some(Id::FmaddD),
-        (FMacOp::Fmsub, 0) => Some(Id::FmsubS),
-        (FMacOp::Fmsub, 1) => Some(Id::FmsubD),
-        (FMacOp::Fnmsub, 0) => Some(Id::FnmsubS),
-        (FMacOp::Fnmsub, 1) => Some(Id::FnmsubD),
-        (FMacOp::Fnmadd, 0) => Some(Id::FnmaddS),
-        (FMacOp::Fnmadd, 1) => Some(Id::FnmaddD),
-        _ => None,
-    }
-}
-
-fn atomic_instruction_id(funct5: u8, funct3: u8) -> Option<InstructionId> {
-    use InstructionId as Id;
-
-    match (funct5, funct3) {
-        (2, 2) => Some(Id::LrW),
-        (2, 3) => Some(Id::LrD),
-        (3, 2) => Some(Id::ScW),
-        (3, 3) => Some(Id::ScD),
-        (1, 2) => Some(Id::AmoswapW),
-        (1, 3) => Some(Id::AmoswapD),
-        (0, 2) => Some(Id::AmoaddW),
-        (0, 3) => Some(Id::AmoaddD),
-        (4, 2) => Some(Id::AmoxorW),
-        (4, 3) => Some(Id::AmoxorD),
-        (8, 2) => Some(Id::AmoorW),
-        (8, 3) => Some(Id::AmoorD),
-        (12, 2) => Some(Id::AmoandW),
-        (12, 3) => Some(Id::AmoandD),
-        (16, 2) => Some(Id::AmominW),
-        (16, 3) => Some(Id::AmominD),
-        (20, 2) => Some(Id::AmomaxW),
-        (20, 3) => Some(Id::AmomaxD),
-        (24, 2) => Some(Id::AmominuW),
-        (24, 3) => Some(Id::AmominuD),
-        (28, 2) => Some(Id::AmomaxuW),
-        (28, 3) => Some(Id::AmomaxuD),
-        _ => None,
-    }
-}
-
 // --- ABI register names for disassembly ---
 
 fn reg_name(r: usize) -> &'static str {
@@ -550,110 +380,6 @@ fn reg_name(r: usize) -> &'static str {
 
 fn freg_name(r: usize) -> &'static str {
     float_register_name(r).unwrap_or("f??")
-}
-
-// Decode the FOp mnemonic with format suffix (.s/.d).
-fn fop_mnemonic(funct5: u8, fmt: u8) -> &'static str {
-    match funct5 {
-        0b00000 => {
-            if fmt == 1 {
-                "fadd.d"
-            } else {
-                "fadd.s"
-            }
-        }
-        0b00001 => {
-            if fmt == 1 {
-                "fsub.d"
-            } else {
-                "fsub.s"
-            }
-        }
-        0b00010 => {
-            if fmt == 1 {
-                "fmul.d"
-            } else {
-                "fmul.s"
-            }
-        }
-        0b00011 => {
-            if fmt == 1 {
-                "fdiv.d"
-            } else {
-                "fdiv.s"
-            }
-        }
-        0b01011 => {
-            if fmt == 1 {
-                "fsqrt.d"
-            } else {
-                "fsqrt.s"
-            }
-        }
-        0b00100 => {
-            if fmt == 1 {
-                "fsgnj.d"
-            } else {
-                "fsgnj.s"
-            }
-        }
-        0b00101 => {
-            if fmt == 1 {
-                "fsgnjn.d"
-            } else {
-                "fsgnjn.s"
-            }
-        }
-        0b00110 => {
-            if fmt == 1 {
-                "fsgnjx.d"
-            } else {
-                "fsgnjx.s"
-            }
-        }
-        0b10100 => {
-            if fmt == 1 {
-                "feq.d"
-            } else {
-                "feq.s"
-            }
-        }
-        0b10101 => {
-            if fmt == 1 {
-                "flt.d"
-            } else {
-                "flt.s"
-            }
-        }
-        0b10110 => {
-            if fmt == 1 {
-                "fle.d"
-            } else {
-                "fle.s"
-            }
-        }
-        0b11000 => {
-            if fmt == 1 {
-                "fcvt.w.d"
-            } else {
-                "fcvt.w.s"
-            }
-        }
-        0b11100 => {
-            if fmt == 1 {
-                "fcvt.d.w"
-            } else {
-                "fcvt.s.w"
-            }
-        }
-        _ => {
-            if fmt == 1 {
-                "fop.d"
-            } else {
-                "fop.s"
-            }
-        }
-    }
 }
 
 impl std::fmt::Display for DecodedInsn {
@@ -836,18 +562,11 @@ impl std::fmt::Display for DecodedInsn {
                     reg_name(*rs1)
                 )
             }
-            Self::FOp {
-                funct5,
-                fmt,
-                rd,
-                rs1,
-                rs2,
-                ..
-            } => {
+            Self::FOp { rd, rs1, rs2, .. } => {
                 write!(
                     f,
                     "{:<10} {}, {}, {}",
-                    fop_mnemonic(*funct5, *fmt),
+                    self.mnemonic(),
                     freg_name(*rd),
                     freg_name(*rs1),
                     freg_name(*rs2)
@@ -919,161 +638,262 @@ impl std::fmt::Display for DecodedInsn {
 // --- Public decode entry point ---
 
 pub fn decode(word: u32) -> Result<DecodedInsn, VmError> {
-    let opcode = word & 0x7F;
-    match opcode {
-        0x37 => Ok(DecodedInsn::Lui {
-            rd: rd(word),
-            imm: u_imm(word),
-        }),
-        0x17 => Ok(DecodedInsn::Auipc {
-            rd: rd(word),
-            imm: u_imm(word),
-        }),
-        0x6F => Ok(DecodedInsn::Jal {
-            rd: rd(word),
-            imm: j_imm(word),
-        }),
-        0x67 => Ok(DecodedInsn::Jalr {
-            rd: rd(word),
-            rs1: rs1(word),
-            imm: i_imm(word),
-        }),
-        0x63 => Ok(DecodedInsn::Branch {
-            funct3: funct3(word),
-            rs1: rs1(word),
-            rs2: rs2(word),
-            imm: b_imm(word),
-        }),
-        0x03 => Ok(DecodedInsn::Load {
-            funct3: funct3(word),
-            rd: rd(word),
-            rs1: rs1(word),
-            imm: i_imm(word),
-        }),
-        0x23 => Ok(DecodedInsn::Store {
-            funct3: funct3(word),
-            rs1: rs1(word),
-            rs2: rs2(word),
-            imm: s_imm(word),
-        }),
-        // OP-IMM: pass the full bits[31:25] as funct7 so the execute stage can
-        // disambiguate SRLI vs SRAI using bit 30 (and check for illegal encodings).
-        0x13 => Ok(DecodedInsn::AluImm {
-            funct3: funct3(word),
-            funct7: field(word, 31, 25) as u8,
-            rd: rd(word),
-            rs1: rs1(word),
-            imm: i_imm(word),
-        }),
-        0x1B => Ok(DecodedInsn::AluImm32 {
-            funct3: funct3(word),
-            funct7: field(word, 31, 25) as u8,
-            rd: rd(word),
-            rs1: rs1(word),
-            imm: i_imm(word),
-        }),
-        0x33 => Ok(DecodedInsn::Alu {
-            funct3: funct3(word),
-            funct7: funct7(word),
-            rd: rd(word),
-            rs1: rs1(word),
-            rs2: rs2(word),
-        }),
-        0x3B => Ok(DecodedInsn::Alu32 {
-            funct3: funct3(word),
-            funct7: funct7(word),
-            rd: rd(word),
-            rs1: rs1(word),
-            rs2: rs2(word),
-        }),
-        0x0F => decode_fence(word),
-        0x73 => decode_system(word),
-        0x07 => Ok(DecodedInsn::FLoad {
-            funct3: funct3(word),
-            rd: rd(word),
-            rs1: rs1(word),
-            imm: i_imm(word),
-        }),
-        0x27 => Ok(DecodedInsn::FStore {
-            funct3: funct3(word),
-            rs1: rs1(word),
-            rs2: rs2(word),
-            imm: s_imm(word),
-        }),
-        0x53 => Ok(DecodedInsn::FOp {
-            funct5: field(word, 31, 27) as u8,
-            fmt: field(word, 26, 25) as u8,
-            rm: funct3(word),
-            rd: rd(word),
-            rs1: rs1(word),
-            rs2: rs2(word),
-        }),
-        0x43 => Ok(fmac(word, FMacOp::Fmadd)),
-        0x47 => Ok(fmac(word, FMacOp::Fmsub)),
-        0x4B => Ok(fmac(word, FMacOp::Fnmsub)),
-        0x4F => Ok(fmac(word, FMacOp::Fnmadd)),
-        0x2F => Ok(DecodedInsn::Atomic {
-            funct5: field(word, 31, 27) as u8,
-            aq: field(word, 26, 26) != 0,
-            rl: field(word, 25, 25) != 0,
-            funct3: funct3(word),
-            rd: rd(word),
-            rs1: rs1(word),
-            rs2: rs2(word),
-        }),
-        _ => Err(VmError::IllegalInstruction(word)),
-    }
-}
-
-// --- Sub-decoders ---
-
-fn decode_fence(word: u32) -> Result<DecodedInsn, VmError> {
-    match funct3(word) {
-        0 => Ok(DecodedInsn::Fence {
-            fm: field(word, 31, 28) as u8,
-            pred: field(word, 27, 24) as u8,
-            succ: field(word, 23, 20) as u8,
-        }),
-        1 => Ok(DecodedInsn::FenceI),
-        _ => Err(VmError::IllegalInstruction(word)),
-    }
-}
-
-fn decode_system(word: u32) -> Result<DecodedInsn, VmError> {
-    // Check for SFENCE.VMA first (opcode 0x73, funct3=0, but with specific pattern)
-    // SFENCE.VMA: imm[11:0]=0b0001_0001_0000, rs1 and rs2 can be non-zero
-    if funct3(word) == 0 {
-        let imm = field(word, 31, 20);
-        match imm {
-            0 => Ok(DecodedInsn::Ecall),
-            1 => Ok(DecodedInsn::Ebreak),
-            0x302 => Ok(DecodedInsn::Mret),
-            0x102 => Ok(DecodedInsn::Sret),
-            0x120 => Ok(DecodedInsn::SfenceVma), // SFENCE.VMA
-            0x105 => Ok(DecodedInsn::Wfi),       // WFI
+    if let Ok(decoded) = decode_upper_immediate(word) {
+        let DecodedOperands::UpperImmediate { rd, immediate } = decoded.operands else {
+            return Err(VmError::IllegalInstruction(word));
+        };
+        return match decoded.id {
+            InstructionId::Lui => Ok(DecodedInsn::Lui {
+                rd: usize::from(rd.number()),
+                imm: i64::from(immediate),
+            }),
+            InstructionId::Auipc => Ok(DecodedInsn::Auipc {
+                rd: usize::from(rd.number()),
+                imm: i64::from(immediate),
+            }),
             _ => Err(VmError::IllegalInstruction(word)),
-        }
-    } else {
-        // CSR instructions
-        Ok(DecodedInsn::Csr {
-            funct3: funct3(word),
-            rd: rd(word),
-            rs1_uimm: rs1(word), // for CSRRWI/CSRRSI/CSRRCI this is the uimm[4:0]
-            csr: field(word, 31, 20) as u16,
-        })
+        };
     }
-}
 
-fn fmac(word: u32, op: FMacOp) -> DecodedInsn {
-    DecodedInsn::FMac {
-        op,
-        rs3: field(word, 31, 27) as usize,
-        fmt: field(word, 26, 25) as u8,
-        rm: funct3(word),
-        rd: rd(word),
-        rs1: rs1(word),
-        rs2: rs2(word),
+    if let Ok(decoded) = decode_register_register(word) {
+        let DecodedOperands::RegisterRegister { rd, rs1, rs2 } = decoded.operands else {
+            return Err(VmError::IllegalInstruction(word));
+        };
+        let Some(spec) = instruction_spec(decoded.id) else {
+            return Err(VmError::IllegalInstruction(word));
+        };
+        let fields = (
+            funct3(word),
+            funct7(word),
+            usize::from(rd.number()),
+            usize::from(rs1.number()),
+            usize::from(rs2.number()),
+        );
+        return match spec.format {
+            InstructionFormat::RegisterRegister => Ok(DecodedInsn::Alu {
+                funct3: fields.0,
+                funct7: fields.1,
+                rd: fields.2,
+                rs1: fields.3,
+                rs2: fields.4,
+            }),
+            InstructionFormat::RegisterRegisterWord => Ok(DecodedInsn::Alu32 {
+                funct3: fields.0,
+                funct7: fields.1,
+                rd: fields.2,
+                rs1: fields.3,
+                rs2: fields.4,
+            }),
+            _ => Err(VmError::IllegalInstruction(word)),
+        };
     }
+
+    if let Ok(decoded) = decode_base_integer(word) {
+        let funct3 = funct3(word);
+        let funct7 = funct7(word);
+        return match (decoded.id, decoded.operands) {
+            (InstructionId::Jal, DecodedOperands::Jump { rd, offset }) => Ok(DecodedInsn::Jal {
+                rd: usize::from(rd.number()),
+                imm: i64::from(offset),
+            }),
+            (InstructionId::Jalr, DecodedOperands::Immediate { rd, rs1, immediate }) => {
+                Ok(DecodedInsn::Jalr {
+                    rd: usize::from(rd.number()),
+                    rs1: usize::from(rs1.number()),
+                    imm: i64::from(immediate),
+                })
+            }
+            (
+                InstructionId::Beq
+                | InstructionId::Bne
+                | InstructionId::Blt
+                | InstructionId::Bge
+                | InstructionId::Bltu
+                | InstructionId::Bgeu,
+                DecodedOperands::Branch { rs1, rs2, offset },
+            ) => Ok(DecodedInsn::Branch {
+                funct3,
+                rs1: usize::from(rs1.number()),
+                rs2: usize::from(rs2.number()),
+                imm: i64::from(offset),
+            }),
+            (
+                InstructionId::Lb
+                | InstructionId::Lh
+                | InstructionId::Lw
+                | InstructionId::Ld
+                | InstructionId::Lbu
+                | InstructionId::Lhu
+                | InstructionId::Lwu,
+                DecodedOperands::Immediate { rd, rs1, immediate },
+            ) => Ok(DecodedInsn::Load {
+                funct3,
+                rd: usize::from(rd.number()),
+                rs1: usize::from(rs1.number()),
+                imm: i64::from(immediate),
+            }),
+            (
+                InstructionId::Sb | InstructionId::Sh | InstructionId::Sw | InstructionId::Sd,
+                DecodedOperands::Store {
+                    rs1,
+                    rs2,
+                    immediate,
+                },
+            ) => Ok(DecodedInsn::Store {
+                funct3,
+                rs1: usize::from(rs1.number()),
+                rs2: usize::from(rs2.number()),
+                imm: i64::from(immediate),
+            }),
+            (
+                InstructionId::Addi
+                | InstructionId::Slti
+                | InstructionId::Sltiu
+                | InstructionId::Xori
+                | InstructionId::Ori
+                | InstructionId::Andi
+                | InstructionId::Slli
+                | InstructionId::Srli
+                | InstructionId::Srai,
+                DecodedOperands::Immediate { rd, rs1, immediate },
+            ) => Ok(DecodedInsn::AluImm {
+                funct3,
+                funct7,
+                rd: usize::from(rd.number()),
+                rs1: usize::from(rs1.number()),
+                imm: i64::from(immediate),
+            }),
+            (
+                InstructionId::Addiw
+                | InstructionId::Slliw
+                | InstructionId::Srliw
+                | InstructionId::Sraiw,
+                DecodedOperands::Immediate { rd, rs1, immediate },
+            ) => Ok(DecodedInsn::AluImm32 {
+                funct3,
+                funct7,
+                rd: usize::from(rd.number()),
+                rs1: usize::from(rs1.number()),
+                imm: i64::from(immediate),
+            }),
+            (
+                InstructionId::Fence,
+                DecodedOperands::Fence {
+                    fm,
+                    predecessor,
+                    successor,
+                },
+            ) => Ok(DecodedInsn::Fence {
+                fm,
+                pred: predecessor,
+                succ: successor,
+            }),
+            (InstructionId::FenceI, DecodedOperands::None) => Ok(DecodedInsn::FenceI),
+            (InstructionId::Ecall, DecodedOperands::None) => Ok(DecodedInsn::Ecall),
+            (InstructionId::Ebreak, DecodedOperands::None) => Ok(DecodedInsn::Ebreak),
+            (InstructionId::Mret, DecodedOperands::None) => Ok(DecodedInsn::Mret),
+            (InstructionId::Sret, DecodedOperands::None) => Ok(DecodedInsn::Sret),
+            (InstructionId::SfenceVma, DecodedOperands::None) => Ok(DecodedInsn::SfenceVma),
+            (InstructionId::Wfi, DecodedOperands::None) => Ok(DecodedInsn::Wfi),
+            (
+                InstructionId::Csrrw
+                | InstructionId::Csrrs
+                | InstructionId::Csrrc
+                | InstructionId::Csrrwi
+                | InstructionId::Csrrsi
+                | InstructionId::Csrrci,
+                DecodedOperands::Csr { rd, source, csr },
+            ) => Ok(DecodedInsn::Csr {
+                funct3,
+                rd: usize::from(rd.number()),
+                rs1_uimm: usize::from(source),
+                csr,
+            }),
+            _ => Err(VmError::IllegalInstruction(word)),
+        };
+    }
+
+    if let Ok(decoded) = decode_atomic(word) {
+        let DecodedOperands::Atomic {
+            rd,
+            rs1,
+            rs2,
+            acquire,
+            release,
+        } = decoded.operands
+        else {
+            return Err(VmError::IllegalInstruction(word));
+        };
+        return Ok(DecodedInsn::Atomic {
+            funct5: field(word, 31, 27) as u8,
+            aq: acquire,
+            rl: release,
+            funct3: funct3(word),
+            rd: usize::from(rd.number()),
+            rs1: usize::from(rs1.number()),
+            rs2: usize::from(rs2.number()),
+        });
+    }
+
+    if let Ok(decoded) = decode_floating(word) {
+        let DecodedOperands::Floating {
+            rd,
+            rs1,
+            rs2,
+            rs3,
+            rounding_mode,
+            immediate,
+        } = decoded.operands
+        else {
+            return Err(VmError::IllegalInstruction(word));
+        };
+        let Some(spec) = instruction_spec(decoded.id) else {
+            return Err(VmError::IllegalInstruction(word));
+        };
+        return match spec.format {
+            InstructionFormat::FloatingLoad => Ok(DecodedInsn::FLoad {
+                funct3: funct3(word),
+                rd: usize::from(rd),
+                rs1: usize::from(rs1),
+                imm: i64::from(immediate),
+            }),
+            InstructionFormat::FloatingStore => Ok(DecodedInsn::FStore {
+                funct3: funct3(word),
+                rs1: usize::from(rs1),
+                rs2: usize::from(rs2),
+                imm: i64::from(immediate),
+            }),
+            InstructionFormat::FloatingOp => Ok(DecodedInsn::FOp {
+                funct5: field(word, 31, 27) as u8,
+                fmt: field(word, 26, 25) as u8,
+                rm: rounding_mode,
+                rd: usize::from(rd),
+                rs1: usize::from(rs1),
+                rs2: usize::from(rs2),
+            }),
+            InstructionFormat::FloatingFused => {
+                let op = match decoded.id {
+                    InstructionId::FmaddS | InstructionId::FmaddD => FMacOp::Fmadd,
+                    InstructionId::FmsubS | InstructionId::FmsubD => FMacOp::Fmsub,
+                    InstructionId::FnmsubS | InstructionId::FnmsubD => FMacOp::Fnmsub,
+                    InstructionId::FnmaddS | InstructionId::FnmaddD => FMacOp::Fnmadd,
+                    _ => return Err(VmError::IllegalInstruction(word)),
+                };
+                Ok(DecodedInsn::FMac {
+                    op,
+                    fmt: field(word, 26, 25) as u8,
+                    rm: rounding_mode,
+                    rd: usize::from(rd),
+                    rs1: usize::from(rs1),
+                    rs2: usize::from(rs2),
+                    rs3: usize::from(rs3),
+                })
+            }
+            _ => Err(VmError::IllegalInstruction(word)),
+        };
+    }
+
+    Err(VmError::IllegalInstruction(word))
 }
 
 // --- Field extraction helpers ---
@@ -1089,66 +909,12 @@ fn field(word: u32, hi: u32, lo: u32) -> u32 {
 }
 
 #[inline]
-fn rd(word: u32) -> usize {
-    field(word, 11, 7) as usize
-}
-#[inline]
-fn rs1(word: u32) -> usize {
-    field(word, 19, 15) as usize
-}
-#[inline]
-fn rs2(word: u32) -> usize {
-    field(word, 24, 20) as usize
-}
-#[inline]
 fn funct3(word: u32) -> u8 {
     field(word, 14, 12) as u8
 }
 #[inline]
 fn funct7(word: u32) -> u8 {
     field(word, 31, 25) as u8
-}
-
-// Sign-extend `val` (a value in the low `bits` bits) to `i64`.
-fn sign_ext(val: u32, bits: u32) -> i64 {
-    let shift = 32 - bits;
-    ((val << shift) as i32 >> shift) as i64
-}
-
-// I-type immediate: bits[31:20], sign-extended to 64 bits.
-fn i_imm(word: u32) -> i64 {
-    sign_ext(field(word, 31, 20), 12)
-}
-
-// U-type immediate: upper 20 bits placed at [31:12], lower 12 bits zero.
-// We sign-extend from the 32-bit word so that large addresses work correctly.
-fn u_imm(word: u32) -> i64 {
-    (word & 0xFFFF_F000) as i32 as i64
-}
-
-// S-type immediate: bits[31:25] || bits[11:7], sign-extended to 12 bits.
-fn s_imm(word: u32) -> i64 {
-    let hi = field(word, 31, 25);
-    let lo = field(word, 11, 7);
-    sign_ext((hi << 5) | lo, 12)
-}
-
-// B-type immediate: [31]<<12 | [7]<<11 | [30:25]<<5 | [11:8]<<1, sign-extended to 13 bits.
-fn b_imm(word: u32) -> i64 {
-    let bit12 = field(word, 31, 31) << 12;
-    let bit11 = field(word, 7, 7) << 11;
-    let bits10_5 = field(word, 30, 25) << 5;
-    let bits4_1 = field(word, 11, 8) << 1;
-    sign_ext(bit12 | bit11 | bits10_5 | bits4_1, 13)
-}
-
-// J-type immediate: [31]<<20 | [19:12]<<12 | [20]<<11 | [30:21]<<1, sign-extended to 21 bits.
-fn j_imm(word: u32) -> i64 {
-    let bit20 = field(word, 31, 31) << 20;
-    let bits19_12 = field(word, 19, 12) << 12;
-    let bit11 = field(word, 20, 20) << 11;
-    let bits10_1 = field(word, 30, 21) << 1;
-    sign_ext(bit20 | bits19_12 | bit11 | bits10_1, 21)
 }
 
 #[cfg(test)]

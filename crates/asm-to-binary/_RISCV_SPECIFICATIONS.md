@@ -24,6 +24,16 @@ and relocations this implementation emits.
 
 ## 2. Register File
 
+The dependency-light `riscv-model` crate owns register numbers, canonical ABI names, accepted
+aliases, and PC-relative immediate splitting. The assembler retains compatibility re-exports but
+does not define a separate register vocabulary.
+
+The same crate owns one descriptor for each of the 160 canonical instructions in the supported
+RV64IMAFD, Zicsr, Zifencei, and privileged subset. Real-instruction constructors delegate mask,
+match, field packing, operand validation, extension metadata, and canonical identity to those
+descriptors. The assembler retains generic format structs only as a compatibility API and for
+format-level tests; real ISA modules no longer use them as a second encoding authority.
+
 ### Integer Registers (x0-x31)
 
 | Register | ABI Name | Description | Callee-Saved? |
@@ -124,6 +134,9 @@ target_pc = current_pc + sext(imm << 1)
 - The 20-bit `imm[31:12]` is placed in bits 31-12 of the result; bits 11-0 are zero.
 - If the 12-bit low part of a symbol's address has bit 11 set (value >= 0x800), the upper
   immediate must be incremented by 1 to compensate for sign extension.
+- `riscv-model::UPPER_IMMEDIATE_SPECS` owns the `lui` and `auipc` mask/match values, operands,
+  encoding, and decoding. Programmatic assembler constructors take the full 32-bit immediate
+  value and discard its low 12 bits.
 
 
 ## 5. Complete Instruction Reference
@@ -176,6 +189,11 @@ target_pc = current_pc + sext(imm << 1)
 | `or` | `6` | `0x00` | `rd = rs1 \| rs2` |
 | `and` | `7` | `0x00` | `rd = rs1 & rs2` |
 
+`riscv-model::REGISTER_REGISTER_SPECS` owns the mask/match selectors, operand metadata,
+encoding, and decoding for this family, the RV64I R-type word operations, and RV64M. Generated
+assembler constructors accept only register numbers 0 through 31 and delegate encoding to that
+shared table.
+
 #### Control Transfer
 | Mnemonic | Type | Opcode | funct3 | Semantics | Notes |
 |----------|------|--------|--------|-----------|-------|
@@ -222,6 +240,9 @@ target_pc = current_pc + sext(imm << 1)
 
 All R-type. Non-W instructions: opcode `0x33`, `funct7=0x01`. W instructions: opcode `0x3B`,
 `funct7=0x01`.
+
+These selectors and their integer-register operand contract are part of the shared
+`REGISTER_REGISTER_SPECS` table described in Section 5.1.
 
 #### 64-bit Operations (opcode `0x33`)
 | Mnemonic | funct3 | Semantics | Notes |
@@ -695,6 +716,8 @@ with no ELF headers. Suitable for bootloaders that copy the image straight into 
 
 ## 10. Validation & Alignment Rules
 
+- **Register operands:** U-type constructors reject register numbers outside `[0, 31]` before
+  encoding.
 - **Instruction alignment:** Without the C extension, all instruction addresses and all
   branch/jump targets must be **4-byte aligned**. A target at a 2-byte-but-not-4-byte boundary
   raises `Instruction Address Misaligned`.

@@ -302,6 +302,9 @@ dependencies = [
 [[package]]
 name = "asm_to_binary"
 version = "1.0.0"
+dependencies = [
+ "riscv_model",
+]
 
 [[package]]
 name = "async-broadcast"
@@ -1328,7 +1331,7 @@ dependencies = [
 name = "fs_utils"
 version = "0.1.0"
 dependencies = [
- "asm_to_binary",
+ "riscv_model",
 ]
 
 [[package]]
@@ -1748,10 +1751,10 @@ checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 name = "hll_to_ir"
 version = "2.0.1"
 dependencies = [
- "asm_to_binary",
  "fs_utils",
  "log",
  "os_runtime",
+ "riscv_model",
 ]
 
 [[package]]

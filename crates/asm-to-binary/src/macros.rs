@@ -3,9 +3,6 @@
 macro_rules! r_inst {
     (
         $name:ident,
-        opcode   = $opcode:expr,
-        funct3   = $funct3:expr,
-        funct7   = $funct7:expr,
         mnemonic = $mnemonic:literal $(,)?
     ) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,22 +18,33 @@ macro_rules! r_inst {
                 rs1: crate::encode_decode::Reg,
                 rs2: crate::encode_decode::Reg,
             ) -> Self {
+                assert!(rd < 32, "{}: register x{rd} is out of range", $mnemonic);
+                assert!(rs1 < 32, "{}: register x{rs1} is out of range", $mnemonic);
+                assert!(rs2 < 32, "{}: register x{rs2} is out of range", $mnemonic);
                 Self { rd, rs1, rs2 }
             }
         }
 
         impl crate::traits::Instruction for $name {
             fn encode(&self) -> u32 {
-                use crate::encode_decode::{RType, RiscvFormat};
-                RType {
-                    opcode: $opcode,
-                    rd: self.rd,
-                    funct3: $funct3,
-                    rs1: self.rs1,
-                    rs2: self.rs2,
-                    funct7: $funct7,
+                let Some(rd) = riscv_model::IntReg::new(self.rd) else {
+                    panic!("{}: register x{} is out of range", $mnemonic, self.rd);
+                };
+                let Some(rs1) = riscv_model::IntReg::new(self.rs1) else {
+                    panic!("{}: register x{} is out of range", $mnemonic, self.rs1);
+                };
+                let Some(rs2) = riscv_model::IntReg::new(self.rs2) else {
+                    panic!("{}: register x{} is out of range", $mnemonic, self.rs2);
+                };
+                match riscv_model::encode_register_register(
+                    riscv_model::InstructionId::$name,
+                    rd,
+                    rs1,
+                    rs2,
+                ) {
+                    Ok(word) => word,
+                    Err(error) => panic!("{} descriptor error: {error:?}", $mnemonic),
                 }
-                .encode()
             }
 
             fn to_asm(&self) -> String {
@@ -62,8 +70,6 @@ macro_rules! r_inst {
 macro_rules! i_imm_inst {
     (
         $name:ident,
-        opcode   = $opcode:expr,
-        funct3   = $funct3:expr,
         mnemonic = $mnemonic:literal $(,)?
     ) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,6 +85,8 @@ macro_rules! i_imm_inst {
                 rs1: crate::encode_decode::Reg,
                 imm: i32,
             ) -> Self {
+                assert!(rd < 32, "{}: register x{rd} is out of range", $mnemonic);
+                assert!(rs1 < 32, "{}: register x{rs1} is out of range", $mnemonic);
                 assert!(
                     (-2048..=2047).contains(&imm),
                     "{}: immediate {} out of range [-2048, 2047]",
@@ -91,15 +99,17 @@ macro_rules! i_imm_inst {
 
         impl crate::traits::Instruction for $name {
             fn encode(&self) -> u32 {
-                use crate::encode_decode::{IType, RiscvFormat};
-                IType {
-                    opcode: $opcode,
-                    rd: self.rd,
-                    funct3: $funct3,
-                    rs1: self.rs1,
-                    imm: self.imm,
-                }
-                .encode()
+                let rd = riscv_model::IntReg::new(self.rd).expect("validated destination register");
+                let rs1 = riscv_model::IntReg::new(self.rs1).expect("validated source register");
+                riscv_model::encode_base_integer(
+                    riscv_model::InstructionId::$name,
+                    riscv_model::DecodedOperands::Immediate {
+                        rd,
+                        rs1,
+                        immediate: self.imm,
+                    },
+                )
+                .unwrap_or_else(|error| panic!("{} descriptor error: {error:?}", $mnemonic))
             }
 
             fn to_asm(&self) -> String {
@@ -125,7 +135,6 @@ macro_rules! i_imm_inst {
 macro_rules! i_load_inst {
     (
         $name:ident,
-        funct3   = $funct3:expr,
         mnemonic = $mnemonic:literal $(,)?
     ) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,6 +153,8 @@ macro_rules! i_load_inst {
                 base: crate::encode_decode::Reg,
                 offset: i32,
             ) -> Self {
+                assert!(rd < 32, "{}: register x{rd} is out of range", $mnemonic);
+                assert!(base < 32, "{}: register x{base} is out of range", $mnemonic);
                 assert!(
                     (-2048..=2047).contains(&offset),
                     "{}: offset {} out of range [-2048, 2047]",
@@ -156,15 +167,17 @@ macro_rules! i_load_inst {
 
         impl crate::traits::Instruction for $name {
             fn encode(&self) -> u32 {
-                use crate::encode_decode::{IType, RiscvFormat};
-                IType {
-                    opcode: 0x03,
-                    rd: self.rd,
-                    funct3: $funct3,
-                    rs1: self.base,
-                    imm: self.offset,
-                }
-                .encode()
+                let rd = riscv_model::IntReg::new(self.rd).expect("validated destination register");
+                let rs1 = riscv_model::IntReg::new(self.base).expect("validated base register");
+                riscv_model::encode_base_integer(
+                    riscv_model::InstructionId::$name,
+                    riscv_model::DecodedOperands::Immediate {
+                        rd,
+                        rs1,
+                        immediate: self.offset,
+                    },
+                )
+                .unwrap_or_else(|error| panic!("{} descriptor error: {error:?}", $mnemonic))
             }
 
             fn to_asm(&self) -> String {
@@ -190,7 +203,6 @@ macro_rules! i_load_inst {
 macro_rules! s_inst {
     (
         $name:ident,
-        funct3   = $funct3:expr,
         mnemonic = $mnemonic:literal $(,)?
     ) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
@@ -209,6 +221,8 @@ macro_rules! s_inst {
                 src: crate::encode_decode::Reg,
                 offset: i32,
             ) -> Self {
+                assert!(base < 32, "{}: register x{base} is out of range", $mnemonic);
+                assert!(src < 32, "{}: register x{src} is out of range", $mnemonic);
                 assert!(
                     (-2048..=2047).contains(&offset),
                     "{}: offset {} out of range [-2048, 2047]",
@@ -221,15 +235,17 @@ macro_rules! s_inst {
 
         impl crate::traits::Instruction for $name {
             fn encode(&self) -> u32 {
-                use crate::encode_decode::{RiscvFormat, SType};
-                SType {
-                    opcode: 0x23,
-                    funct3: $funct3,
-                    rs1: self.base,
-                    rs2: self.src,
-                    imm: self.offset,
-                }
-                .encode()
+                let rs1 = riscv_model::IntReg::new(self.base).expect("validated base register");
+                let rs2 = riscv_model::IntReg::new(self.src).expect("validated source register");
+                riscv_model::encode_base_integer(
+                    riscv_model::InstructionId::$name,
+                    riscv_model::DecodedOperands::Store {
+                        rs1,
+                        rs2,
+                        immediate: self.offset,
+                    },
+                )
+                .unwrap_or_else(|error| panic!("{} descriptor error: {error:?}", $mnemonic))
             }
 
             fn to_asm(&self) -> String {
@@ -255,7 +271,6 @@ macro_rules! s_inst {
 macro_rules! b_inst {
     (
         $name:ident,
-        funct3   = $funct3:expr,
         mnemonic = $mnemonic:literal $(,)?
     ) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
@@ -272,6 +287,8 @@ macro_rules! b_inst {
                 rs2: crate::encode_decode::Reg,
                 offset: i32,
             ) -> Self {
+                assert!(rs1 < 32, "{}: register x{rs1} is out of range", $mnemonic);
+                assert!(rs2 < 32, "{}: register x{rs2} is out of range", $mnemonic);
                 assert!(
                     (offset & 1) == 0,
                     "{}: offset {} must be even",
@@ -290,15 +307,19 @@ macro_rules! b_inst {
 
         impl crate::traits::Instruction for $name {
             fn encode(&self) -> u32 {
-                use crate::encode_decode::{BType, RiscvFormat};
-                BType {
-                    opcode: 0x63,
-                    funct3: $funct3,
-                    rs1: self.rs1,
-                    rs2: self.rs2,
-                    imm: self.offset,
-                }
-                .encode()
+                let rs1 =
+                    riscv_model::IntReg::new(self.rs1).expect("validated first source register");
+                let rs2 =
+                    riscv_model::IntReg::new(self.rs2).expect("validated second source register");
+                riscv_model::encode_base_integer(
+                    riscv_model::InstructionId::$name,
+                    riscv_model::DecodedOperands::Branch {
+                        rs1,
+                        rs2,
+                        offset: self.offset,
+                    },
+                )
+                .unwrap_or_else(|error| panic!("{} descriptor error: {error:?}", $mnemonic))
             }
 
             fn to_asm(&self) -> String {
@@ -324,7 +345,6 @@ macro_rules! b_inst {
 macro_rules! u_inst {
     (
         $name:ident,
-        opcode   = $opcode:expr,
         mnemonic = $mnemonic:literal $(,)?
     ) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
@@ -337,19 +357,24 @@ macro_rules! u_inst {
 
         impl $name {
             pub fn new(rd: crate::encode_decode::Reg, imm: i32) -> Self {
+                assert!(rd < 32, "{}: register x{rd} is out of range", $mnemonic);
                 Self { rd, imm }
             }
         }
 
         impl crate::traits::Instruction for $name {
             fn encode(&self) -> u32 {
-                use crate::encode_decode::{RiscvFormat, UType};
-                UType {
-                    opcode: $opcode,
-                    rd: self.rd,
-                    imm: self.imm,
+                let Some(rd) = riscv_model::IntReg::new(self.rd) else {
+                    panic!("{}: register x{} is out of range", $mnemonic, self.rd);
+                };
+                match riscv_model::encode_upper_immediate(
+                    riscv_model::InstructionId::$name,
+                    rd,
+                    self.imm,
+                ) {
+                    Ok(word) => word,
+                    Err(error) => panic!("{} descriptor error: {error:?}", $mnemonic),
                 }
-                .encode()
             }
 
             fn to_asm(&self) -> String {
@@ -385,6 +410,7 @@ macro_rules! j_inst {
 
         impl $name {
             pub fn new(rd: crate::encode_decode::Reg, offset: i32) -> Self {
+                assert!(rd < 32, "{}: register x{rd} is out of range", $mnemonic);
                 assert!(
                     (offset & 1) == 0,
                     "{}: offset {} must be even",
@@ -403,13 +429,15 @@ macro_rules! j_inst {
 
         impl crate::traits::Instruction for $name {
             fn encode(&self) -> u32 {
-                use crate::encode_decode::{JType, RiscvFormat};
-                JType {
-                    opcode: 0x6F,
-                    rd: self.rd,
-                    imm: self.offset,
-                }
-                .encode()
+                let rd = riscv_model::IntReg::new(self.rd).expect("validated destination register");
+                riscv_model::encode_base_integer(
+                    riscv_model::InstructionId::$name,
+                    riscv_model::DecodedOperands::Jump {
+                        rd,
+                        offset: self.offset,
+                    },
+                )
+                .unwrap_or_else(|error| panic!("{} descriptor error: {error:?}", $mnemonic))
             }
 
             fn to_asm(&self) -> String {
