@@ -2,16 +2,24 @@ pub mod alu;
 pub mod architectural;
 pub mod csr;
 pub mod decoder;
+pub mod functional;
 pub mod hazard_unit;
+mod interrupts;
 pub mod mmu;
 pub mod pipeline;
 pub mod predictor;
 pub mod registers;
+pub mod retirement;
 pub mod traps;
 
 pub use architectural::ArchitecturalState;
+pub use functional::FunctionalCore;
 pub use pipeline::{CpuPipelineFeed, Pipeline, PipelineStats, StageEntry, TickOutcome};
 pub use registers::PrivilegeMode;
+pub use retirement::{
+    CsrWrite, MemoryWrite, PrivilegeTransition, RETIRE_EVENT_VERSION, RegisterWrite, RetireEvent,
+    TrapRecord, TrapStage,
+};
 
 use crate::bus::SystemBus;
 use crate::error::VmError;

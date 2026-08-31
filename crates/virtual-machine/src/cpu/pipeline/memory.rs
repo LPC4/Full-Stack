@@ -4,6 +4,7 @@ use crate::bus::SystemBus;
 use crate::cpu::mmu;
 use crate::cpu::pipeline::execute::ExecResult;
 use crate::cpu::registers::PrivilegeMode;
+use crate::cpu::retirement::MemoryWrite;
 use crate::error::VmError;
 use crate::memory::MemoryAccess as _;
 
@@ -70,33 +71,53 @@ pub fn memory_stage_with_pmp(
     ctx: mmu::TranslationContext,
     tlb: &mut mmu::Tlb,
 ) -> Result<MemResult, VmError> {
+    memory_stage_with_trace(result, bus, reservation, ctx, tlb).map(|(result, _)| result)
+}
+
+pub(crate) fn memory_stage_with_trace(
+    result: ExecResult,
+    bus: &mut SystemBus,
+    reservation: &mut Option<u64>,
+    ctx: mmu::TranslationContext,
+    tlb: &mut mmu::Tlb,
+) -> Result<(MemResult, Option<MemoryWrite>), VmError> {
     match result {
         // Pass-through variants
-        ExecResult::WriteInt { rd, val, next_pc } => Ok(MemResult::WriteInt { rd, val, next_pc }),
-        ExecResult::WriteFp { rd, bits, next_pc } => Ok(MemResult::WriteFp { rd, bits, next_pc }),
+        ExecResult::WriteInt { rd, val, next_pc } => {
+            Ok((MemResult::WriteInt { rd, val, next_pc }, None))
+        }
+        ExecResult::WriteFp { rd, bits, next_pc } => {
+            Ok((MemResult::WriteFp { rd, bits, next_pc }, None))
+        }
         ExecResult::WriteIntFlags {
             rd,
             val,
             fflags,
             next_pc,
-        } => Ok(MemResult::WriteIntFlags {
-            rd,
-            val,
-            fflags,
-            next_pc,
-        }),
+        } => Ok((
+            MemResult::WriteIntFlags {
+                rd,
+                val,
+                fflags,
+                next_pc,
+            },
+            None,
+        )),
         ExecResult::WriteFpFlags {
             rd,
             bits,
             fflags,
             next_pc,
-        } => Ok(MemResult::WriteFpFlags {
-            rd,
-            bits,
-            fflags,
-            next_pc,
-        }),
-        ExecResult::Jump { next_pc } => Ok(MemResult::Jump { next_pc }),
+        } => Ok((
+            MemResult::WriteFpFlags {
+                rd,
+                bits,
+                fflags,
+                next_pc,
+            },
+            None,
+        )),
+        ExecResult::Jump { next_pc } => Ok((MemResult::Jump { next_pc }, None)),
         ExecResult::Csr {
             funct3,
             rd,
@@ -105,23 +126,26 @@ pub fn memory_stage_with_pmp(
             operand,
             old_val,
             next_pc,
-        } => Ok(MemResult::Csr {
-            funct3,
-            rd,
-            rs1_uimm,
-            csr,
-            operand,
-            old_val,
-            next_pc,
-        }),
-        ExecResult::Fence { next_pc } => Ok(MemResult::Fence { next_pc }),
-        ExecResult::FenceI { next_pc } => Ok(MemResult::FenceI { next_pc }),
-        ExecResult::Ecall => Ok(MemResult::Ecall),
-        ExecResult::Ebreak => Ok(MemResult::Ebreak),
-        ExecResult::Mret => Ok(MemResult::Mret),
-        ExecResult::Sret => Ok(MemResult::Sret),
-        ExecResult::SfenceVma => Ok(MemResult::SfenceVma),
-        ExecResult::Wfi { next_pc } => Ok(MemResult::Wfi { next_pc }),
+        } => Ok((
+            MemResult::Csr {
+                funct3,
+                rd,
+                rs1_uimm,
+                csr,
+                operand,
+                old_val,
+                next_pc,
+            },
+            None,
+        )),
+        ExecResult::Fence { next_pc } => Ok((MemResult::Fence { next_pc }, None)),
+        ExecResult::FenceI { next_pc } => Ok((MemResult::FenceI { next_pc }, None)),
+        ExecResult::Ecall => Ok((MemResult::Ecall, None)),
+        ExecResult::Ebreak => Ok((MemResult::Ebreak, None)),
+        ExecResult::Mret => Ok((MemResult::Mret, None)),
+        ExecResult::Sret => Ok((MemResult::Sret, None)),
+        ExecResult::SfenceVma => Ok((MemResult::SfenceVma, None)),
+        ExecResult::Wfi { next_pc } => Ok((MemResult::Wfi { next_pc }, None)),
 
         // Integer Load
         ExecResult::Load {
@@ -132,7 +156,7 @@ pub fn memory_stage_with_pmp(
         } => {
             let phys_addr = mmu::translate_with_pmp(addr, bus, ctx, mmu::AccessKind::Load, tlb)?;
             let val = load_int(bus, phys_addr, funct3)?;
-            Ok(MemResult::WriteInt { rd, val, next_pc })
+            Ok((MemResult::WriteInt { rd, val, next_pc }, None))
         }
 
         // Integer Store
@@ -144,7 +168,10 @@ pub fn memory_stage_with_pmp(
         } => {
             let phys_addr = mmu::translate_with_pmp(addr, bus, ctx, mmu::AccessKind::Store, tlb)?;
             store_int(bus, phys_addr, val, funct3)?;
-            Ok(MemResult::Jump { next_pc })
+            Ok((
+                MemResult::Jump { next_pc },
+                Some(memory_write(phys_addr, val, funct3)),
+            ))
         }
 
         // FP Load
@@ -156,7 +183,7 @@ pub fn memory_stage_with_pmp(
         } => {
             let phys_addr = mmu::translate_with_pmp(addr, bus, ctx, mmu::AccessKind::Load, tlb)?;
             let bits = load_fp(bus, phys_addr, funct3)?;
-            Ok(MemResult::WriteFp { rd, bits, next_pc })
+            Ok((MemResult::WriteFp { rd, bits, next_pc }, None))
         }
 
         // FP Store
@@ -168,7 +195,10 @@ pub fn memory_stage_with_pmp(
         } => {
             let phys_addr = mmu::translate_with_pmp(addr, bus, ctx, mmu::AccessKind::Store, tlb)?;
             store_fp(bus, phys_addr, bits, funct3)?;
-            Ok(MemResult::Jump { next_pc })
+            Ok((
+                MemResult::Jump { next_pc },
+                Some(memory_write(phys_addr, bits, funct3)),
+            ))
         }
 
         // Atomic
@@ -183,13 +213,32 @@ pub fn memory_stage_with_pmp(
             next_pc,
         } => {
             let phys_addr = mmu::translate_with_pmp(addr, bus, ctx, mmu::AccessKind::Store, tlb)?;
-            let result_val = handle_atomic(bus, reservation, funct5, funct3, rd, phys_addr, val)?;
-            Ok(MemResult::WriteInt {
-                rd,
-                val: result_val,
-                next_pc,
-            })
+            let (result_val, memory_write) =
+                handle_atomic(bus, reservation, funct5, funct3, rd, phys_addr, val)?;
+            Ok((
+                MemResult::WriteInt {
+                    rd,
+                    val: result_val,
+                    next_pc,
+                },
+                memory_write,
+            ))
         }
+    }
+}
+
+fn memory_write(physical_address: u64, value: u64, funct3: u8) -> MemoryWrite {
+    let size = 1u8 << funct3;
+    let value = match size {
+        1 => value & 0xFF,
+        2 => value & 0xFFFF,
+        4 => value & 0xFFFF_FFFF,
+        _ => value,
+    };
+    MemoryWrite {
+        physical_address,
+        size,
+        value,
     }
 }
 
@@ -328,7 +377,7 @@ fn handle_atomic(
     rd: usize,
     addr: u64,
     val: u64,
-) -> Result<u64, VmError> {
+) -> Result<(u64, Option<MemoryWrite>), VmError> {
     let is_word = funct3 == 2;
 
     // Natural alignment is required for all atomics: 4-byte for .W, 8-byte for .D.
@@ -350,7 +399,7 @@ fn handle_atomic(
                 bus.read_doubleword(addr)
                     .map_err(|_| VmError::LoadAccessFault(addr))?
             };
-            Ok(result)
+            Ok((result, None))
         }
         // SC
         0x03 => {
@@ -363,16 +412,17 @@ fn handle_atomic(
                     bus.write_doubleword(addr, val)
                         .map_err(|_| VmError::StoreAccessFault(addr))?;
                 }
-                Ok(0) // success
+                Ok((0, Some(memory_write(addr, val, funct3))))
             } else {
-                Ok(1) // failure
+                Ok((1, None))
             }
         }
         // AMOs
         _ => {
             // Suppress unused rd warning, it's used by the caller
             let _ = rd;
-            amo_op(bus, funct5, funct3, addr, val)
+            let (old, new) = amo_op(bus, funct5, funct3, addr, val)?;
+            Ok((old, Some(memory_write(addr, new, funct3))))
         }
     }
 }
@@ -383,7 +433,7 @@ fn amo_op(
     funct3: u8,
     addr: u64,
     val: u64,
-) -> Result<u64, VmError> {
+) -> Result<(u64, u64), VmError> {
     let is_word = funct3 == 2;
 
     if is_word {
@@ -419,7 +469,7 @@ fn amo_op(
             .map_err(|_| VmError::StoreAccessFault(addr))?;
 
         // Return old value sign-extended
-        Ok(old_i as i64 as u64)
+        Ok((old_i as i64 as u64, u64::from(new_i as u32)))
     } else {
         // 64-bit AMO
         let old = bus
@@ -444,6 +494,6 @@ fn amo_op(
         bus.write_doubleword(addr, new_val)
             .map_err(|_| VmError::StoreAccessFault(addr))?;
 
-        Ok(old)
+        Ok((old, new_val))
     }
 }

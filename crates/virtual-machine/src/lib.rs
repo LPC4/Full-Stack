@@ -37,4 +37,11 @@ pub mod memory;
 pub mod rom;
 pub mod virtual_machine;
 
-pub use virtual_machine::{ArchitecturalState, RunOutcome, RunResult, VirtualMachine, VmSnapshot};
+pub use cpu::{
+    CsrWrite, MemoryWrite, PrivilegeTransition, RETIRE_EVENT_VERSION, RegisterWrite, RetireEvent,
+    TrapRecord, TrapStage,
+};
+pub use virtual_machine::{
+    ArchitecturalState, FunctionalMachine, FunctionalStepOutcome, RunOutcome, RunResult,
+    VirtualMachine, VmSnapshot,
+};

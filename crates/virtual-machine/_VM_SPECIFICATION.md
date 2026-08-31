@@ -1,17 +1,17 @@
 # RISC-V RV64IMAFD Virtual Machine Specification
 
-This document specifies the `virtual-machine` crate: a cycle-stepped RV64IMAFD emulator with
-Machine, Supervisor, and User privilege modes and Sv39 virtual memory. It covers the CPU
-pipeline, the physical and virtual memory model, CSR behavior, trap handling, the MMU, and
-the emulated devices. It is the reference for both implementing against and understanding
-the VM's observable behavior.
+This document specifies the `virtual-machine` crate: an RV64IMAFD emulator with a cycle-stepped
+pipeline and a functional architectural model. Both support Machine, Supervisor, and User
+privilege modes and Sv39 virtual memory. It covers the CPU models, physical and virtual memory,
+CSR behavior, trap handling, the MMU, and the emulated devices.
 
 ## 1. Architecture overview
 
 ### 1.1 VM Components
-- **CPU Core:** In-order, single-issue 5-stage pipeline (Fetch -> Decode -> Execute
-  -> Memory -> Writeback) with data forwarding, load-use hazard detection, and
-  branch prediction
+- **CPU Cores:** An authoritative in-order, single-issue 5-stage pipeline (Fetch -> Decode ->
+  Execute -> Memory -> Writeback) and a non-cycle-accurate functional comparison core
+- **Pipeline Timing:** Data forwarding, load-use hazard detection, branch prediction, and
+  blocking configurable memory latency
 - **Branch Predictor:** 2-bit bimodal predictor backed by a Branch Target Buffer
   (BTB)
 - **Cache Hierarchy:** Three levels (L1/L2/L3) of set-associative write-back caches
@@ -43,7 +43,7 @@ the VM's observable behavior.
 
 `ArchitecturalState` owns the integer and floating-point registers, architectural PC and
 privilege mode, CSRs and counters, and the LR/SC reservation. These values define the CPU state
-that instruction semantics and future functional execution compare.
+that the pipeline and functional core compare.
 
 The pipeline separately owns fetch PC, stage latches, pending memory latency, branch-predictor
 state, TLB contents, and pipeline statistics. Devices, caches, and RAM remain machine state rather
@@ -51,6 +51,35 @@ than CPU architectural state. Pipeline code reaches architectural values through
 `ArchitecturalState` boundary; reset code must not infer them from pipeline latches.
 `VirtualMachine::architectural_state` exposes that CPU-only view, while `VmSnapshot` remains a
 machine checkpoint containing pipeline, device, and RAM state for time travel.
+
+### 1.4 Functional Core and Retirement Events
+
+`FunctionalCore::step` fetches, decodes, executes, accesses memory, and commits one instruction
+atomically. It uses the pipeline's decoder and semantic stages plus the same MMU, PMP, TLB, bus,
+cache, and device contracts. `FunctionalMachine` supplies ELF loading, ROM boot, SYSCON halt
+handling, UART collection, and a run budget without depending on UI or session code. The
+functional path is a shadow oracle; `VirtualMachine` and its pipeline remain authoritative.
+
+Each successful functional step returns retirement event version 1. An event contains:
+
+- a zero-based event sequence, instruction PC, optional raw word, and shared instruction ID
+- whether an instruction retired, and the next architectural PC
+- committed integer, floating-point, canonical CSR, privilege, and physical-memory effects
+- an optional trap record containing cause, trap value, and the stage that detected it
+
+Interrupt boundaries and synchronous traps also consume an event sequence number, but set
+`retired` to false and do not increment `minstret`. An interrupt has no raw instruction or
+instruction ID. An instruction exception retains both when fetch and decode progressed far enough.
+Register and CSR lists contain only values changed by that boundary. CSR effects omit `cycle`,
+`instret`, and derived aliases such as `sstatus`; retirement and timing account for those values
+without making cycle-accurate and functional traces compare unequal. A memory summary identifies
+the physical address, byte width, and value actually written. Failed store-conditionals and LR
+instructions have no memory-write effect.
+
+The functional core advances `cycle` and samples CLINT, PLIC, and UART interrupt inputs once per
+step. A pending enabled interrupt is taken before instruction fetch. This is deterministic but is
+not a statement that one functional step equals one pipeline cycle. Synchronous faults trap at the
+faulting instruction PC; fatal host errors remain `VmError` results rather than guest trap events.
 
 
 ## 2. Memory Map
@@ -1068,14 +1097,21 @@ pipeline is squashed and control transfers to the relevant trap vector (`mtvec` 
 causes, `stvec`). An `ecall` serviced in WB likewise squashes the younger in-flight instructions
 before the handler runs.
 
-### 11.2 Halt Condition
+### 11.2 Functional Step
+
+`FunctionalMachine::step` returns one versioned event and reports a SYSCON halt alongside the
+event containing the terminating store. `FunctionalMachine::run` budgets functional steps rather
+than pipeline cycles. Hosted images start at their ELF entry; kernel images start at `ROM_BASE`
+with the linked kernel entry in `a0`, matching the pipelined loader and ROM boot protocol.
+
+### 11.3 Halt Condition
 The VM halts when a write to the SYSCON device (`0x1001_0000`) latches an exit code. Kernel code
 reaches this through `kshutdown`, and hosted/freestanding programs through their `exit` path
 (which the ROM or kernel turns into a SYSCON write). The exit code is a signed 64-bit integer;
 negative codes indicate errors. The host run loop also stops if a step returns an unrecoverable
 `VmError` or the `max_steps` budget is exhausted.
 
-### 11.3 Debugger Source Stepping
+### 11.4 Debugger Source Stepping
 
 Source-line stepping runs until the retired instruction maps to a different source location. A
 direct jump to its own address retires once and pauses at that address. Other loops, missing line

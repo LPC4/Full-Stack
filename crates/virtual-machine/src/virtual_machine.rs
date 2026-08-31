@@ -4,11 +4,11 @@ use crate::bus::{
     DeviceState, ELF_LOAD_BASE, HEAP_PTR_ADDR, MemoryLatencyConfig, RAM_BASE, RAM_SIZE_DEFAULT,
     SystemBus,
 };
-use crate::cpu::Cpu;
 pub use crate::cpu::csr::CsrSnapshot;
 use crate::cpu::pipeline::TickOutcome;
 pub use crate::cpu::pipeline::{CpuPipelineFeed, PipelineStats, StageEntry};
 pub use crate::cpu::{ArchitecturalState, StepOutcome};
+use crate::cpu::{Cpu, FunctionalCore, RetireEvent};
 use crate::elf_parser::{ParsedElf, align_up};
 use crate::error::VmError;
 use crate::memory::MemoryAccess as _;
@@ -30,6 +30,17 @@ pub struct RunResult {
 pub struct VirtualMachine {
     cpu: Cpu,
     bus: SystemBus,
+}
+
+pub struct FunctionalMachine {
+    core: FunctionalCore,
+    bus: SystemBus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FunctionalStepOutcome {
+    Continue(RetireEvent),
+    Halted { code: i64, event: RetireEvent },
 }
 
 /// A machine checkpoint: CPU pipeline, MMIO devices, and the RAM image. The session
@@ -97,59 +108,136 @@ impl VirtualMachine {
 
     /// Create a VM from a complete ELF-64 image by mapping every `PT_LOAD` segment.
     pub fn from_elf(bytes: &[u8]) -> Result<Self, VmError> {
-        let elf = ParsedElf::parse(bytes)?;
+        let loaded = load_elf(bytes)?;
+        let cpu = Cpu::new(loaded.start_pc, loaded.stack_ptr);
+        Ok(Self {
+            cpu,
+            bus: loaded.bus,
+        })
+    }
+}
 
-        let rom_image = crate::rom::generate_rom_image();
-        let mut bus = SystemBus::new(rom_image);
+impl FunctionalMachine {
+    pub fn new(assembled: &AssembledOutput) -> Self {
+        let elf = assembled.to_elf(ELF_LOAD_BASE);
+        Self::from_elf(&elf).unwrap_or_else(|e| panic!("failed to load assembled ELF: {e}"))
+    }
 
-        let image_base = elf
-            .load_segments
-            .iter()
-            .map(|segment| segment.vaddr)
-            .min()
-            .unwrap_or(RAM_BASE);
+    pub fn new_kernel(assembled: &AssembledOutput) -> Self {
+        let elf = assembled.to_elf_with_entry(ELF_LOAD_BASE, "_kernel_start");
+        let mut machine =
+            Self::from_elf(&elf).unwrap_or_else(|e| panic!("failed to load kernel ELF: {e}"));
+        let entry = machine.core.architectural_state().pc();
+        machine.core.reset_pc(crate::rom::ROM_BASE);
+        machine.core.set_boot_entry(entry);
+        machine
+    }
 
-        let mut highest_mapped = RAM_BASE;
-        for segment in &elf.load_segments {
-            if segment.mem_size < segment.file_size {
-                return Err(VmError::Other(format!(
-                    "ELF PT_LOAD segment at {:#x} has file size {} larger than memory size {}",
-                    segment.vaddr, segment.file_size, segment.mem_size
-                )));
-            }
+    pub fn from_elf(bytes: &[u8]) -> Result<Self, VmError> {
+        let loaded = load_elf(bytes)?;
+        let core = FunctionalCore::new(loaded.start_pc, loaded.stack_ptr);
+        Ok(Self {
+            core,
+            bus: loaded.bus,
+        })
+    }
 
-            let mapped_vaddr = RAM_BASE + (segment.vaddr - image_base);
-            highest_mapped = highest_mapped.max(mapped_vaddr + segment.mem_size);
+    pub fn step(&mut self) -> Result<FunctionalStepOutcome, VmError> {
+        let event = self.core.step(&mut self.bus)?;
+        match self.bus.take_syscon_exit() {
+            Some(code) => Ok(FunctionalStepOutcome::Halted { code, event }),
+            None => Ok(FunctionalStepOutcome::Continue(event)),
+        }
+    }
 
-            let file_end = segment
-                .offset
-                .checked_add(segment.file_size)
-                .ok_or_else(|| VmError::Other("ELF segment file range overflow".to_owned()))?;
-            let data = bytes
-                .get(segment.offset as usize..file_end as usize)
-                .ok_or_else(|| VmError::Other("ELF PT_LOAD range outside file".to_owned()))?;
-
-            for (i, &byte) in data.iter().enumerate() {
-                bus.write_byte(mapped_vaddr + i as u64, byte)?;
-            }
-
-            if segment.mem_size > segment.file_size {
-                for addr in (mapped_vaddr + segment.file_size)..(mapped_vaddr + segment.mem_size) {
-                    bus.write_byte(addr, 0)?;
+    pub fn run(&mut self, max_steps: u64) -> RunResult {
+        for steps in 1..=max_steps {
+            match self.step() {
+                Ok(FunctionalStepOutcome::Continue(_)) => {}
+                Ok(FunctionalStepOutcome::Halted { code, .. }) => {
+                    return self.run_result(steps, RunOutcome::Halted(code));
                 }
+                Err(error) => return self.run_result(steps, RunOutcome::Fault(error)),
             }
         }
-
-        let heap_base = align_up(highest_mapped, 0x1000);
-        bus.write_doubleword(HEAP_PTR_ADDR, heap_base)?;
-
-        bus.cold_cache_reset();
-
-        let stack_ptr = RAM_BASE + RAM_SIZE_DEFAULT as u64 - 16;
-        let cpu = Cpu::new(RAM_BASE + (elf.entry_point - image_base), stack_ptr);
-
-        Ok(Self { cpu, bus })
+        self.run_result(max_steps, RunOutcome::TimedOut)
     }
+
+    pub fn architectural_state(&self) -> &ArchitecturalState {
+        self.core.architectural_state()
+    }
+
+    fn run_result(&mut self, steps: u64, termination: RunOutcome) -> RunResult {
+        let uart_bytes = self.bus.uart_mut().drain_output();
+        RunResult {
+            steps,
+            uart_output: String::from_utf8_lossy(&uart_bytes).into_owned(),
+            termination,
+        }
+    }
+}
+
+struct LoadedElf {
+    bus: SystemBus,
+    start_pc: u64,
+    stack_ptr: u64,
+}
+
+fn load_elf(bytes: &[u8]) -> Result<LoadedElf, VmError> {
+    let elf = ParsedElf::parse(bytes)?;
+
+    let rom_image = crate::rom::generate_rom_image();
+    let mut bus = SystemBus::new(rom_image);
+
+    let image_base = elf
+        .load_segments
+        .iter()
+        .map(|segment| segment.vaddr)
+        .min()
+        .unwrap_or(RAM_BASE);
+
+    let mut highest_mapped = RAM_BASE;
+    for segment in &elf.load_segments {
+        if segment.mem_size < segment.file_size {
+            return Err(VmError::Other(format!(
+                "ELF PT_LOAD segment at {:#x} has file size {} larger than memory size {}",
+                segment.vaddr, segment.file_size, segment.mem_size
+            )));
+        }
+
+        let mapped_vaddr = RAM_BASE + (segment.vaddr - image_base);
+        highest_mapped = highest_mapped.max(mapped_vaddr + segment.mem_size);
+
+        let file_end = segment
+            .offset
+            .checked_add(segment.file_size)
+            .ok_or_else(|| VmError::Other("ELF segment file range overflow".to_owned()))?;
+        let data = bytes
+            .get(segment.offset as usize..file_end as usize)
+            .ok_or_else(|| VmError::Other("ELF PT_LOAD range outside file".to_owned()))?;
+
+        for (i, &byte) in data.iter().enumerate() {
+            bus.write_byte(mapped_vaddr + i as u64, byte)?;
+        }
+
+        if segment.mem_size > segment.file_size {
+            for addr in (mapped_vaddr + segment.file_size)..(mapped_vaddr + segment.mem_size) {
+                bus.write_byte(addr, 0)?;
+            }
+        }
+    }
+
+    let heap_base = align_up(highest_mapped, 0x1000);
+    bus.write_doubleword(HEAP_PTR_ADDR, heap_base)?;
+
+    bus.cold_cache_reset();
+
+    let stack_ptr = RAM_BASE + RAM_SIZE_DEFAULT as u64 - 16;
+    Ok(LoadedElf {
+        bus,
+        start_pc: RAM_BASE + (elf.entry_point - image_base),
+        stack_ptr,
+    })
 }
 
 // --- Step / run ---

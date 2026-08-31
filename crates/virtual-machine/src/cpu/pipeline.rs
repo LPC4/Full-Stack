@@ -18,6 +18,7 @@ use crate::cpu::hazard_unit::{
     compute_forwarding, insn_frs1, insn_frs2, insn_is_atomic, insn_is_fp_dest, insn_is_load,
     insn_rd, insn_rs1, insn_rs2, load_use_hazard,
 };
+use crate::cpu::interrupts;
 use crate::cpu::mmu;
 use crate::cpu::pipeline::execute::{ExecResult, ExecuteOperands};
 use crate::cpu::pipeline::memory::MemResult;
@@ -194,55 +195,7 @@ impl Pipeline {
         self.stats.cycles += 1;
         self.architectural.csrs_mut().increment_cycle();
 
-        // Advance CLINT timer and sync hardware interrupt bits into mip.
-        {
-            let clint = bus.clint_mut();
-            clint.tick();
-            let csrs = self.architectural.csrs_mut();
-            if clint.timer_irq_pending() {
-                // With mideleg[5]=1 the CLINT timer is delivered straight as STIP
-                // (bit 5), bypassing M-mode. Otherwise it takes the MTIP (bit 7) path.
-                if (csrs.mideleg >> 5) & 1 == 1 {
-                    csrs.mip |= 1u64 << 5; // STIP - S-mode timer pending
-                    csrs.mip &= !(1u64 << 7); // no MTIP when using delegation
-                } else {
-                    csrs.mip |= 1u64 << 7; // MTIP - M-mode timer pending
-                }
-            } else {
-                csrs.mip &= !(1u64 << 7); // clear MTIP
-                csrs.mip &= !(1u64 << 5); // clear STIP
-            }
-            if clint.software_irq_pending() {
-                csrs.mip |= 1u64 << 3; // MSIP
-            } else {
-                csrs.mip &= !(1u64 << 3);
-            }
-        }
-
-        // Check PLIC for external interrupts and sync SEIP into mip.
-        // If PLIC has a pending interrupt and it's delegated to S-mode, set SEIP (bit 9).
-        {
-            // Check if UART RX interrupt is pending and inject into PLIC if so
-            let uart_rx_pending = bus.uart_mut().rx_irq_pending();
-            if uart_rx_pending {
-                bus.plic_mut()
-                    .set_irq(crate::devices::uart::UART_RX_IRQ_SOURCE);
-            }
-
-            // Check if any PLIC interrupt is pending
-            let csrs = self.architectural.csrs_mut();
-            if bus.plic_mut().next_irq(0).is_some() {
-                // PLIC has a pending interrupt for hart 0 (context 1)
-                if (csrs.mideleg >> 9) & 1 == 1 {
-                    csrs.mip |= 1u64 << 9; // SEIP - S-mode external interrupt pending
-                } else {
-                    csrs.mip |= 1u64 << 11; // MEIP - M-mode external interrupt pending
-                }
-            } else {
-                csrs.mip &= !(1u64 << 11); // clear MEIP
-                csrs.mip &= !(1u64 << 9); // clear SEIP
-            }
-        }
+        interrupts::sample_inputs(&mut self.architectural, bus);
 
         // Snapshot pipeline state at the START of this cycle (before any stage runs).
         let snap_wb_entry: StageEntry = self.mem_wb.as_ref().map(|r| (r.pc, r.mnemonic));
@@ -296,7 +249,7 @@ impl Pipeline {
         // ---- Interrupt check (precise: after WB retires, before MEM executes) ----
         // In-flight instructions (old_ex_mem, old_id_ex, old_if_id) are squashed if
         // an interrupt fires; their pipeline registers are already taken out of self.
-        if let Some((irq_cause, irq_tval, irq_pc)) = self.check_pending_interrupt() {
+        if let Some((irq_cause, irq_tval, irq_pc)) = interrupts::pending(&self.architectural) {
             // old_ex_mem / old_id_ex / old_if_id drop here - no memory side-effects yet.
             self.take_trap(irq_cause, irq_tval, irq_pc);
             self.last_cycle = CpuPipelineFeed {
@@ -785,55 +738,6 @@ impl Pipeline {
         self.take_trap(cause, 0, ecall_pc);
         self.flush_pipeline();
         Ok(TickOutcome::EcallSquash)
-    }
-
-    // Returns Some((cause, tval, pc)) when an interrupt is ready to fire right now.
-    // Priority order per spec: MEI(11) > MSI(3) > MTI(7), then SEI(9) > SSI(1) > STI(5).
-    fn check_pending_interrupt(&self) -> Option<(u64, u64, u64)> {
-        let csrs = self.architectural.csrs();
-        let pending = csrs.mip & csrs.mie;
-        if pending == 0 {
-            return None;
-        }
-
-        let privilege_mode = self.architectural.privilege_mode();
-        let in_m = privilege_mode == PrivilegeMode::Machine;
-        let in_s = privilege_mode == PrivilegeMode::Supervisor;
-        let mie_global = (csrs.mstatus >> 3) & 1; // mstatus.MIE
-        let sie_global = (csrs.mstatus >> 1) & 1; // mstatus.SIE
-
-        // M-mode interrupts: not delegated to S-mode.
-        // Taken if: not in M-mode (lower modes are always preempted), or MIE=1 in M-mode.
-        let m_pending = pending & !csrs.mideleg;
-        if m_pending != 0 && (!in_m || mie_global == 1) {
-            let cause_idx = if m_pending & (1 << 11) != 0 {
-                11u64
-            } else if m_pending & (1 << 3) != 0 {
-                3u64
-            } else if m_pending & (1 << 7) != 0 {
-                7u64
-            } else {
-                m_pending.trailing_zeros() as u64
-            };
-            return Some(((1u64 << 63) | cause_idx, 0, self.architectural.pc()));
-        }
-
-        // S-mode interrupts: delegated; only relevant when not in M-mode.
-        let s_pending = pending & csrs.mideleg;
-        if s_pending != 0 && !in_m && (!in_s || sie_global == 1) {
-            let cause_idx = if s_pending & (1 << 9) != 0 {
-                9u64
-            } else if s_pending & (1 << 1) != 0 {
-                1u64
-            } else if s_pending & (1 << 5) != 0 {
-                5u64
-            } else {
-                s_pending.trailing_zeros() as u64
-            };
-            return Some(((1u64 << 63) | cause_idx, 0, self.architectural.pc()));
-        }
-
-        None
     }
 
     // --- run() helper ---

@@ -1,26 +1,25 @@
 ; Kernel initialization and boot orchestration.
 
-layout      := import("layout")
-heap_backend := import("heap_backend")
-klog        := import("klog")
-utilities   := import("utilities")
-mem         := import("mem")
-trap_entry  := import("trap_entry")
-pmm         := import("pmm")
-vmm         := import("vmm")
-checks      := import("checks")
-process     := import("process")
-scheduler   := import("scheduler")
-fs          := import("fs")
+layout          := import("layout")
+heap_backend    := import("heap_backend")
+klog            := import("klog")
+utilities       := import("utilities")
+mem             := import("mem")
+trap_entry      := import("trap_entry")
+pmm             := import("pmm")
+vmm             := import("vmm")
+checks          := import("checks")
+process         := import("process")
+scheduler       := import("scheduler")
+fs              := import("fs")
 
 ; Physical addresses where the test harness places user binary metadata;
 ; the meta page holds [0]=entry_va (u64), [8]=size_bytes (u64).
 const USER_BINARY_PA = 0x87F00000
 const USER_META_PA   = 0x87EFF000
 const USER_CODE_VA   = 0x40000000
-; VMM_R/W/X/U page-flag bits come from the shared kernel layout (layout.hll).
 
-; Scratch globals for spawn_user_process (asm blocks can reference globals).
+; Scratch globals for spawn_user_process.
 user_entry: u64 = 0
 user_size:  u64 = 0
 user_spawned: u64 = 0
@@ -142,12 +141,12 @@ spawn_user_process: () {
     ; Read entry VA and total size from the metadata page.
     asm {
         li   t0, 0x87EFF000     ; USER_META_PA
-        ld   t0, 0(t0)           ; entry VA
+        ld   t0, 0(t0)          ; entry VA
         la   t1, user_entry
         sd   t0, 0(t1)
 
         li   t0, 0x87EFF008     ; USER_META_PA + 8
-        ld   t0, 0(t0)           ; size bytes
+        ld   t0, 0(t0)          ; size bytes
         la   t1, user_size
         sd   t0, 0(t1)
     }
