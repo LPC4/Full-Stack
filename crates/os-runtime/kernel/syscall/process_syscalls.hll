@@ -1,0 +1,252 @@
+; Process lifecycle and executable syscall handlers.
+
+layout        := import("kernel/core/kernel_abi.hll")
+config        := import("kernel/core/kernel_config.hll")
+address_space := import("kernel/mm/address_space.hll")
+elf_loader    := import("kernel/exec/elf_loader.hll")
+files         := import("kernel/fs/files.hll")
+heap          := import("kernel/mm/kernel_heap.hll")
+mem           := import("mem")
+pages         := import("kernel/mm/physical_pages.hll")
+tasks         := import("kernel/sched/tasks.hll")
+uart          := import("kernel/arch/riscv64/uart.hll")
+user_memory   := import("kernel/mm/user_memory.hll")
+
+; --- State ---
+struct ExecOptions {
+    path: u8[],
+    arg: u8*,
+    arg_len: u64,
+    out_fd: i64,
+    in_fd: i64,
+}
+
+struct ExecRequest {
+    path_ptr: u8*,
+    path_len: u64,
+    arg_ptr: u8*,
+    arg_len: u64,
+    out_fd: i64,
+    in_fd: i64,
+}
+
+const SIGKILL = 9
+const INPUT_INTR_CHAR = 3
+const WAIT_INTERRUPTED = 0xFFFFFFFFFFFFFFFE
+const USER_ARG_BASE = 0x7FF00000
+const USER_ARG_FLAGS = config.PTE_READ + config.PTE_WRITE + config.PTE_USER
+const USER_ARG_MAX = 4095
+
+; --- Public API ---
+
+export process_syscalls_exec: (frame: layout.TrapFrame*) -> layout.SysAction {
+    path: u8[256] = []
+    path_len: u64 = frame.x11
+    if user_memory.copy_path(tasks.current_root(), frame.x10 as u8*, path_len, &path[0]) < 0 {
+        return fail(frame)
+    }
+    options: ExecOptions = {
+        .path = path[0..path_len],
+        .arg = frame.x12 as u8*,
+        .arg_len = frame.x13,
+        .out_fd = 0,
+        .in_fd = 0,
+    }
+    frame.x10 = spawn_process(options) as u64
+    return Continue
+}
+
+export process_syscalls_exec_redirected: (frame: layout.TrapFrame*) -> layout.SysAction {
+    request_ptr: ExecRequest* = frame.x10 as ExecRequest*
+    if user_memory.validate(tasks.current_root(), request_ptr as u8*, size_of<ExecRequest>(), 0) == 0 {
+        return fail(frame)
+    }
+    request: ExecRequest = @request_ptr
+    path: u8[256] = []
+    if user_memory.copy_path(tasks.current_root(), request.path_ptr, request.path_len, &path[0]) < 0 {
+        return fail(frame)
+    }
+    options: ExecOptions = {
+        .path = path[0..request.path_len],
+        .arg = request.arg_ptr,
+        .arg_len = request.arg_len,
+        .out_fd = request.out_fd,
+        .in_fd = request.in_fd,
+    }
+    frame.x10 = spawn_process(options) as u64
+    return Continue
+}
+
+export process_syscalls_fork: (frame: layout.TrapFrame*) -> layout.SysAction {
+    parent: layout.Pcb* = tasks.current()
+    if parent == null {
+        return fail(frame)
+    }
+
+    child: layout.Pcb* = tasks.build_empty()
+    child.page_root = address_space.create()
+    child.parent_pid = parent.pid
+    child.heap_brk = parent.heap_brk
+    address_space.copy_user(parent.page_root, child.page_root)
+
+    child_frame: layout.TrapFrame* = &child.frame
+    mem.copy(child_frame as u8*, frame as u8*, TF_BYTES)
+    child_frame.x10 = 0
+    child_frame.sepc = child_frame.sepc + 4
+
+    tasks.enqueue(child)
+    frame.x10 = child.pid
+    return Continue
+}
+
+export process_syscalls_wait: (frame: layout.TrapFrame*) -> layout.SysAction {
+    parent: layout.Pcb* = tasks.current()
+    if parent == null {
+        return fail(frame)
+    }
+
+    child: layout.Pcb* = tasks.reap_child(parent.pid)
+    if child != null {
+        frame.x10 = child.exit_code
+        return Continue
+    }
+    if tasks.has_children(parent.pid) == 1 {
+        if interrupted_child(parent.pid) == 1 {
+            frame.x10 = WAIT_INTERRUPTED
+            return Continue
+        }
+        frame.sepc = frame.sepc - 4
+        return Schedule
+    }
+    return fail(frame)
+}
+
+export process_syscalls_wait_pid: (frame: layout.TrapFrame*) -> layout.SysAction {
+    if tasks.current() == null {
+        return fail(frame)
+    }
+    target: u64 = frame.x10
+    child: layout.Pcb* = tasks.reap_pid(target)
+    if child != null {
+        frame.x10 = child.exit_code
+        return Continue
+    }
+    if tasks.pid_alive(target) == 1 {
+        if interrupted_pid(target) == 1 {
+            frame.x10 = WAIT_INTERRUPTED
+            return Continue
+        }
+        frame.sepc = frame.sepc - 4
+        return Schedule
+    }
+    return fail(frame)
+}
+
+export process_syscalls_kill: (frame: layout.TrapFrame*) -> layout.SysAction {
+    if frame.x11 != SIGKILL || frame.x10 == 1 || tasks.kill_pid(frame.x10) == 0 {
+        return fail(frame)
+    }
+    frame.x10 = 0
+    return Continue
+}
+
+export process_syscalls_exit: (frame: layout.TrapFrame*) -> layout.SysAction {
+    return tasks.exit_current(frame.x10)
+}
+
+; --- Implementation ---
+
+spawn_process: (options: ExecOptions) -> i64 {
+    fd: i64 = files.open(options.path, 0)
+    if fd < 2 {
+        return -1 as i64
+    }
+
+    defer files.close(fd)
+    argument: u8* = heap.alloc_bytes(USER_ARG_MAX)
+    defer heap.free(argument)
+    if options.arg_len != 0 {
+        if options.arg_len > USER_ARG_MAX ||
+           user_memory.validate(tasks.current_root(), options.arg, options.arg_len, 0) == 0 {
+            return -1 as i64
+        }
+        mem.copy(argument, options.arg, options.arg_len)
+    }
+
+    header: u8* = heap.alloc_bytes(64)
+    defer heap.free(header)
+    entry: u64 = 0
+    match elf_loader.header(fd, header) {
+        Ok(value) -> { entry = value }
+        Err(_) -> { return -1 as i64 }
+    }
+
+    parent: layout.Pcb* = tasks.current()
+    parent_pid: u64 = 0
+    if parent != null {
+        parent_pid = parent.pid
+    }
+
+    pcb: layout.Pcb* = tasks.build(entry)
+    pcb.parent_pid = parent_pid
+    if options.out_fd >= 2 {
+        pcb.stdout_fd = options.out_fd as u64
+    }
+    if options.in_fd >= 2 {
+        pcb.stdin_fd = options.in_fd as u64
+    }
+
+    argument_page: u8* = pages.alloc()
+    if argument_page == null {
+        return -1 as i64
+    }
+    mem.set(argument_page, 0, 4096)
+    if options.arg_len != 0 {
+        mem.copy(argument_page, argument, options.arg_len)
+    }
+    address_space.map(pcb.page_root, USER_ARG_BASE, argument_page as u64, USER_ARG_FLAGS)
+    pcb.frame.x10 = USER_ARG_BASE
+    pcb.frame.x11 = options.arg_len
+
+    match elf_loader.load(pcb.page_root, fd, header) {
+        Ok(_) -> {}
+        Err(_) -> { return -1 as i64 }
+    }
+    tasks.enqueue(pcb)
+    return pcb.pid as i64
+}
+
+interrupted_child: (parent_pid: u64) -> u64 {
+    if uart.has_pushback() {
+        return 0
+    }
+    character: i64 = uart.take_raw()
+    if character == INPUT_INTR_CHAR {
+        tasks.kill_child(parent_pid)
+        return 1
+    }
+    if character >= 0 {
+        uart.pushback(character as u64)
+    }
+    return 0
+}
+
+interrupted_pid: (pid: u64) -> u64 {
+    if uart.has_pushback() {
+        return 0
+    }
+    character: i64 = uart.take_raw()
+    if character == INPUT_INTR_CHAR {
+        tasks.kill_pid(pid)
+        return 1
+    }
+    if character >= 0 {
+        uart.pushback(character as u64)
+    }
+    return 0
+}
+
+fail: (frame: layout.TrapFrame*) -> layout.SysAction {
+    frame.x10 = 0xFFFFFFFFFFFFFFFF
+    return Continue
+}

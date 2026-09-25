@@ -1,0 +1,18 @@
+; Infallible kernel allocation over the selected allocator backend.
+
+alloc := import("alloc")
+runtime := import("runtime")
+
+; --- Public API ---
+
+export kernel_heap_alloc_bytes: (size: u64) -> u8* {
+    ptr: u8* = alloc.malloc(size)
+    if ptr == null {
+        runtime.panic("kernel heap exhausted".ptr)
+    }
+    return ptr
+}
+
+export kernel_heap_free: (ptr: u8*) {
+    alloc.free(ptr)
+}

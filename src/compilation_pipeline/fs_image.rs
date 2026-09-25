@@ -1,7 +1,7 @@
 // --- Filesystem layout ---
 
 /// Canonical host-side filesystem layout. Shared constants mirror `FS_*` in
-/// `kernel/fs/fs.hll`; record offsets mirror its typed disk structs.
+/// `kernel/fs/fs_types.hll`; record offsets mirror its typed disk structs.
 pub mod fs_layout {
     /// Block size in bytes (`FS_BLOCK_SIZE`).
     pub const BLOCK_SIZE: usize = 4096;
@@ -69,7 +69,7 @@ fn split_last_component(path: &str) -> (&str, &str) {
 }
 
 /// Serialise `entries` into the on-disk filesystem image format. Block layout is in
-/// _`OS_SPECIFICATION.md`, and the [`fs_layout`] constants are checked against `fs.hll`.
+/// _`OS_SPECIFICATION.md`, and the [`fs_layout`] constants are checked against `fs_types.hll`.
 pub fn build_fs_image(entries: &[FsEntry<'_>]) -> Vec<u8> {
     use fs_layout::{
         BITMAP_BLOCK, BLOCK_SIZE, DATA_BLOCK_START, DE_INODE, DE_NAME, DIRENT_SIZE, IN_BLOCKS,
@@ -315,11 +315,12 @@ pub fn build_fs_image(entries: &[FsEntry<'_>]) -> Vec<u8> {
 mod tests {
     use super::*;
 
-    // Parse a `const FS_NAME = <int>` declaration out of fs.hll. Handles decimal
+    // Parse a `const FS_NAME = <int>` declaration out of fs_types.hll. Handles decimal
     // and 0x-prefixed hex.
     fn fs_hll_const(src: &str, name: &str) -> i64 {
         for line in src.lines() {
             let line = line.trim();
+            let line = line.strip_prefix("export ").unwrap_or(line);
             let rest = match line.strip_prefix("const ") {
                 Some(r) => r,
                 None => continue,
@@ -333,12 +334,12 @@ mod tests {
             }
             let val = rhs.split(';').next().unwrap_or("").trim();
             return if let Some(hex) = val.strip_prefix("0x") {
-                i64::from_str_radix(hex, 16).expect("hex fs.hll const")
+                i64::from_str_radix(hex, 16).expect("hex filesystem constant")
             } else {
-                val.parse().expect("decimal fs.hll const")
+                val.parse().expect("decimal filesystem constant")
             };
         }
-        panic!("const {name} not found in fs.hll");
+        panic!("const {name} not found in fs_types.hll");
     }
 
     // Shared host-builder and kernel constants must not drift.
@@ -346,9 +347,9 @@ mod tests {
     fn fs_layout_matches_fs_hll() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/crates/os-runtime/kernel/fs/fs.hll"
+            "/crates/os-runtime/kernel/fs/fs_types.hll"
         );
-        let src = std::fs::read_to_string(path).expect("read fs.hll");
+        let src = std::fs::read_to_string(path).expect("read fs_types.hll");
 
         let pairs: &[(&str, i64)] = &[
             ("FS_BLOCK_SIZE", fs_layout::BLOCK_SIZE as i64),
@@ -369,7 +370,7 @@ mod tests {
             let hll_val = fs_hll_const(&src, name);
             assert_eq!(
                 hll_val, *rust_val,
-                "{name}: fs.hll has {hll_val} but fs_layout has {rust_val}"
+                "{name}: fs_types.hll has {hll_val} but fs_layout has {rust_val}"
             );
         }
     }

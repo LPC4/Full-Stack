@@ -1,0 +1,186 @@
+; Filesystem descriptor table and byte I/O.
+
+allocator := import("kernel/fs/fs_allocator.hll")
+directory := import("kernel/fs/fs_directory.hll")
+image     := import("kernel/fs/fs_image.hll")
+mem       := import("mem")
+types     := import("kernel/fs/fs_types.hll")
+
+; --- Public API ---
+
+export fs_descriptors_open: (state: types.FileSystemState*, path: u8[], flags: u64) -> Result<i64, types.FsError> {
+    inode: i64 = 0
+    match directory.resolve(state, path) {
+        Ok(found) -> { inode = found }
+        Err(error) -> {
+            if flags != types.FS_OPEN_CREATE {
+                return Err(error)
+            }
+            inode = directory.create_file(state, path)?
+        }
+    }
+
+    fd: u64 = 2
+    while fd < types.FS_MAX_FD {
+        slot: types.OpenFile* = image.fd_ptr(state, fd)
+        if slot.valid == 0 {
+            slot.valid = 1
+            slot.inode = inode as u64
+            if flags == types.FS_OPEN_RO {
+                slot.flags = types.FS_OPEN_RO
+            } else {
+                slot.flags = types.FS_OPEN_RW
+            }
+            slot.pos = 0
+            return Ok(fd as i64)
+        }
+        fd = fd + 1
+    }
+    return Err(FsError.InvalidDescriptor)
+}
+
+export fs_descriptors_read: (state: types.FileSystemState*, fd: i64, buffer: u8*, offset: u64, length: u64) -> Result<i64, types.FsError> {
+    if fd < 2 || fd >= types.FS_MAX_FD {
+        return Err(FsError.InvalidDescriptor)
+    }
+    if length == 0 {
+        return Ok(0)
+    }
+    slot: types.OpenFile* = image.fd_ptr(state, fd as u64)
+    if slot.valid == 0 {
+        return Err(FsError.InvalidDescriptor)
+    }
+    size: u64 = image.inode_size(state, slot.inode)
+    if offset >= size {
+        return Err(FsError.InvalidDescriptor)
+    }
+    to_read: u64 = length
+    if to_read > size - offset {
+        to_read = size - offset
+    }
+    done: u64 = 0
+    while done < to_read {
+        file_offset: u64 = offset + done
+        block_slot: u64 = file_offset / types.FS_BLOCK_SIZE
+        block_offset: u64 = file_offset % types.FS_BLOCK_SIZE
+        if block_slot >= types.FS_INODE_BLOCKS {
+            break
+        }
+        block: u64 = image.inode_block(state, slot.inode, block_slot)
+        if block == 0 {
+            break
+        }
+        chunk: u64 = to_read - done
+        if chunk > types.FS_BLOCK_SIZE - block_offset {
+            chunk = types.FS_BLOCK_SIZE - block_offset
+        }
+        source: u8* = (image.block_pa(state, block) + block_offset) as u8*
+        mem.copy(buffer + done, source, chunk)
+        done = done + chunk
+    }
+    return Ok(done as i64)
+}
+
+export fs_descriptors_write: (state: types.FileSystemState*, fd: i64, buffer: u8*, offset: u64, length: u64) -> Result<i64, types.FsError> {
+    if fd < 2 || fd >= types.FS_MAX_FD {
+        return Err(FsError.InvalidDescriptor)
+    }
+    if length == 0 {
+        return Ok(0)
+    }
+    slot: types.OpenFile* = image.fd_ptr(state, fd as u64)
+    if slot.valid == 0 || slot.flags == types.FS_OPEN_RO {
+        return Err(FsError.InvalidDescriptor)
+    }
+    done: u64 = 0
+    while done < length {
+        file_offset: u64 = offset + done
+        block_slot: u64 = file_offset / types.FS_BLOCK_SIZE
+        block_offset: u64 = file_offset % types.FS_BLOCK_SIZE
+        if block_slot >= types.FS_INODE_BLOCKS {
+            break
+        }
+        block: u64 = image.inode_block(state, slot.inode, block_slot)
+        if block == 0 {
+            match allocator.alloc_block(state) {
+                Ok(allocated) -> { block = allocated }
+                Err(_) -> { break }
+            }
+            mem.set(image.block_pa(state, block) as u8*, 0, types.FS_BLOCK_SIZE)
+            image.set_inode_block(state, slot.inode, block_slot, block)
+        }
+        chunk: u64 = length - done
+        if chunk > types.FS_BLOCK_SIZE - block_offset {
+            chunk = types.FS_BLOCK_SIZE - block_offset
+        }
+        destination: u8* = (image.block_pa(state, block) + block_offset) as u8*
+        mem.copy(destination, buffer + done, chunk)
+        done = done + chunk
+    }
+    end: u64 = offset + done
+    if end > image.inode_size(state, slot.inode) {
+        image.set_inode_size(state, slot.inode, end)
+    }
+    return Ok(done as i64)
+}
+
+export fs_descriptors_truncate: (state: types.FileSystemState*, fd: i64, length: u64) -> Result<i64, types.FsError> {
+    if fd < 2 || fd >= types.FS_MAX_FD {
+        return Err(FsError.InvalidDescriptor)
+    }
+    slot: types.OpenFile* = image.fd_ptr(state, fd as u64)
+    if slot.valid == 0 || slot.flags == types.FS_OPEN_RO {
+        return Err(FsError.InvalidDescriptor)
+    }
+    if length >= image.inode_size(state, slot.inode) {
+        return Ok(0)
+    }
+    keep: u64 = (length + types.FS_BLOCK_SIZE - 1) / types.FS_BLOCK_SIZE
+    for block_slot in keep..types.FS_INODE_BLOCKS {
+        block: u64 = image.inode_block(state, slot.inode, block_slot)
+        if block != 0 {
+            allocator.free_block(state, block)
+            image.set_inode_block(state, slot.inode, block_slot, 0)
+        }
+    }
+    image.set_inode_size(state, slot.inode, length)
+    return Ok(0)
+}
+
+export fs_descriptors_size: (state: types.FileSystemState*, fd: i64) -> u64 {
+    if fd < 2 || fd >= types.FS_MAX_FD {
+        return 0
+    }
+    slot: types.OpenFile* = image.fd_ptr(state, fd as u64)
+    if slot.valid == 0 {
+        return 0
+    }
+    return image.inode_size(state, slot.inode)
+}
+
+export fs_descriptors_position: (state: types.FileSystemState*, fd: i64) -> u64 {
+    if fd < 2 || fd >= types.FS_MAX_FD {
+        return 0
+    }
+    slot: types.OpenFile* = image.fd_ptr(state, fd as u64)
+    return slot.pos
+}
+
+export fs_descriptors_set_position: (state: types.FileSystemState*, fd: i64, position: u64) {
+    if fd < 2 || fd >= types.FS_MAX_FD {
+        return
+    }
+    slot: types.OpenFile* = image.fd_ptr(state, fd as u64)
+    slot.pos = position
+}
+
+export fs_descriptors_close: (state: types.FileSystemState*, fd: i64) {
+    if fd < 2 || fd >= types.FS_MAX_FD {
+        return
+    }
+    slot: types.OpenFile* = image.fd_ptr(state, fd as u64)
+    slot.valid = 0
+    slot.inode = 0
+    slot.flags = 0
+    slot.pos = 0
+}

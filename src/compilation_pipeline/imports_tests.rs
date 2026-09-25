@@ -870,17 +870,18 @@ fn unresolved_import_is_an_error() {
 #[test]
 fn bundled_kernel_imports_resolve_and_extract_interfaces() {
     const NAMES: &[&str] = &[
-        "layout",
-        "pmm",
-        "vmm",
-        "process",
-        "scheduler",
-        "fs",
-        "syscall",
-        "trap_entry",
-        "trap_handler",
-        "utilities",
-        "checks",
+        "kernel/core/kernel_abi.hll",
+        "kernel/mm/physical_pages.hll",
+        "kernel/mm/address_space.hll",
+        "kernel/sched/process.hll",
+        "kernel/sched/scheduler.hll",
+        "kernel/fs/files.hll",
+        "kernel/syscall/syscalls.hll",
+        "kernel/trap/trap_entry.hll",
+        "kernel/trap/trap_handler.hll",
+        "kernel/mm/kernel_heap.hll",
+        "kernel/arch/riscv64/system.hll",
+        "kernel/core/checks.hll",
         "stdlib/platform/kernel/klog.hll",
         "stdlib/core/mem.hll",
         "stdlib/core/string.hll",
@@ -895,4 +896,71 @@ fn bundled_kernel_imports_resolve_and_extract_interfaces() {
         hll_to_ir::imports::extract_interface(source)
             .unwrap_or_else(|e| panic!("interface extraction failed for `{name}`:\n{e}"));
     }
+}
+
+#[test]
+fn kernel_abi_names_link_consistently_for_each_target() {
+    for target in [
+        TargetMode::Hosted,
+        TargetMode::Freestanding,
+        TargetMode::Kernel,
+    ] {
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_target_mode(target);
+        pipeline.set_write_artifacts(false);
+        pipeline.set_module_resolver(Some(Box::new(|name| {
+            (name == "boundary").then(|| {
+                r#"
+export kmain: () -> i32 { return 10 }
+export trap_handler: () -> i32 { return 20 }
+export _s_trap_host: () -> i32 { return 12 }
+export call_handler: <T>(value: T) -> i32 { return trap_handler() }
+"#
+                .to_owned()
+            })
+        })));
+        let source = r#"
+boundary := import("boundary")
+main: () -> i32 {
+    return boundary.kmain() + boundary.trap_handler() + boundary._s_trap_host()
+        + boundary.call_handler<i32>(0)
+}
+"#;
+        let objects = pipeline
+            .compile_program_closure("root", source)
+            .expect("compile ABI calls");
+        let refs: Vec<_> = objects
+            .iter()
+            .map(|(name, object)| (name.as_str(), object))
+            .collect();
+        let linked = asm_to_binary::ObjectLinker::link(&refs).expect("ABI calls resolve at link");
+        for symbol in ["kmain", "trap_handler", "_s_trap_host"] {
+            let expected = if target == TargetMode::Kernel {
+                symbol.to_owned()
+            } else {
+                format!("boundary__{symbol}")
+            };
+            assert!(
+                linked.has_symbol(&expected),
+                "missing {expected} for {target:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn kernel_rejects_import_cycles_even_without_mangling() {
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_target_mode(TargetMode::Kernel);
+    pipeline.set_module_mangling(false);
+    pipeline.set_write_artifacts(false);
+    pipeline.set_module_resolver(Some(Box::new(|name| match name {
+        "a" => Some("b := import(\"b\")\nexport a: () {}".to_owned()),
+        "b" => Some("a := import(\"a\")\nexport b: () {}".to_owned()),
+        _ => None,
+    })));
+    let error = pipeline
+        .compile_program_closure("root", "a := import(\"a\")\nkmain: () { a.a() }")
+        .expect_err("flat kernel imports must remain acyclic");
+    assert!(error.to_string().contains("cyclic import"));
 }

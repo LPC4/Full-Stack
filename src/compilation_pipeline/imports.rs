@@ -139,15 +139,21 @@ impl CompilationPipeline {
             let module_imports = hll_to_ir::imports::collect_module_imports(source)
                 .map_err(|msg| vec![Diagnostic::new(DiagnosticLevel::Error, msg)])?;
             if self.target_mode == TargetMode::Kernel
-                && !module_imports
-                    .iter()
-                    .any(|(_, path)| Self::module_key(path) == "layout")
+                && !module_imports.iter().any(|(_, path)| {
+                    Self::module_key(path)
+                        .rsplit('/')
+                        .next()
+                        .is_some_and(|name| name == "kernel_abi.hll")
+                })
             {
-                state.prelude.push_str(os_runtime::kernel::LAYOUT);
+                state.prelude.push_str(
+                    bundled_module_source("kernel/core/kernel_abi.hll")
+                        .expect("generated registry contains the kernel ABI"),
+                );
                 state.prelude.push('\n');
                 state.emitted.insert(source_identity(
-                    "layout",
-                    bundled_module_path("layout").map(Path::new),
+                    "kernel_abi",
+                    bundled_module_path("kernel/core/kernel_abi.hll").map(Path::new),
                 ));
             }
             for (alias, path) in module_imports {
@@ -247,13 +253,17 @@ impl CompilationPipeline {
             })?;
         let mangle_this = self.mangle_modules && !resolved.is_stdlib;
         let (prefix, mangled) = if mangle_this {
-            let link_symbols = hll_to_ir::imports::collect_exported_link_symbols(&resolved.source)
-                .map_err(|msg| {
-                    vec![Diagnostic::new(
-                        DiagnosticLevel::Error,
-                        format!("failed to read exports of \"{path}\": {msg}"),
-                    )]
-                })?;
+            let mut link_symbols = hll_to_ir::imports::collect_exported_link_symbols(
+                &resolved.source,
+            )
+            .map_err(|msg| {
+                vec![Diagnostic::new(
+                    DiagnosticLevel::Error,
+                    format!("failed to read exports of \"{path}\": {msg}"),
+                )]
+            })?;
+            let exempt = hll_to_ir::imports::abi_symbols(self.target_mode);
+            link_symbols.retain(|name| !exempt.contains(name));
             (
                 Self::module_prefix(&resolved.key, resolved.source_path.as_deref()),
                 link_symbols,
@@ -276,6 +286,7 @@ impl CompilationPipeline {
                     &resolved.source,
                     &prefix,
                     &dependency_aliases,
+                    self.target_mode,
                 )
                 .map_err(|msg| {
                     vec![Diagnostic::new(
@@ -360,7 +371,8 @@ pub(super) fn module_member_aliases(
     // Sort for deterministic alias resolution (the export set is unordered).
     let mut sorted_exports: Vec<&String> = exports.iter().collect();
     sorted_exports.sort();
-    for prefix in [alias, key] {
+    let stem = key.rsplit('/').next().unwrap_or(key);
+    for prefix in [alias, key, stem] {
         let prefix = prefix.trim_end_matches(".hll");
         if prefix.is_empty() {
             continue;

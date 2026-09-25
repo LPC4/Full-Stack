@@ -275,7 +275,7 @@ mod tests {
             ".fullstack/run.toml",
             "crates/os-runtime/kernel/kernel.build",
             "crates/os-runtime/kernel/core/my_kernel.hll",
-            "crates/os-runtime/kernel/mm/pmm.hll",
+            "crates/os-runtime/kernel/mm/physical_pages.hll",
             "crates/os-runtime/kernel/trap/trap_entry.hll",
             "crates/os-runtime/boot/startup.s",
             "crates/os-runtime/boot/trap.s",
@@ -412,7 +412,7 @@ mod tests {
     #[test]
     fn populate_preserves_existing_files() {
         let mut fs = sample_workspace().expect("sample workspace");
-        let path = VPath::parse("crates/os-runtime/kernel/mm/pmm.hll").expect("path");
+        let path = VPath::parse("crates/os-runtime/kernel/mm/physical_pages.hll").expect("path");
         fs.write_text(&path, "; edited").expect("write");
 
         populate_demo_workspace(&mut fs).expect("repopulate");
@@ -467,7 +467,7 @@ mod tests {
         populate_demo_workspace(&mut fs).expect("populate");
         for path in [
             ".fullstack/run.toml",
-            "crates/os-runtime/kernel/mm/pmm.hll",
+            "crates/os-runtime/kernel/mm/physical_pages.hll",
             "crates/os-runtime/boot/startup.s",
             "programs/example/core_basics/core_basics.build",
             "programs/user/bin/shell/shell.hll",

@@ -1,0 +1,168 @@
+; Mounted filesystem facade. See OS specification chapter 8.
+
+descriptors := import("kernel/fs/fs_descriptors.hll")
+directory   := import("kernel/fs/fs_directory.hll")
+heap        := import("kernel/mm/kernel_heap.hll")
+image       := import("kernel/fs/fs_image.hll")
+klog        := import("klog")
+mem         := import("mem")
+runtime     := import("runtime")
+types       := import("kernel/fs/fs_types.hll")
+
+; --- State ---
+
+filesystem: types.FileSystemState = {
+    .image_base = 0,
+    .image_size = 0,
+    .fd_table_pa = 0,
+    .ready = 0,
+}
+
+; --- Public API ---
+
+export files_init: (base_pa: u64, image_size: u64) {
+    verify_layouts()
+    if image.read32(base_pa) != types.FS_MAGIC32 {
+        klog.warn("[  FS  ] bad magic, not mounting".ptr)
+        return
+    }
+
+    filesystem.image_base = base_pa
+    filesystem.image_size = image_size
+    table: u8* = heap.alloc_bytes(types.FS_MAX_FD * size_of<types.OpenFile>())
+    filesystem.fd_table_pa = table as u64
+    mem.set(table, 0, types.FS_MAX_FD * size_of<types.OpenFile>())
+    filesystem.ready = 1
+
+    files: i64 = 0
+    directories: i64 = 0
+    for index in 0..types.FS_MAX_INODES {
+        node_type: u64 = image.inode_type(&filesystem, index)
+        if node_type == types.FS_TYPE_FILE {
+            files = files + 1
+        }
+        if node_type == types.FS_TYPE_DIR {
+            directories = directories + 1
+        }
+    }
+    klog.int("[  FS  ] mounted, files".ptr, files)
+    klog.int("[  FS  ] dirs".ptr, directories)
+}
+
+export files_open: (path: u8[], flags: u64) -> i64 {
+    if !ready() {
+        return -1 as i64
+    }
+    return status(descriptors.open(&filesystem, path, flags))
+}
+
+export files_read: (fd: i64, buffer: u8*, offset: u64, length: u64) -> i64 {
+    if !ready() {
+        return -1 as i64
+    }
+    return status(descriptors.read(&filesystem, fd, buffer, offset, length))
+}
+
+export files_write: (fd: i64, buffer: u8*, offset: u64, length: u64) -> i64 {
+    if !ready() {
+        return -1 as i64
+    }
+    return status(descriptors.write(&filesystem, fd, buffer, offset, length))
+}
+
+export files_truncate: (fd: i64, length: u64) -> i64 {
+    if !ready() {
+        return -1 as i64
+    }
+    return status(descriptors.truncate(&filesystem, fd, length))
+}
+
+export files_fd_size: (fd: i64) -> u64 {
+    if !ready() {
+        return 0
+    }
+    return descriptors.size(&filesystem, fd)
+}
+
+export files_get_pos: (fd: i64) -> u64 {
+    if !ready() {
+        return 0
+    }
+    return descriptors.position(&filesystem, fd)
+}
+
+export files_set_pos: (fd: i64, position: u64) {
+    if ready() {
+        descriptors.set_position(&filesystem, fd, position)
+    }
+}
+
+export files_close: (fd: i64) {
+    if ready() {
+        descriptors.close(&filesystem, fd)
+    }
+}
+
+export files_stat: (path: u8[]) -> i64 {
+    if !ready() {
+        return -1 as i64
+    }
+    return status(directory.stat(&filesystem, path))
+}
+
+export files_readdir: (path: u8[], index: u64, name_buffer: u8[]) -> i64 {
+    if !ready() {
+        return -1 as i64
+    }
+    return status(directory.read(&filesystem, path, index, name_buffer))
+}
+
+export files_mkdir: (path: u8[]) -> i64 {
+    if !ready() {
+        return -1 as i64
+    }
+    return status(directory.mkdir(&filesystem, path))
+}
+
+export files_unlink: (path: u8[]) -> i64 {
+    if !ready() {
+        return -1 as i64
+    }
+    return status(directory.unlink(&filesystem, path))
+}
+
+export files_rmdir: (path: u8[]) -> i64 {
+    if !ready() {
+        return -1 as i64
+    }
+    return status(directory.rmdir(&filesystem, path))
+}
+
+export files_rename: (old_path: u8[], new_path: u8[]) -> i64 {
+    if !ready() {
+        return -1 as i64
+    }
+    return status(directory.rename(&filesystem, old_path, new_path))
+}
+
+; --- Utilities ---
+
+status: (result: Result<i64, types.FsError>) -> i64 {
+    match result {
+        Ok(value) -> { return value }
+        Err(_) -> { return -1 as i64 }
+    }
+}
+
+
+ready: () -> bool {
+    return filesystem.ready != 0
+}
+
+verify_layouts: () {
+    if size_of<types.DiskInode>() != types.FS_INODE_SIZE ||
+       size_of<types.DiskDirEntry>() != types.FS_DIRENT_SIZE ||
+       size_of<types.OpenFile>() != types.FS_FD_ENTRY_SIZE {
+        runtime.panic("filesystem layout mismatch".ptr)
+    }
+}

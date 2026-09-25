@@ -5,21 +5,21 @@ use virtual_machine::virtual_machine::{RunOutcome, VirtualMachine};
 
 // Minimal test kernel that tests external interrupt delivery without full VMM setup
 const TEST_KERNEL_WITH_UART_IRQ: &str = r#"
+system := import("kernel/arch/riscv64/system.hll")
+trap_entry := import("kernel/trap/trap_entry.hll")
+plic := import("kernel/arch/riscv64/interrupt_controller.hll")
 external klog_ok:      (msg: u8*)
 external klog_hex:     (label: u8*, val: u64)
-external kshutdown:    (code: i64)
-external trap_init:    ()
-external plic_init:    ()
 
 kmain: () {
     klog_ok("kernel starting".ptr)
 
     ; Install trap handler and enable interrupts
-    trap_init()
+    trap_entry.trap_init()
     klog_ok("trap handler installed".ptr)
 
     ; Initialize PLIC routing
-    plic_init()
+    plic.init()
     klog_ok("interrupt controller online".ptr)
 
     ; Enable UART RX interrupts: write IER[0] = 1 at UART base 0x10000000, offset 1
@@ -44,7 +44,8 @@ kmain: () {
 
 fn compile_and_run_kernel(kernel_src: &str) -> (String, Option<i64>, u64) {
     let snippet_manifest = BuildManifest::from_file(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/kernel_snippet.build"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/kernel_snippet.build"),
     )
     .expect("kernel snippet build file parse");
     let stdlib_objs = CompilationPipeline::compile_stdlib_objects(TargetMode::Kernel)
@@ -54,10 +55,14 @@ fn compile_and_run_kernel(kernel_src: &str) -> (String, Option<i64>, u64) {
     let kernel_objs =
         CompilationPipeline::compile_kernel_module_objects().expect("kernel modules compile");
 
-    let user_pipeline = CompilationPipeline::new();
-    let user = user_pipeline.compile(kernel_src).expect("kernel compile");
-    let (_, user_tokens) = user_pipeline.compile_ir_to_assembly_with_tokens(&user.ir_program).expect("valid IR layout");
-    let mut user_obj = user_pipeline.assemble(&user_tokens).expect("user assemble");
+    let mut user_pipeline = CompilationPipeline::new();
+    user_pipeline.set_target_mode(TargetMode::Kernel);
+    let mut user_obj = user_pipeline
+        .compile_program_closure("user", kernel_src)
+        .expect("kernel closure compile")
+        .pop()
+        .expect("user object")
+        .1;
     for export in &snippet_manifest.abi_exports {
         user_obj.mark_entry_global(export);
     }

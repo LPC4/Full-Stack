@@ -2,10 +2,24 @@
 // at link time. Only a truly undefined identifier fails here.
 use full_stack::compilation_pipeline::{CompilationPipeline, TargetMode};
 use hll_to_ir::stdlib::get_stdlib_modules_for_mode;
-use os_runtime::kernel;
+
+fn kernel_hll_modules() -> Vec<(String, &'static str)> {
+    os_runtime::SOURCE_TREE
+        .iter()
+        .filter_map(|(path, source)| {
+            let name = path
+                .strip_prefix("kernel/")?
+                .strip_suffix(".hll")?
+                .rsplit('/')
+                .next()?;
+            Some((name.to_owned(), *source))
+        })
+        .collect()
+}
 
 // Compile one kernel HLL source as a standalone module and assert it succeeds.
 fn assert_kernel_module_compiles(name: &str, source: &str) {
+    eprintln!("compiling kernel module {name}");
     let mut p = CompilationPipeline::new();
     p.set_target_mode(TargetMode::Kernel);
     p.set_write_artifacts(false);
@@ -32,70 +46,14 @@ fn kernel_stdlib_full_bundle_compiles() {
         .unwrap_or_else(|e| panic!("kernel stdlib failed to compile:\n{e}"));
 }
 
-// --- Individual kernel HLL modules ---
-
 #[test]
-fn kernel_entry_compiles() {
-    assert_kernel_module_compiles("entry", kernel::ENTRY);
-}
-
-#[test]
-fn kernel_trap_entry_compiles() {
-    assert_kernel_module_compiles("trap_entry", kernel::TRAP_ENTRY);
-}
-
-#[test]
-fn kernel_trap_handler_compiles() {
-    assert_kernel_module_compiles("trap_handler", kernel::TRAP_HANDLER);
-}
-
-#[test]
-fn kernel_utilities_compiles() {
-    assert_kernel_module_compiles("utilities", kernel::UTILITIES);
-}
-
-#[test]
-fn kernel_checks_compiles() {
-    assert_kernel_module_compiles("checks", kernel::CHECKS);
-}
-
-#[test]
-fn kernel_pmm_compiles() {
-    assert_kernel_module_compiles("pmm", kernel::PMM);
-}
-
-#[test]
-fn kernel_vmm_compiles() {
-    assert_kernel_module_compiles("vmm", kernel::VMM);
-}
-
-#[test]
-fn kernel_process_compiles() {
-    assert_kernel_module_compiles("process", kernel::PROCESS);
-}
-
-#[test]
-fn kernel_syscall_compiles() {
-    assert_kernel_module_compiles("syscall", kernel::SYSCALL);
-}
-
-#[test]
-fn kernel_scheduler_compiles() {
-    assert_kernel_module_compiles("scheduler", kernel::SCHEDULER);
-}
-
-#[test]
-fn kernel_fs_compiles() {
-    assert_kernel_module_compiles("fs", kernel::FS);
-}
-
-// --- Regression: my_kernel.hll must compile with all identifiers resolved ---
-// Guards the `computed_binary_pa` class of bug: a rename leaves a stale local
-// reference. On failure, inspect spawn_user_process first.
-
-#[test]
-fn my_kernel_compiles() {
-    assert_kernel_module_compiles("my_kernel", kernel::MY_KERNEL);
+fn all_kernel_hll_modules_compile() {
+    for (name, source) in kernel_hll_modules() {
+        if !hll_to_ir::imports::defines_code(source).expect("parse kernel module") {
+            continue;
+        }
+        assert_kernel_module_compiles(&name, source);
+    }
 }
 
 #[test]
@@ -277,11 +235,19 @@ fn kernel_frames_stay_within_immediate_range() {
     p.set_write_artifacts(false);
     p.set_string_prefix(Some("__kern_str_".to_owned()));
 
-    let mut sources: Vec<(&str, String)> = get_stdlib_modules_for_mode(TargetMode::Kernel)
+    let mut sources: Vec<(String, String)> = get_stdlib_modules_for_mode(TargetMode::Kernel)
         .iter()
-        .map(|(n, s)| (*n, (*s).to_owned()))
+        .map(|(n, s)| ((*n).to_owned(), (*s).to_owned()))
         .collect();
-    sources.push(("my_kernel", kernel::MY_KERNEL.to_owned()));
+    sources.extend(
+        kernel_hll_modules()
+            .into_iter()
+            .filter_map(|(name, source)| {
+                hll_to_ir::imports::defines_code(source)
+                    .expect("parse kernel module")
+                    .then(|| (name, source.to_owned()))
+            }),
+    );
 
     let mut offenders: Vec<(String, u64)> = Vec::new();
     let mut parsed_any = false;
@@ -317,12 +283,10 @@ fn kernel_frames_stay_within_immediate_range() {
     );
 }
 
-// --- Module count sanity checks ---
-
 #[test]
-fn kernel_stdlib_has_expected_module_count() {
-    // The kernel stdlib is true stdlib plus the boot entry; the kernel modules proper
-    // (vmm, pmm, syscall, ...) are now built from the my_kernel import closure.
+fn kernel_module_closure_matches_generated_sources() {
+    use std::collections::BTreeSet;
+
     let modules = get_stdlib_modules_for_mode(TargetMode::Kernel);
     assert!(
         modules.len() >= 8,
@@ -330,21 +294,44 @@ fn kernel_stdlib_has_expected_module_count() {
         modules.len()
     );
 
-    // The kernel modules proper compile as separate objects via the closure.
     let kernel_objs = CompilationPipeline::compile_kernel_module_objects()
         .expect("kernel module closure compile");
-    let names: Vec<&str> = kernel_objs.iter().map(|(n, _)| n.as_str()).collect();
-    for expected in [
-        "my_kernel",
-        "vmm",
-        "pmm",
-        "syscall",
-        "scheduler",
-        "trap_handler",
-    ] {
-        assert!(
-            names.contains(&expected),
-            "kernel closure missing `{expected}`; got {names:?}"
-        );
-    }
+    let my_kernel = kernel_objs
+        .iter()
+        .find(|(name, _)| name == "my_kernel")
+        .expect("kernel root object");
+    assert!(my_kernel.1.has_symbol("kmain"));
+    assert!(my_kernel.1.has_symbol("my_kernel__boot_console"));
+    assert!(!my_kernel.1.has_symbol("boot_console"));
+
+    let trap = kernel_objs
+        .iter()
+        .find(|(name, _)| name == "kernel/trap/trap_handler.hll")
+        .expect("trap handler object");
+    assert!(trap.1.has_symbol("trap_handler"));
+    assert!(trap.1.has_symbol("trap_handler__kernel_tick"));
+
+    let actual: BTreeSet<String> = kernel_objs.into_iter().map(|(name, _)| name).collect();
+    let expected: BTreeSet<String> = os_runtime::SOURCE_TREE
+        .iter()
+        .filter_map(|(path, source)| {
+            if !path.starts_with("kernel/") || !path.ends_with(".hll") {
+                return None;
+            }
+            hll_to_ir::imports::defines_code(source)
+                .expect("parse kernel module")
+                .then(|| {
+                    if *path == "kernel/core/my_kernel.hll" {
+                        "my_kernel".to_owned()
+                    } else {
+                        (*path).to_owned()
+                    }
+                })
+        })
+        .collect();
+
+    assert_eq!(
+        actual, expected,
+        "kernel closure does not match source registry"
+    );
 }

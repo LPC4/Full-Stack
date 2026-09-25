@@ -52,6 +52,11 @@ title = "Breakpoints and the memory view"
 
 [[page]]
 kind = "section"
+slug = "cpus-and-assembly/loads-and-jumps"
+title = "Loads and jumps"
+
+[[page]]
+kind = "section"
 slug = "cpus-and-assembly/exercise"
 title = "Exercise"
 
@@ -229,6 +234,66 @@ title = "Real implementation"
 kind = "chapter"
 slug = "the-kernel"
 title = "The kernel"
+
+[[page]]
+kind = "chapter"
+slug = "kernel-source-tour"
+title = "Kernel source tour"
+
+[[page]]
+kind = "chapter"
+slug = "boot-and-traps"
+title = "Boot and traps"
+
+[[page]]
+kind = "section"
+slug = "boot-and-traps/ordered-initialization"
+title = "Ordered initialization"
+
+[[page]]
+kind = "section"
+slug = "boot-and-traps/trap-dispatch"
+title = "Trap dispatch"
+
+[[page]]
+kind = "chapter"
+slug = "syscalls-and-tasks"
+title = "Syscalls and tasks"
+
+[[page]]
+kind = "section"
+slug = "syscalls-and-tasks/dispatch-and-tracing"
+title = "Dispatch and tracing"
+
+[[page]]
+kind = "section"
+slug = "syscalls-and-tasks/file-requests"
+title = "File requests"
+
+[[page]]
+kind = "section"
+slug = "syscalls-and-tasks/task-lifecycle"
+title = "Task lifecycle"
+
+[[page]]
+kind = "section"
+slug = "syscalls-and-tasks/round-robin-scheduling"
+title = "Round-robin scheduling"
+
+[[page]]
+kind = "chapter"
+slug = "memory-and-files"
+title = "Memory and files"
+
+[[page]]
+kind = "section"
+slug = "memory-and-files/explicit-address-spaces"
+title = "Explicit address spaces"
+
+[[page]]
+kind = "section"
+slug = "memory-and-files/mounted-filesystem"
+title = "Mounted filesystem"
 
 [[page]]
 kind = "chapter"

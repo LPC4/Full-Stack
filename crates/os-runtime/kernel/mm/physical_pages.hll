@@ -1,0 +1,88 @@
+; Physical page allocation over a bounded bump region and reusable free list.
+
+config := import("kernel/core/kernel_config.hll")
+klog := import("klog")
+system := import("kernel/arch/riscv64/system.hll")
+
+; --- State ---
+
+struct PhysicalPageAllocator {
+    bump: u64,
+    end: u64,
+    free_head: u64,
+}
+
+const PAGE_SIZE = 4096
+const FREE_MAGIC = 0xCAFE
+
+allocator: PhysicalPageAllocator = {
+    .bump = 0,
+    .end = 0,
+    .free_head = 0,
+}
+
+; --- Public API ---
+
+export physical_pages_init: (start: u64, end: u64) {
+    remainder: u64 = start % PAGE_SIZE
+    allocator.bump = start + ((PAGE_SIZE - remainder) % PAGE_SIZE)
+    allocator.end = end
+    allocator.free_head = 0
+}
+
+export physical_pages_alloc: () -> u8* {
+    match try_alloc() {
+        Ok(page) -> { return page }
+        Err(_) -> { return null }
+    }
+}
+
+export physical_pages_free: (page: u8*) {
+    if page == null {
+        return
+    }
+    link: u64* = page as u64*
+    magic: u64* = (page + 8) as u64*
+    @link = allocator.free_head
+    @magic = FREE_MAGIC
+    allocator.free_head = page as u64
+}
+
+export physical_pages_boot: () {
+    physical_pages_init(config.PMM_BASE, config.PMM_END)
+    first: u8* = physical_pages_alloc()
+    if first == null {
+        klog.error("halt: pmm alloc failed".ptr)
+        system.shutdown(1)
+    }
+    physical_pages_free(first)
+    if physical_pages_alloc() != first {
+        klog.error("halt: pmm free list failed".ptr)
+        system.shutdown(1)
+    }
+    klog.ok("pmm ready".ptr)
+}
+
+; --- Implementation ---
+
+enum PageError {
+    Exhausted
+}
+
+try_alloc: () -> Result<u8*, PageError> {
+    if allocator.free_head != 0 {
+        page: u8* = allocator.free_head as u8*
+        magic: u64* = (page + 8) as u64*
+        if @magic == FREE_MAGIC {
+            allocator.free_head = @(page as u64*)
+            return Ok(page)
+        }
+    }
+
+    if allocator.bump >= allocator.end {
+        return Err(PageError.Exhausted)
+    }
+    page: u8* = allocator.bump as u8*
+    allocator.bump = allocator.bump + PAGE_SIZE
+    return Ok(page)
+}

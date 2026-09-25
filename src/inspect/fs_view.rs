@@ -1,11 +1,11 @@
 //! Filesystem inspector: walks the in-memory FS image from guest memory into a
-//! read-only tree with a file preview. Layout (kernel/fs/fs.hll; OS spec 8) is here.
+//! read-only tree with a file preview. Layout (`kernel/fs/fs_types.hll`; OS spec 8) is here.
 
 use asm_to_binary::AssembledOutput;
 use virtual_machine::bus::RAM_BASE;
 use virtual_machine::virtual_machine::VirtualMachine;
 
-// FS on-disk layout (kernel/fs/fs.hll). Must match the HLL constants.
+// FS on-disk layout (kernel/fs/fs_types.hll). Must match the HLL constants.
 const BLOCK_SIZE: u64 = 4096;
 const INODE_SIZE: u64 = 128;
 const INODE_BLOCKS: u64 = 44;
@@ -47,9 +47,10 @@ impl FsSymbols {
     /// binary, so the panel hides itself).
     pub fn from_kernel(assembled: &AssembledOutput) -> Option<Self> {
         let pa = |n: &str| assembled.symbol_address(n).map(|off| RAM_BASE + off);
+        let filesystem = pa("files__filesystem")?;
         Some(Self {
-            fs_image_base: pa("fs_image_base")?,
-            fs_fd_table_pa: pa("fs_fd_table_pa")?,
+            fs_image_base: filesystem,
+            fs_fd_table_pa: filesystem + 16,
         })
     }
 }

@@ -15,7 +15,7 @@ pub struct CompileConfig {
     pub string_prefix: Option<String>,
     pub type_prelude: Vec<(String, IrType)>,
     /// HLL source prepended to the unit before lexing (a shared definitions header). `None`
-    /// falls back to the kernel `layout.hll` in kernel mode, else nothing.
+    /// falls back to the kernel ABI prelude in kernel mode, else nothing.
     pub source_prelude: Option<String>,
     /// Module aliases (`alias := import(path)`) mapped to the alias's resolved exports/prefix,
     /// supplied by the host pipeline after interface resolution. Drives the qualified rewrite.
@@ -40,11 +40,6 @@ impl Default for CompileConfig {
             source_file: None,
         }
     }
-}
-
-// Never mangled: entry points called by name from outside the module graph.
-fn mangle_exempt() -> std::collections::HashSet<String> {
-    ["_start", "main"].into_iter().map(str::to_owned).collect()
 }
 
 // The span shifts back past the prelude so it points into the user's file.
@@ -82,7 +77,10 @@ impl HllCompiler {
     fn with_source_prelude(&self, source: &str) -> (String, u32) {
         let prelude: &str = match &self.config.source_prelude {
             Some(p) => p.as_str(),
-            None if self.config.target == TargetMode::Kernel => os_runtime::kernel::LAYOUT,
+            None if self.config.target == TargetMode::Kernel => {
+                os_runtime::module_source("kernel/core/kernel_abi.hll")
+                    .expect("generated registry contains the kernel ABI")
+            }
             None => "",
         };
         if prelude.is_empty() {
@@ -146,7 +144,7 @@ impl HllCompiler {
         if let Some(prefix) = &self.config.module_mangle_prefix {
             // Local impl methods keep stable names. Exported methods are link symbols and
             // receive the module prefix; receiver-call resolution recognizes that suffix.
-            let mut exempt = mangle_exempt();
+            let mut exempt = crate::imports::abi_symbols(self.config.target);
             for decl in &ast.declarations {
                 if !decl.exported
                     && let DeclNode::Function { name, params, .. } = &decl.decl

@@ -1,72 +1,57 @@
 ; Kernel initialization and boot orchestration.
 
-layout          := import("layout")
-heap_backend    := import("heap_backend")
-klog            := import("klog")
-utilities       := import("utilities")
-mem             := import("mem")
-trap_entry      := import("trap_entry")
-pmm             := import("pmm")
-vmm             := import("vmm")
-checks          := import("checks")
-process         := import("process")
-scheduler       := import("scheduler")
-fs              := import("fs")
+layout       := import("kernel/core/kernel_abi.hll")
+config       := import("kernel/core/kernel_config.hll")
+heap_backend := import("heap_backend")
+heap         := import("kernel/mm/kernel_heap.hll")
+klog         := import("klog")
+system       := import("kernel/arch/riscv64/system.hll")
+timer        := import("kernel/arch/riscv64/timer.hll")
+plic         := import("kernel/arch/riscv64/interrupt_controller.hll")
+csr          := import("kernel/arch/riscv64/csr.hll")
+mem          := import("mem")
+trap_entry   := import("kernel/trap/trap_entry.hll")
+pages        := import("kernel/mm/physical_pages.hll")
+address_space := import("kernel/mm/address_space.hll")
+checks       := import("kernel/core/checks.hll")
+tasks        := import("kernel/sched/tasks.hll")
+files        := import("kernel/fs/files.hll")
 
-; Physical addresses where the test harness places user binary metadata;
-; the meta page holds [0]=entry_va (u64), [8]=size_bytes (u64).
+; --- State ---
 const USER_BINARY_PA = 0x87F00000
 const USER_META_PA   = 0x87EFF000
 const USER_CODE_VA   = 0x40000000
 
-; Scratch globals for spawn_user_process.
-user_entry: u64 = 0
-user_size:  u64 = 0
-user_spawned: u64 = 0
-
-user_entry_value: () -> u64 {
-    return user_entry
+struct InjectedUserImage {
+    entry: u64,
+    size: u64,
 }
 
-; Kernel entry point.
+struct InjectedFileSystem {
+    base: u64,
+    size: u64,
+}
+
+; --- Public API ---
 kmain: () {
     boot_console()
     boot_traps()
     boot_timer()
-
-    ; Devices are hard-coded from the memory map; no device tree is parsed.
-    klog.warn("device tree: not implemented".ptr)
-
+    boot_device_discovery()
     boot_plic()
     boot_memory_diagnostics()
     boot_heap()
-    pmm.boot()
-    checks.pmm_ops_test()
-    vmm.boot()
-
-    process.init()
-    scheduler.init()
-
-    spawn_user_process()
-
-    if user_spawned == 0 {
-        utilities.shutdown(0)
-    }
-
+    boot_physical_pages()
+    boot_address_space()
+    boot_tasks()
+    boot_user_process()
     boot_final()
-
     boot_filesystem()
-
-    ; Enable interrupts only after a runnable process is in the scheduler queue,
-    ; otherwise the first timer tick panics.
     boot_interrupts()
-
-    ; Idle loop, the scheduler takes over via timer preemption / yield.
-    klog.ok("entering scheduler idle loop".ptr)
-    while 1 == 1 {
-        asm { wfi }
-    }
+    boot_idle()
 }
+
+; --- Implementation ---
 
 boot_console: () {
     klog.ok("kernel starting".ptr)
@@ -80,12 +65,17 @@ boot_traps: () {
 }
 
 boot_timer: () {
-    utilities.timer_set(1000000)
+    timer.rearm(1000000)
     klog.ok("timer armed".ptr)
 }
 
+boot_device_discovery: () {
+    ; Devices are hard-coded from the memory map; no device tree is parsed.
+    klog.warn("device tree: not implemented".ptr)
+}
+
 boot_plic: () {
-    utilities.plic_init()
+    plic.init()
     klog.ok("interrupt controller online".ptr)
 }
 
@@ -94,21 +84,48 @@ boot_memory_diagnostics: () {
     test_result: i64 = checks.memory_self_test(256)
     if test_result == 0 {
         klog.error("halt: memory test failed".ptr)
-        utilities.shutdown(1)
+        system.shutdown(1)
     }
 }
 
 boot_heap: () {
     ; Hand the stdlib allocator the kernel heap region carved out of RAM;
     ; before this only the 64 KiB bootstrap buffer backs allocations.
-    heap_backend.heap_set_region(KHEAP_BASE, KHEAP_END)
-    probe: u8* = utilities.malloc(64)
+    heap_backend.heap_set_region(config.KHEAP_BASE, config.KHEAP_END)
+    probe: u8* = heap.alloc_bytes(64)
     mem.set(probe, 0, 64)
     klog.ok("heap ready".ptr)
 }
 
+boot_physical_pages: () {
+    pages.boot()
+    checks.pmm_ops_test()
+}
+
+boot_address_space: () {
+    address_space.boot()
+}
+
+boot_tasks: () {
+    tasks.init()
+}
+
+boot_user_process: () {
+    if !spawn_user_process() {
+        system.shutdown(0)
+    }
+}
+
 boot_interrupts: () {
-    vmm.s_enable_interrupts()
+    ; The first timer tick requires a runnable process in the scheduler queue.
+    csr.enable_interrupts()
+}
+
+boot_idle: () {
+    klog.ok("entering scheduler idle loop".ptr)
+    while 1 == 1 {
+        asm { wfi }
+    }
 }
 
 boot_final: () {
@@ -118,65 +135,49 @@ boot_final: () {
 }
 
 boot_filesystem: () {
-    fs_meta: u64* = 0x87BFF000 as u64*
-    fs_pa:   u64  = fs_meta[0]
-    fs_sz:   u64  = fs_meta[1]
-    if fs_pa != 0 {
-        fs.init(fs_pa, fs_sz)
+    image: InjectedFileSystem* = 0x87BFF000 as InjectedFileSystem*
+    if image.base != 0 {
+        files.init(image.base, image.size)
     }
 }
 
-spawn_user_process: () {
+spawn_user_process: () -> bool {
     ; Probe the first qword at USER_BINARY_PA. If it is 0, no user binary is loaded.
     header_ptr: u64* = USER_BINARY_PA as u64*
     if header_ptr[0] == 0 {
         klog.warn("no user binary present".ptr)
-        return
+        return false
     }
 
     klog.ok("spawning user process".ptr)
 
     src_user_pa: u64 = USER_BINARY_PA as u64
 
-    ; Read entry VA and total size from the metadata page.
-    asm {
-        li   t0, 0x87EFF000     ; USER_META_PA
-        ld   t0, 0(t0)          ; entry VA
-        la   t1, user_entry
-        sd   t0, 0(t1)
+    image: InjectedUserImage* = USER_META_PA as InjectedUserImage*
 
-        li   t0, 0x87EFF008     ; USER_META_PA + 8
-        ld   t0, 0(t0)          ; size bytes
-        la   t1, user_size
-        sd   t0, 0(t1)
-    }
-
-    if user_entry == 0 {
+    if image.entry == 0 {
         klog.warn("user entry is 0, skipping".ptr)
-        return
+        return false
     }
 
-    if user_size == 0 {
+    if image.size == 0 {
         klog.warn("user size is 0, skipping".ptr)
-        return
+        return false
     }
 
-    ; Copy all user pages into newly allocated physical pages and map them.
     page_size: u64 = 4096
-    pages: u64 = (user_size + page_size - 1) / page_size
+    page_count: u64 = (image.size + page_size - 1) / page_size
 
-    klog.int("[ PROC ] user_size bytes".ptr, user_size as i64)
-    klog.int("[ PROC ] pages to map".ptr, pages as i64)
+    klog.int("[ PROC ] user_size bytes".ptr, image.size as i64)
+    klog.int("[ PROC ] pages to map".ptr, page_count as i64)
 
-    ; Create the PCB first so its private page-table root becomes the active root;
-    ; the code pages below are then mapped into that per-process address space.
-    pcb: layout.Pcb* = process.create(user_entry)
+    pcb: layout.Pcb* = tasks.build(image.entry)
 
-    for i in 0..pages {
-        dst_page: u8* = pmm.alloc()
+    for i in 0..page_count {
+        dst_page: u8* = pages.alloc()
         if dst_page == null {
             klog.error("[ PROC ] halt: user page alloc failed".ptr)
-            utilities.shutdown(1)
+            system.shutdown(1)
         }
 
         offset: u64 = i * page_size
@@ -186,13 +187,18 @@ spawn_user_process: () {
         mem.copy(dst_page, src_page_pa as u8*, page_size)
 
         user_va: u64 = USER_CODE_VA + offset
-        vmm.map(user_va, dst_page as u64, VMM_R + VMM_W + VMM_X + VMM_U)
+        address_space.map(
+            pcb.page_root,
+            user_va,
+            dst_page as u64,
+            config.PTE_READ + config.PTE_WRITE + config.PTE_EXECUTE + config.PTE_USER,
+        )
     }
 
-    klog.int("[ PROC ] mapped pages at 0x40000000, count".ptr, pages as i64)
+    klog.int("[ PROC ] mapped pages at 0x40000000, count".ptr, page_count as i64)
 
-    scheduler.add(pcb)
+    tasks.enqueue(pcb)
 
-    user_spawned = 1
-    klog.int("[ PROC ] pid 1 ready, entry".ptr, user_entry as i64)
+    klog.int("[ PROC ] pid 1 ready, entry".ptr, image.entry as i64)
+    return true
 }

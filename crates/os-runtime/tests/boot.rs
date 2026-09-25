@@ -3,7 +3,6 @@ use asm_to_binary::{AssembledOutput, Assembler, ObjectLinker};
 use hll_to_ir::stdlib::get_stdlib_modules_for_mode;
 use hll_to_ir::{CompileConfig, HllCompiler, TargetMode};
 use ir_to_asm::CompilerRv64;
-use os_runtime::kernel;
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 use virtual_machine::virtual_machine::{RunOutcome, VirtualMachine};
@@ -11,6 +10,10 @@ use virtual_machine::virtual_machine::{RunOutcome, VirtualMachine};
 // --- Helpers ---
 
 static STDLIB_OBJS: OnceLock<Vec<(String, AssembledOutput)>> = OnceLock::new();
+
+fn runtime_source(path: &str) -> &'static str {
+    os_runtime::module_source(path).unwrap_or_else(|| panic!("missing runtime source `{path}`"))
+}
 
 fn bundled_module_source(name: &str) -> Option<&'static str> {
     os_runtime::module_source(name).or_else(|| {
@@ -28,8 +31,8 @@ fn direct_imports(source: &str) -> (String, HashMap<String, hll_to_ir::imports::
     let mut emitted = HashSet::new();
     let mut visiting = Vec::new();
     append_import(
-        "layout",
-        "layout",
+        "abi",
+        "kernel/core/kernel_abi.hll",
         &mut prelude,
         &mut aliases,
         &mut emitted,
@@ -104,9 +107,7 @@ fn append_import(
 }
 
 fn module_key(path: &str) -> String {
-    path.trim_start_matches("./")
-        .trim_end_matches(".hll")
-        .to_owned()
+    path.trim_start_matches("./").to_owned()
 }
 
 fn module_member_aliases(
@@ -118,7 +119,8 @@ fn module_member_aliases(
     // Sort for deterministic alias resolution (the export set is unordered).
     let mut sorted_exports: Vec<&String> = exports.iter().collect();
     sorted_exports.sort();
-    for prefix in [alias, key] {
+    let stem = key.rsplit('/').next().unwrap_or(key);
+    for prefix in [alias, key, stem] {
         let prefix = prefix.trim_end_matches(".hll");
         if prefix.is_empty() {
             continue;
@@ -181,22 +183,26 @@ fn kernel_snippet_abi_exports() -> Vec<String> {
     panic!("kernel_snippet.build must declare abi_exports");
 }
 
-// The kernel modules with code to compile: true stdlib + boot entry (from the stdlib list)
-// plus the kernel modules proper. `layout` is header-only and `my_kernel` is the user unit.
+fn kernel_hll_modules() -> Vec<(&'static str, &'static str)> {
+    os_runtime::SOURCE_TREE
+        .iter()
+        .filter_map(|(path, source)| {
+            let name = path
+                .strip_prefix("kernel/")?
+                .strip_suffix(".hll")?
+                .rsplit('/')
+                .next()?;
+            Some((name, *source))
+        })
+        .collect()
+}
+
 fn kernel_code_modules() -> Vec<(&'static str, &'static str)> {
     let mut mods = get_stdlib_modules_for_mode(TargetMode::Kernel);
-    mods.extend([
-        ("pmm", kernel::PMM),
-        ("vmm", kernel::VMM),
-        ("utilities", kernel::UTILITIES),
-        ("checks", kernel::CHECKS),
-        ("process", kernel::PROCESS),
-        ("scheduler", kernel::SCHEDULER),
-        ("syscall", kernel::SYSCALL),
-        ("fs", kernel::FS),
-        ("trap_entry", kernel::TRAP_ENTRY),
-        ("trap_handler", kernel::TRAP_HANDLER),
-    ]);
+    mods.extend(kernel_hll_modules().into_iter().filter(|(name, source)| {
+        *name != "my_kernel"
+            && hll_to_ir::imports::defines_code(source).expect("parse kernel module")
+    }));
     mods
 }
 
@@ -281,6 +287,55 @@ fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
 // --- ROM / boot assembly source content ---
 
 #[test]
+fn explicit_roots_keep_user_mappings_and_permissions_separate() {
+    let (uart, exit) = run_kernel_hll(
+        r#"
+pages := import("kernel/mm/physical_pages.hll")
+spaces := import("kernel/mm/address_space.hll")
+user := import("kernel/mm/user_memory.hll")
+system := import("kernel/arch/riscv64/system.hll")
+
+kmain: () {
+    pages.init(0x84000000, 0x84100000)
+    first: u64 = spaces.create()
+    second: u64 = spaces.create()
+    spaces.map(first, 0x40000000, 0x84200000, 18)
+    spaces.map(second, 0x40001000, 0x84201000, 22)
+    if user.validate(first, 0x40000000 as u8*, 4096, 0) != 1 { system.shutdown(1) }
+    if user.validate(first, 0x40000000 as u8*, 1, 1) != 0 { system.shutdown(2) }
+    if user.validate(second, 0x40000000 as u8*, 1, 0) != 0 { system.shutdown(3) }
+    if user.validate(first, 0x40000FFF as u8*, 2, 0) != 0 { system.shutdown(4) }
+    if user.validate(second, 0x40001000 as u8*, 4096, 1) != 1 { system.shutdown(5) }
+    if user.validate(first, 0xFFFFFFFFFFFFFFF0 as u8*, 32, 0) != 0 { system.shutdown(6) }
+    if user.validate(first, 0x80000000 as u8*, 1, 0) != 0 { system.shutdown(7) }
+    if user.validate(0, null, 0, 0) != 0 { system.shutdown(8) }
+    system.shutdown(0)
+}
+"#,
+    );
+    assert_eq!(exit, Some(0), "{uart}");
+}
+
+#[test]
+fn physical_page_exhaustion_and_reuse_preserve_the_boundary() {
+    let (uart, exit) = run_kernel_hll(
+        r#"
+pages := import("kernel/mm/physical_pages.hll")
+system := import("kernel/arch/riscv64/system.hll")
+kmain: () {
+    pages.init(0x84000000, 0x84001000)
+    page: u8* = pages.alloc()
+    if page == null || pages.alloc() != null { system.shutdown(1) }
+    pages.free(page)
+    if pages.alloc() != page || pages.alloc() != null { system.shutdown(2) }
+    system.shutdown(0)
+}
+"#,
+    );
+    assert_eq!(exit, Some(0), "{uart}");
+}
+
+#[test]
 fn rom_source_is_startup_concatenated_with_trap() {
     let expected = format!("{}{}", os_runtime::BOOT_STARTUP, os_runtime::BOOT_TRAP);
     assert_eq!(
@@ -322,69 +377,17 @@ fn boot_trap_handles_ecalls() {
     );
 }
 
-// --- Trap handler source content ---
-
-#[test]
-fn trap_handler_rearms_timer_on_stip() {
-    assert!(
-        kernel::TRAP_HANDLER.contains("timer_set"),
-        "trap handler must rearm timer on Supervisor Timer Interrupt (cause 5)"
-    );
-}
-
-#[test]
-fn trap_handler_advances_sepc_on_umode_ecall() {
-    assert!(
-        kernel::TRAP_HANDLER.contains("scause_u == 8"),
-        "trap handler must advance sepc on U-mode ecall (cause 8)"
-    );
-}
-
-// --- Reference kernel source content ---
-
-#[test]
-fn my_kernel_calls_trap_init() {
-    assert!(
-        kernel::MY_KERNEL.contains("trap_init()"),
-        "reference kernel must call trap_init to install the S-mode trap handler"
-    );
-}
-
-#[test]
-fn my_kernel_arms_timer() {
-    assert!(
-        kernel::MY_KERNEL.contains("utilities.timer_set("),
-        "reference kernel must arm the CLINT timer via utilities.timer_set"
-    );
-}
-
-#[test]
-fn my_kernel_initializes_interrupt_controller() {
-    assert!(
-        kernel::MY_KERNEL.contains("utilities.plic_init()"),
-        "reference kernel must initialize the interrupt controller via utilities.plic_init"
-    );
-}
-
-#[test]
-fn my_kernel_warns_for_unimplemented_device_tree() {
-    assert!(
-        kernel::MY_KERNEL.contains("klog.warn") && kernel::MY_KERNEL.contains("device tree"),
-        "unimplemented device-tree stub must emit a warning, not ok"
-    );
-}
-
 // --- End-to-end kernel boot execution ---
 
 #[test]
 fn kernel_boots_and_exits_cleanly() {
-    let (uart, exit) = run_kernel_hll(kernel::MY_KERNEL);
+    let (uart, exit) = run_kernel_hll(runtime_source("kernel/core/my_kernel.hll"));
     assert_eq!(exit, Some(0), "kernel must exit with code 0; uart={uart:?}");
 }
 
 #[test]
 fn trap_handler_installed_at_boot() {
-    let (uart, exit) = run_kernel_hll(kernel::MY_KERNEL);
+    let (uart, exit) = run_kernel_hll(runtime_source("kernel/core/my_kernel.hll"));
     assert_eq!(exit, Some(0), "kernel must exit cleanly; uart={uart:?}");
     assert!(
         uart.contains("[  OK  ] trap handler installed\n"),
@@ -394,7 +397,7 @@ fn trap_handler_installed_at_boot() {
 
 #[test]
 fn timer_armed_at_boot() {
-    let (uart, exit) = run_kernel_hll(kernel::MY_KERNEL);
+    let (uart, exit) = run_kernel_hll(runtime_source("kernel/core/my_kernel.hll"));
     assert_eq!(exit, Some(0), "kernel must exit cleanly; uart={uart:?}");
     assert!(
         uart.contains("[  OK  ] timer armed\n"),
@@ -404,7 +407,7 @@ fn timer_armed_at_boot() {
 
 #[test]
 fn memory_self_test_passes() {
-    let (uart, exit) = run_kernel_hll(kernel::MY_KERNEL);
+    let (uart, exit) = run_kernel_hll(runtime_source("kernel/core/my_kernel.hll"));
     assert_eq!(exit, Some(0), "kernel must exit cleanly; uart={uart:?}");
     assert!(
         uart.contains("[  OK  ] memory self-test passed\n"),
@@ -418,7 +421,7 @@ fn memory_self_test_passes() {
 
 #[test]
 fn heap_smoke_test_passes() {
-    let (uart, exit) = run_kernel_hll(kernel::MY_KERNEL);
+    let (uart, exit) = run_kernel_hll(runtime_source("kernel/core/my_kernel.hll"));
     assert_eq!(exit, Some(0), "kernel must exit cleanly; uart={uart:?}");
     assert!(
         uart.contains("[  OK  ] heap ready\n"),
@@ -428,7 +431,7 @@ fn heap_smoke_test_passes() {
 
 #[test]
 fn unimplemented_subsystems_warn() {
-    let (uart, exit) = run_kernel_hll(kernel::MY_KERNEL);
+    let (uart, exit) = run_kernel_hll(runtime_source("kernel/core/my_kernel.hll"));
     assert_eq!(exit, Some(0), "kernel must exit cleanly; uart={uart:?}");
     assert!(
         uart.contains("[ WARN ] device tree:"),
@@ -442,7 +445,7 @@ fn unimplemented_subsystems_warn() {
 
 #[test]
 fn pmm_smoke_test_passes() {
-    let (uart, exit) = run_kernel_hll(kernel::MY_KERNEL);
+    let (uart, exit) = run_kernel_hll(runtime_source("kernel/core/my_kernel.hll"));
     assert_eq!(exit, Some(0), "kernel must exit cleanly; uart={uart:?}");
     assert!(
         uart.contains("[  OK  ] pmm ready\n"),
@@ -450,139 +453,45 @@ fn pmm_smoke_test_passes() {
     );
 }
 
-// --- Process / syscall / scheduler source tests ---
-
 #[test]
-fn process_hll_defines_create_and_init() {
-    assert!(
-        kernel::PROCESS.contains("process_create"),
-        "process.hll must define process_create"
-    );
-    assert!(
-        kernel::PROCESS.contains("process_init"),
-        "process.hll must define process_init"
-    );
-    // The PCB-layout consts live in the shared layout.hll, prepended to every kernel TU.
-    assert!(
-        kernel::LAYOUT.contains("PROC_READY"),
-        "layout.hll must define PROC_READY constant"
-    );
-    assert!(
-        kernel::LAYOUT.contains("PROC_EXITED"),
-        "layout.hll must define PROC_EXITED constant"
-    );
-}
-
-#[test]
-fn kernel_layout_constants_defined() {
-    assert!(
-        kernel::LAYOUT.contains("PCB_SIZE"),
-        "layout.hll must define PCB_SIZE"
-    );
-    assert!(
-        kernel::LAYOUT.contains("PCB_OFF_TRAP_FRAME"),
-        "layout.hll must define PCB_OFF_TRAP_FRAME"
-    );
-}
-
-#[test]
-fn syscall_hll_defines_dispatch() {
-    assert!(
-        kernel::SYSCALL.contains("syscall_dispatch"),
-        "syscall.hll must define syscall_dispatch"
-    );
-    assert!(
-        kernel::SYSCALL.contains("sys_write_impl"),
-        "syscall.hll must define sys_write_impl"
-    );
-    assert!(
-        kernel::SYSCALL.contains("SYSCALL_EXIT"),
-        "syscall.hll must define SYSCALL_EXIT"
-    );
-    assert!(
-        kernel::SYSCALL.contains("SYSCALL_WRITE"),
-        "syscall.hll must define SYSCALL_WRITE"
-    );
-    assert!(
-        kernel::SYSCALL.contains("SYSCALL_YIELD"),
-        "syscall.hll must define SYSCALL_YIELD"
-    );
-}
-
-#[test]
-fn kernel_layout_defines_syscall_actions() {
-    assert!(
-        kernel::LAYOUT.contains("enum SysAction"),
-        "layout.hll must define SysAction"
-    );
-    assert!(
-        kernel::LAYOUT.contains("Continue") && kernel::LAYOUT.contains("Schedule"),
-        "SysAction must define Continue and Schedule"
-    );
-    assert!(
-        kernel::LAYOUT.contains("ExitSchedule") && kernel::LAYOUT.contains("Block"),
-        "SysAction must define ExitSchedule and Block"
-    );
-}
-
-#[test]
-fn scheduler_hll_defines_schedule() {
-    assert!(
-        kernel::SCHEDULER.contains("schedule:"),
-        "scheduler.hll must define schedule"
-    );
-    assert!(
-        kernel::SCHEDULER.contains("scheduler_add"),
-        "scheduler.hll must define scheduler_add"
-    );
-    assert!(
-        kernel::SCHEDULER.contains("scheduler_init"),
-        "scheduler.hll must define scheduler_init"
-    );
-    assert!(
-        kernel::SCHEDULER.contains("current_process"),
-        "scheduler.hll must define current_process"
-    );
-    assert!(
-        kernel::SCHEDULER.contains("ready_queue_head"),
-        "scheduler.hll must define ready_queue_head"
-    );
-}
-
-#[test]
-fn trap_handler_calls_syscall_dispatch_on_umode_ecall() {
-    assert!(
-        kernel::TRAP_HANDLER.contains("syscall.dispatch"),
-        "trap handler must call syscall.dispatch on U-mode ecall"
-    );
-    assert!(
-        kernel::TRAP_HANDLER.contains("scheduler.schedule("),
-        "trap handler must call scheduler.schedule when syscall action != 0"
-    );
-    assert!(
-        kernel::TRAP_HANDLER.contains("scause_u == 8"),
-        "trap handler must check for U-mode ecall (cause 8)"
-    );
+fn kernel_modules_export_required_boundaries() {
+    let required = [
+        (
+            runtime_source("kernel/core/kernel_abi.hll"),
+            &["PCB_SIZE", "PROC_READY", "SysAction"][..],
+        ),
+        (
+            runtime_source("kernel/sched/process.hll"),
+            &["process_create", "process_init"][..],
+        ),
+        (
+            runtime_source("kernel/sched/scheduler.hll"),
+            &[
+                "schedule",
+                "scheduler_add",
+                "scheduler_current",
+                "scheduler_init",
+            ][..],
+        ),
+        (
+            runtime_source("kernel/syscall/syscalls.hll"),
+            &["syscalls_dispatch"][..],
+        ),
+    ];
+    for (source, names) in required {
+        let exports = hll_to_ir::imports::collect_exports(source).expect("collect exports");
+        for name in names {
+            assert!(exports.contains(*name), "missing kernel export `{name}`");
+        }
+    }
 }
 
 #[test]
 fn kernel_modules_reference_imports_only_through_aliases() {
     // Quality gate: a kernel module must reach another module's functions/globals through its
     // qualified import alias, never by bare flat name. Inline asm is the sole exempt path (6.3).
-    let modules = [
-        ("entry", kernel::ENTRY),
-        ("trap_entry", kernel::TRAP_ENTRY),
-        ("trap_handler", kernel::TRAP_HANDLER),
-        ("utilities", kernel::UTILITIES),
-        ("checks", kernel::CHECKS),
-        ("pmm", kernel::PMM),
-        ("vmm", kernel::VMM),
-        ("process", kernel::PROCESS),
-        ("syscall", kernel::SYSCALL),
-        ("scheduler", kernel::SCHEDULER),
-        ("fs", kernel::FS),
-        ("my_kernel", kernel::MY_KERNEL),
-    ];
+    let mut modules = vec![("entry", runtime_source("stdlib/platform/kernel/entry.hll"))];
+    modules.extend(kernel_hll_modules());
     for (name, source) in modules {
         // The link symbols (functions + non-extern globals) of every imported module, minus this
         // module's own declarations. Const/type/struct exports fold flat by design and are skipped.
@@ -622,19 +531,14 @@ external klog_ok:               (msg: u8*)
 external klog_warn:             (msg: u8*)
 external klog_error:            (msg: u8*)
 external klog_int:              (label: u8*, val: i64)
-external kmalloc:               (size: u64) -> u8*
+external kernel_heap_alloc_bytes: (size: u64) -> u8*
 external mem_set:               (dst: u8*, value: u8, n: u64) -> u8*
-external kshutdown:             (code: i64)
+external system_shutdown:       (code: i64)
 external trap_init:             ()
-external plic_init:             ()
-external timer_set:             (interval: u64)
-external pmm_init:              (start: u64, end: u64)
-external pmm_alloc:             () -> u8*
-external pmm_free:              (page: u8*)
-external vmm_init:              ()
-external vmm_map_1gib:          (va: u64, pa: u64, flags: u64)
-external vmm_enable:            ()
-external s_enable_interrupts: ()
+external interrupt_controller_init: ()
+external timer_rearm:           (interval: u64)
+external physical_pages_init:   (start: u64, end: u64)
+external address_space_boot:    ()
 external memory_self_test:      (size: u64) -> i64
 external pmm_ops_test:          ()
 external process_init:          ()
@@ -645,21 +549,17 @@ external scheduler_add:         (pcb: u64*)
 kmain: () {
     klog_ok(\"kernel starting\".ptr)
     trap_init()
-    timer_set(1000000)
-    plic_init()
+    timer_rearm(1000000)
+    interrupt_controller_init()
     klog_ok(\"interrupt controller online\".ptr)
     memory_self_test(256)
-    kmalloc(64)
-    pmm_init(0x80100000, 0x87F00000)
-    vmm_init()
-    vmm_map_1gib(0x00000000, 0, 38)
-    vmm_map_1gib(0x80000000, 0x80000000, 46)
-    vmm_map_1gib(0xC0000000, 0xC0000000, 46)
-    vmm_enable()
+    kernel_heap_alloc_bytes(64)
+    physical_pages_init(0x80100000, 0x87F00000)
+    address_space_boot()
     process_init()
     scheduler_init()
     klog_ok(\"boot complete\".ptr)
-    kshutdown(0)
+    system_shutdown(0)
 }
 ";
     let (uart, exit) = run_kernel_hll(test_kernel);
@@ -681,9 +581,9 @@ kmain: () {
 // --- malloc / free unit tests ---
 
 const MALLOC_PRELUDE: &str = r#"
+system := import("kernel/arch/riscv64/system.hll")
 external malloc:    (size: u64) -> u8*
 external free:      (ptr: u8*)
-external kshutdown: (code: i64)
 "#;
 
 #[test]
@@ -694,10 +594,10 @@ fn malloc_returns_non_null_for_small_allocation() {
 kmain: () {
     p: u8* = malloc(8)
     if p == null {
-        kshutdown(1)
+        system.shutdown(1)
         return
     }
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#,
     ]
@@ -714,10 +614,10 @@ fn malloc_zero_size_returns_non_null() {
 kmain: () {
     p: u8* = malloc(0)
     if p == null {
-        kshutdown(1)
+        system.shutdown(1)
         return
     }
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#,
     ]
@@ -738,15 +638,15 @@ fn malloc_write_read_roundtrip() {
 kmain: () {
     p: i64* = malloc(8) as i64*
     if p == null {
-        kshutdown(1)
+        system.shutdown(1)
         return
     }
     @p = 12345
     if @p != 12345 {
-        kshutdown(2)
+        system.shutdown(2)
         return
     }
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#,
     ]
@@ -769,30 +669,30 @@ kmain: () {
     b: u8* = malloc(8)
     c: u8* = malloc(8)
     if a == null {
-        kshutdown(1)
+        system.shutdown(1)
         return
     }
     if b == null {
-        kshutdown(2)
+        system.shutdown(2)
         return
     }
     if c == null {
-        kshutdown(3)
+        system.shutdown(3)
         return
     }
     if a == b {
-        kshutdown(4)
+        system.shutdown(4)
         return
     }
     if b == c {
-        kshutdown(5)
+        system.shutdown(5)
         return
     }
     if a == c {
-        kshutdown(6)
+        system.shutdown(6)
         return
     }
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#,
     ]
@@ -813,20 +713,20 @@ fn free_marks_block_reusable_on_next_same_size_malloc() {
 kmain: () {
     p: u8* = malloc(64)
     if p == null {
-        kshutdown(1)
+        system.shutdown(1)
         return
     }
     free(p)
     q: u8* = malloc(64)
     if q == null {
-        kshutdown(2)
+        system.shutdown(2)
         return
     }
     if q != p {
-        kshutdown(3)
+        system.shutdown(3)
         return
     }
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#,
     ]
@@ -846,7 +746,7 @@ fn free_null_is_a_noop() {
         r#"
 kmain: () {
     free(null)
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#,
     ]
@@ -867,10 +767,10 @@ fn malloc_large_allocation_succeeds() {
 kmain: () {
     p: u8* = malloc(1024)
     if p == null {
-        kshutdown(1)
+        system.shutdown(1)
         return
     }
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#,
     ]
@@ -899,10 +799,10 @@ kmain: () {
         i = i + 1
     }
     if got_null == 0 {
-        kshutdown(1)
+        system.shutdown(1)
         return
     }
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#,
     ]
@@ -956,13 +856,13 @@ fn freestanding_console_putchar_uses_store_byte() {
 #[test]
 fn console_putchar_writes_exact_bytes_to_uart() {
     let src = r#"
+system := import("kernel/arch/riscv64/system.hll")
 external console_putchar: (c: i32)
-external kshutdown: (code: i64)
 kmain: () {
     console_putchar(65)
     console_putchar(66)
     console_putchar(67)
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#;
     let (uart, exit) = run_kernel_hll(src);
@@ -976,11 +876,11 @@ kmain: () {
 #[test]
 fn console_write_writes_exact_string_to_uart() {
     let src = r#"
+system := import("kernel/arch/riscv64/system.hll")
 external console_write: (str: u8*)
-external kshutdown: (code: i64)
 kmain: () {
     console_write("uart-check".ptr)
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#;
     let (uart, exit) = run_kernel_hll(src);
@@ -996,13 +896,13 @@ fn console_print_int_produces_correct_decimal_digits() {
     // Guards the digit path: the old code handed a (possibly user-virtual)
     // stack slot address to M-mode via ecall, and M-mode read garbage.
     let src = r#"
+system := import("kernel/arch/riscv64/system.hll")
 external console_print_int: (n: i64)
-external kshutdown: (code: i64)
 kmain: () {
     console_print_int(0)
     console_print_int(42)
     console_print_int(-7)
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#;
     let (uart, exit) = run_kernel_hll(src);
@@ -1024,12 +924,12 @@ kmain: () {
 #[test]
 fn console_print_hex_produces_correct_hex_digits() {
     let src = r#"
+system := import("kernel/arch/riscv64/system.hll")
 external console_print_hex: (n: u64)
-external kshutdown: (code: i64)
 kmain: () {
     console_print_hex(255)
     console_print_hex(0)
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#;
     let (uart, exit) = run_kernel_hll(src);

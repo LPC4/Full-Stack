@@ -1,0 +1,55 @@
+; Fixed-layout syscall trace ring consumed by the kernel inspector.
+
+layout := import("kernel/core/kernel_abi.hll")
+
+; --- Public API ---
+
+export struct TraceEntry {
+    seq: u64,
+    pid: u64,
+    num: u64,
+    a0: u64,
+    a1: u64,
+    a2: u64,
+    a3: u64,
+    a4: u64,
+    a5: u64,
+    result: u64,
+}
+
+; --- State ---
+
+const TRACE_ENTRIES = 256
+const TRACE_ENTRY_SIZE = 80
+
+struct TraceBuffer {
+    sequence: u64,
+    ring: u8[TRACE_ENTRIES * TRACE_ENTRY_SIZE],
+}
+
+trace_buffer: TraceBuffer = { .ring = [], .sequence = 0 }
+
+; --- Public functions ---
+
+export syscall_trace_begin: (frame: layout.TrapFrame*, pid: u64) -> TraceEntry* {
+    next: u64 = trace_buffer.sequence + 1
+    slot: u64 = (next - 1) % TRACE_ENTRIES
+    entry: TraceEntry* = (&trace_buffer.ring[slot * TRACE_ENTRY_SIZE]) as TraceEntry*
+    entry.pid = pid
+    entry.num = frame.x17
+    entry.a0 = frame.x10
+    entry.a1 = frame.x11
+    entry.a2 = frame.x12
+    entry.a3 = frame.x13
+    entry.a4 = frame.x14
+    entry.a5 = frame.x15
+    return entry
+}
+
+export syscall_trace_finish: (entry: TraceEntry*, result: u64) {
+    next: u64 = trace_buffer.sequence + 1
+    entry.result = result
+    entry.seq = next
+    trace_buffer.sequence = next
+}
+

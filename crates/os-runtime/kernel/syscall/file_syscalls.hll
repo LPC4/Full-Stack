@@ -1,0 +1,107 @@
+; Filesystem-facing syscall handlers.
+
+layout := import("kernel/core/kernel_abi.hll")
+files := import("kernel/fs/files.hll")
+user_memory := import("kernel/mm/user_memory.hll")
+
+tasks := import("kernel/sched/tasks.hll")
+
+; --- Public API ---
+
+export file_syscalls_ftruncate: (frame: layout.TrapFrame*) -> layout.SysAction {
+    frame.x10 = files.truncate(frame.x10 as i64, frame.x11) as u64
+    return Continue
+}
+
+export file_syscalls_open: (frame: layout.TrapFrame*) -> layout.SysAction {
+    path: u8[256] = []
+    len: u64 = frame.x11
+    if user_memory.copy_path(tasks.current_root(), frame.x10 as u8*, len, &path[0]) < 0 {
+        return fail(frame)
+    }
+    frame.x10 = files.open(path[0..len], frame.x12) as u64
+    return Continue
+}
+
+export file_syscalls_stat: (frame: layout.TrapFrame*) -> layout.SysAction {
+    path: u8[256] = []
+    len: u64 = frame.x11
+    if user_memory.copy_path(tasks.current_root(), frame.x10 as u8*, len, &path[0]) < 0 {
+        return fail(frame)
+    }
+    frame.x10 = files.stat(path[0..len]) as u64
+    return Continue
+}
+
+export file_syscalls_mkdir: (frame: layout.TrapFrame*) -> layout.SysAction {
+    path: u8[256] = []
+    len: u64 = frame.x11
+    if user_memory.copy_path(tasks.current_root(), frame.x10 as u8*, len, &path[0]) < 0 {
+        return fail(frame)
+    }
+    frame.x10 = files.mkdir(path[0..len]) as u64
+    return Continue
+}
+
+export file_syscalls_unlink: (frame: layout.TrapFrame*) -> layout.SysAction {
+    path: u8[256] = []
+    len: u64 = frame.x11
+    if user_memory.copy_path(tasks.current_root(), frame.x10 as u8*, len, &path[0]) < 0 {
+        return fail(frame)
+    }
+    frame.x10 = files.unlink(path[0..len]) as u64
+    return Continue
+}
+
+export file_syscalls_rmdir: (frame: layout.TrapFrame*) -> layout.SysAction {
+    path: u8[256] = []
+    len: u64 = frame.x11
+    if user_memory.copy_path(tasks.current_root(), frame.x10 as u8*, len, &path[0]) < 0 {
+        return fail(frame)
+    }
+    frame.x10 = files.rmdir(path[0..len]) as u64
+    return Continue
+}
+
+export file_syscalls_rename: (frame: layout.TrapFrame*) -> layout.SysAction {
+    old_path: u8[256] = []
+    new_path: u8[256] = []
+    old_len: u64 = frame.x11
+    new_len: u64 = frame.x13
+    if user_memory.copy_path(tasks.current_root(), frame.x10 as u8*, old_len, &old_path[0]) < 0 or
+       user_memory.copy_path(tasks.current_root(), frame.x12 as u8*, new_len, &new_path[0]) < 0 {
+        return fail(frame)
+    }
+    frame.x10 = files.rename(old_path[0..old_len], new_path[0..new_len]) as u64
+    return Continue
+}
+
+export file_syscalls_readdir: (frame: layout.TrapFrame*) -> layout.SysAction {
+    path: u8[256] = []
+    name: u8[32] = []
+    path_len: u64 = frame.x11
+    out: u8* = frame.x13 as u8*
+    out_len: u64 = frame.x14
+    if user_memory.copy_path(tasks.current_root(), frame.x10 as u8*, path_len, &path[0]) < 0 {
+        return fail(frame)
+    }
+    result: i64 = files.readdir(path[0..path_len], frame.x12, name[..])
+    if result >= 0 {
+        name_len: u64 = (result as u64) >> 8
+        if name_len > out_len or user_memory.validate(tasks.current_root(), out, name_len, 1) == 0 {
+            return fail(frame)
+        }
+        for index in 0..name_len {
+            @(out + index) = name[index]
+        }
+    }
+    frame.x10 = result as u64
+    return Continue
+}
+
+; --- Utilities ---
+
+fail: (frame: layout.TrapFrame*) -> layout.SysAction {
+    frame.x10 = 0xFFFFFFFFFFFFFFFF
+    return Continue
+}

@@ -3210,6 +3210,7 @@ main: () -> i32 {
     if name[9] != 0xAA as u8 { return 6 }
     return 0
 }
+
 "#,
     );
     let image = build_fs_image(&[FsEntry::File {
@@ -3595,4 +3596,78 @@ fn kernel_fs_path_literals_in_mapped_range() {
             "path literal {needle:?} ends past mapped region"
         );
     }
+}
+
+#[test]
+fn kernel_fs_full_bitmap_rolls_back_creation() {
+    use full_stack::compilation_pipeline::fs_layout;
+
+    let user = compile_hosted(
+        r#"
+sys := import("sys")
+main: () -> i32 {
+    if sys.open("/cannot-create", 2) != -1 { return 1 }
+    if sys.stat("/cannot-create") != -1 { return 2 }
+    return 0
+}
+"#,
+    );
+    let mut image = build_fs_image(&[]);
+    image[fs_layout::BITMAP_BLOCK * fs_layout::BLOCK_SIZE
+        ..fs_layout::DATA_BLOCK_START * fs_layout::BLOCK_SIZE]
+        .fill(0);
+    image[fs_layout::BLOCK_SIZE + fs_layout::IN_BLOCKS
+        ..fs_layout::BLOCK_SIZE + fs_layout::IN_BLOCKS + 2]
+        .fill(0);
+    image[fs_layout::SB_FREE_BLOCKS..fs_layout::SB_FREE_BLOCKS + 4].fill(0);
+    let (vm, outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&user), Some(&image), "", 30_000_000);
+    assert_user_exit_ok(&uart, &outcome, "full_bitmap");
+    let start = fs_layout::SB_FREE_INODES;
+    let end = fs_layout::SB_INODE_BITMAP + 32;
+    assert_eq!(
+        vm.peek_bytes_raw(FS_IMAGE_PA + start as u64, end - start),
+        image[start..end],
+        "allocation rollback changed the superblock"
+    );
+}
+
+#[test]
+fn kernel_invalid_descriptors_and_truncated_elf_return_errors() {
+    let user = compile_hosted(
+        r#"
+sys := import("sys")
+main: () -> i32 {
+    byte: u8[1] = [65]
+    for fd in 16..20 {
+        if sys.read(fd as i64, &byte[0], 0, 1) != -1 { return 1 }
+        if sys.write(fd as i64, &byte[0], 1) != -1 { return 2 }
+        if sys.ftruncate(fd as i64, 0) != -1 { return 3 }
+        sys.close(fd as i64)
+    }
+    for attempt in 0..20 {
+        if sys.exec("/short.elf") != -1 { return 4 }
+        if sys.exec("/bad.elf") != -1 { return 5 }
+    }
+    fd: i64 = sys.open("/short.elf", 0)
+    if fd != 2 { return 6 }
+    sys.close(fd)
+    return 0
+}
+"#,
+    );
+    let bad_header = [0u8; 64];
+    let image = build_fs_image(&[
+        FsEntry::File {
+            path: "/short.elf",
+            data: b"\x7fELF",
+        },
+        FsEntry::File {
+            path: "/bad.elf",
+            data: &bad_header,
+        },
+    ]);
+    let (_, outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&user), Some(&image), "", 50_000_000);
+    assert_user_exit_ok(&uart, &outcome, "invalid_boundaries");
 }

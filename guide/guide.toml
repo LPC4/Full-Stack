@@ -14,5 +14,9 @@ title = "Intro"
 source = "src/written.md"
 
 [[parts]]
+title = "Kernel source tour"
+source = "src/kernel.md"
+
+[[parts]]
 title = "Glossary"
 source = "src/glossary.md"

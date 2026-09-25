@@ -227,7 +227,7 @@ fn workspace_module_resolver(fs: &dyn WorkspaceFs) -> Option<crate::build::Build
     }))
 }
 
-// Keyed by file stem, which is the bare import name.
+// Keys match the canonical paths used by kernel imports.
 fn collect_workspace_modules(
     fs: &dyn WorkspaceFs,
     dir: &VPath,
@@ -240,13 +240,18 @@ fn collect_workspace_modules(
         match entry.meta.kind {
             EntryKind::Dir => collect_workspace_modules(fs, &entry.path, out),
             EntryKind::File => {
-                let Some(stem) = entry.name.strip_suffix(".hll") else {
+                if !entry.name.ends_with(".hll") {
                     continue;
-                };
+                }
                 if let Ok(bytes) = fs.read_file(&entry.path)
                     && let Ok(source) = String::from_utf8(bytes)
                 {
-                    out.insert(stem.to_owned(), source);
+                    let key = entry
+                        .path
+                        .as_str()
+                        .strip_prefix("crates/os-runtime/")
+                        .unwrap_or(entry.path.as_str());
+                    out.insert(key.to_owned(), source);
                 }
             }
         }
@@ -472,15 +477,18 @@ mod tests {
     fn workspace_kernel_modules_shadow_bundled_sources() {
         let mut fs = MemoryFs::new();
         fs.write_text(
-            &VPath::parse("crates/os-runtime/kernel/mm/pmm.hll").expect("path"),
+            &VPath::parse("crates/os-runtime/kernel/mm/physical_pages.hll").expect("path"),
             "; workspace copy",
         )
         .expect("write module");
 
         let resolver = super::workspace_module_resolver(&fs).expect("resolver");
-        assert_eq!(resolver("pmm").as_deref(), Some("; workspace copy"));
+        assert_eq!(
+            resolver("kernel/mm/physical_pages.hll").as_deref(),
+            Some("; workspace copy")
+        );
         // Names without a workspace copy still resolve from the bundled sources.
-        assert!(resolver("scheduler").is_some());
+        assert!(resolver("kernel/sched/scheduler.hll").is_some());
         assert!(resolver("no_such_module").is_none());
     }
 

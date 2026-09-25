@@ -1,0 +1,53 @@
+; UART receive access and the single-byte kernel pushback buffer.
+
+; --- State ---
+
+const BASE = 0x10000000
+const IER = BASE + 1
+const LSR = BASE + 5
+
+struct InputState {
+    valid: u64,
+    byte: u64,
+}
+
+input: InputState = { .valid = 0, .byte = 0 }
+
+; --- Public API ---
+
+export uart_take: () -> i64 {
+    if input.valid != 0 {
+        input.valid = 0
+        return input.byte as i64
+    }
+    return uart_take_raw()
+}
+
+export uart_take_raw: () -> i64 {
+    status: u8* = LSR as u8*
+    if ((@status) as u64 & 1) == 0 {
+        return -1 as i64
+    }
+    data: u8* = BASE as u8*
+    return (@data) as i64
+}
+
+export uart_pushback: (byte: u64) {
+    input.byte = byte
+    input.valid = 1
+}
+
+export uart_has_pushback: () -> bool {
+    return input.valid != 0
+}
+
+export uart_arm_receive: () {
+    register: u8* = IER as u8*
+    @register = 1 as u8
+}
+
+export uart_mask_receive: () {
+    register: u8* = IER as u8*
+    @register = 0 as u8
+}
+

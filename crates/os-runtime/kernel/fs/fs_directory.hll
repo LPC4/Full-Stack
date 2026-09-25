@@ -1,0 +1,319 @@
+; Filesystem names, paths, directory entries, and inode mutation.
+
+allocator := import("kernel/fs/fs_allocator.hll")
+image     := import("kernel/fs/fs_image.hll")
+mem       := import("mem")
+types     := import("kernel/fs/fs_types.hll")
+
+; --- Public API ---
+
+export fs_directory_resolve: (state: types.FileSystemState*, path: u8[]) -> Result<i64, types.FsError> {
+    if path.len == 0 || path[0] != types.FS_SLASH {
+        return Err(FsError.InvalidPath)
+    }
+    current: i64 = 0
+    position: u64 = 1
+    while position < path.len {
+        while position < path.len {
+            if path[position] != types.FS_SLASH {
+                break
+            }
+            position = position + 1
+        }
+        if position >= path.len {
+            return Ok(current)
+        }
+        start: u64 = position
+        while position < path.len {
+            if path[position] == types.FS_SLASH {
+                break
+            }
+            if path[position] == 0 {
+                return Err(FsError.InvalidPath)
+            }
+            position = position + 1
+        }
+        if position - start >= types.FS_NAME_LEN {
+            return Err(FsError.InvalidPath)
+        }
+        current = find_in(state, current as u64, path[start..position])?
+        if current < 0 {
+            return Err(FsError.InvalidPath)
+        }
+    }
+    return Ok(current)
+}
+
+export fs_directory_create_file: (state: types.FileSystemState*, path: u8[]) -> Result<i64, types.FsError> {
+    split: types.PathSplit = split_path(state, path)?
+    return create_at(state, split.parent as u64, split.name, types.FS_TYPE_FILE)
+}
+
+export fs_directory_stat: (state: types.FileSystemState*, path: u8[]) -> Result<i64, types.FsError> {
+    inode: i64 = fs_directory_resolve(state, path)?
+    if inode < 0 {
+        return Err(FsError.InvalidPath)
+    }
+    return Ok(image.inode_type(state, inode as u64) as i64)
+}
+
+export fs_directory_read: (state: types.FileSystemState*, path: u8[], index: u64, name_buffer: u8[]) -> Result<i64, types.FsError> {
+    directory: i64 = fs_directory_resolve(state, path)?
+    if directory < 0 || image.inode_type(state, directory as u64) != types.FS_TYPE_DIR {
+        return Err(FsError.InvalidPath)
+    }
+    count: u64 = 0
+    for block_slot in 0..types.FS_INODE_BLOCKS {
+        block: u64 = image.inode_block(state, directory as u64, block_slot)
+        if block == 0 {
+            break
+        }
+        for slot in 0..types.FS_DIRENTS_PER_BLOCK {
+            entry: types.DiskDirEntry* = image.dirent_ptr(state, block, slot)
+            name: u8* = &entry.name[0]
+            if @name != 0 {
+                if count == index {
+                    length: u64 = name_length(name)
+                    if length > name_buffer.len {
+                        return Err(FsError.InvalidPath)
+                    }
+                    for byte in 0..length {
+                        name_buffer[byte] = @(name + byte)
+                    }
+                    child_type: u64 = image.inode_type(state, entry.inode as u64)
+                    return Ok(((length << 8) | child_type) as i64)
+                }
+                count = count + 1
+            }
+        }
+    }
+    return Err(FsError.InvalidPath)
+}
+
+export fs_directory_mkdir: (state: types.FileSystemState*, path: u8[]) -> Result<i64, types.FsError> {
+    split: types.PathSplit = split_path(state, path)?
+    return create_at(state, split.parent as u64, split.name, types.FS_TYPE_DIR)
+}
+
+export fs_directory_unlink: (state: types.FileSystemState*, path: u8[]) -> Result<i64, types.FsError> {
+    inode: i64 = fs_directory_resolve(state, path)?
+    if inode < 0 || image.inode_type(state, inode as u64) != types.FS_TYPE_FILE {
+        return Err(FsError.InvalidPath)
+    }
+    split: types.PathSplit = split_path(state, path)?
+    remove_entry(state, split.parent as u64, split.name)?
+    release_inode(state, inode as u64)
+    return Ok(0)
+}
+
+export fs_directory_rmdir: (state: types.FileSystemState*, path: u8[]) -> Result<i64, types.FsError> {
+    inode: i64 = fs_directory_resolve(state, path)?
+    if inode <= 0 || image.inode_type(state, inode as u64) != types.FS_TYPE_DIR ||
+       image.inode_size(state, inode as u64) != 0 {
+        return Err(FsError.InvalidPath)
+    }
+    split: types.PathSplit = split_path(state, path)?
+    remove_entry(state, split.parent as u64, split.name)?
+    release_inode(state, inode as u64)
+    return Ok(0)
+}
+
+export fs_directory_rename: (state: types.FileSystemState*, old_path: u8[], new_path: u8[]) -> Result<i64, types.FsError> {
+    inode: i64 = fs_directory_resolve(state, old_path)?
+    if inode < 0 {
+        return Err(FsError.InvalidPath)
+    }
+    old_split: types.PathSplit = split_path(state, old_path)?
+    new_split: types.PathSplit = split_path(state, new_path)?
+    remove_entry(state, old_split.parent as u64, old_split.name)?
+    match add_entry(state, new_split.parent as u64, new_split.name, inode as u64) {
+        Ok(_) -> {}
+        Err(error) -> {
+            add_entry(state, old_split.parent as u64, old_split.name, inode as u64)
+            return Err(error)
+        }
+    }
+    moved: types.DiskInode* = image.inode_ptr(state, inode as u64)
+    write_name(&moved.name[0], new_split.name)
+    moved.parent = new_split.parent as u16
+    return Ok(0)
+}
+
+; --- Implementation ---
+
+find_in: (state: types.FileSystemState*, directory: u64, name: u8[]) -> Result<i64, types.FsError> {
+    if image.inode_type(state, directory) != types.FS_TYPE_DIR {
+        return Err(FsError.InvalidPath)
+    }
+    for block_slot in 0..types.FS_INODE_BLOCKS {
+        block: u64 = image.inode_block(state, directory, block_slot)
+        if block == 0 {
+            break
+        }
+        for slot in 0..types.FS_DIRENTS_PER_BLOCK {
+            entry: types.DiskDirEntry* = image.dirent_ptr(state, block, slot)
+            stored: u8* = &entry.name[0]
+            if @stored != 0 && names_equal(stored, name) == 1 {
+                return Ok(entry.inode as i64)
+            }
+        }
+    }
+    return Err(FsError.InvalidPath)
+}
+
+add_entry: (state: types.FileSystemState*, directory: u64, child_name: u8[], child_inode: u64) -> Result<i64, types.FsError> {
+    if child_name.len == 0 || child_name.len >= types.FS_NAME_LEN {
+        return Err(FsError.InvalidPath)
+    }
+    for block_slot in 0..types.FS_INODE_BLOCKS {
+        block: u64 = image.inode_block(state, directory, block_slot)
+        if block == 0 {
+            block = allocator.alloc_block(state)?
+            if block == 0 {
+                return Err(FsError.InvalidPath)
+            }
+            mem.set(image.block_pa(state, block) as u8*, 0, types.FS_BLOCK_SIZE)
+            image.set_inode_block(state, directory, block_slot, block)
+        }
+        for slot in 0..types.FS_DIRENTS_PER_BLOCK {
+            entry: types.DiskDirEntry* = image.dirent_ptr(state, block, slot)
+            stored: u8* = &entry.name[0]
+            if @stored == 0 {
+                write_name(stored, child_name)?
+                entry.inode = child_inode as u16
+                entry.reserved = 0 as u16
+                size: u64 = image.inode_size(state, directory)
+                image.set_inode_size(state, directory, size + 1)
+                return Ok(0)
+            }
+        }
+    }
+    return Err(FsError.InvalidPath)
+}
+
+remove_entry: (state: types.FileSystemState*, directory: u64, name: u8[]) -> Result<i64, types.FsError> {
+    for block_slot in 0..types.FS_INODE_BLOCKS {
+        block: u64 = image.inode_block(state, directory, block_slot)
+        if block == 0 {
+            break
+        }
+        for slot in 0..types.FS_DIRENTS_PER_BLOCK {
+            entry: types.DiskDirEntry* = image.dirent_ptr(state, block, slot)
+            stored: u8* = &entry.name[0]
+            if @stored != 0 && names_equal(stored, name) == 1 {
+                @stored = 0 as u8
+                size: u64 = image.inode_size(state, directory)
+                if size > 0 {
+                    image.set_inode_size(state, directory, size - 1)
+                }
+                return Ok(0)
+            }
+        }
+    }
+    return Err(FsError.InvalidPath)
+}
+
+split_path: (state: types.FileSystemState*, path: u8[]) -> Result<types.PathSplit, types.FsError> {
+    result: types.PathSplit = {
+        .parent = -1 as i64,
+        .name = "",
+    }
+    if path.len < 2 || path[0] != types.FS_SLASH {
+        return Err(FsError.InvalidPath)
+    }
+    index: u64 = path.len
+    while index > 0 {
+        index = index - 1
+        if path[index] == types.FS_SLASH {
+            name_start: u64 = index + 1
+            name_length: u64 = path.len - name_start
+            if name_length == 0 || name_length >= types.FS_NAME_LEN {
+                return Err(FsError.InvalidPath)
+            }
+            name: u8[] = path[name_start..path.len]
+            if index == 0 {
+                result.parent = 0
+                result.name = name
+                return Ok(result)
+            }
+            result.parent = fs_directory_resolve(state, path[0..index])?
+            result.name = name
+            return Ok(result)
+        }
+    }
+    return Err(FsError.InvalidPath)
+}
+
+create_at: (state: types.FileSystemState*, parent: u64, name: u8[], node_type: u64) -> Result<i64, types.FsError> {
+    if image.inode_type(state, parent) != types.FS_TYPE_DIR {
+        return Err(FsError.InvalidPath)
+    }
+    index: i64 = allocator.alloc_inode(state)?
+    if index < 0 {
+        return Err(FsError.InvalidPath)
+    }
+    inode: types.DiskInode* = image.inode_ptr(state, index as u64)
+    inode.node_type = node_type as u16
+    inode.parent = parent as u16
+    inode.size = 0 as u32
+    match write_name(&inode.name[0], name) {
+        Ok(_) -> {}
+        Err(error) -> {
+            allocator.free_inode(state, index as u64)
+            return Err(error)
+        }
+    }
+    for slot in 0..types.FS_INODE_BLOCKS {
+        inode.blocks[slot] = 0 as u16
+    }
+    match add_entry(state, parent, name, index as u64) {
+        Ok(_) -> {}
+        Err(error) -> {
+            allocator.free_inode(state, index as u64)
+            return Err(error)
+        }
+    }
+    return Ok(index)
+}
+
+release_inode: (state: types.FileSystemState*, inode: u64) {
+    for slot in 0..types.FS_INODE_BLOCKS {
+        block: u64 = image.inode_block(state, inode, slot)
+        if block != 0 {
+            allocator.free_block(state, block)
+            image.set_inode_block(state, inode, slot, 0)
+        }
+    }
+    allocator.free_inode(state, inode)
+}
+
+name_length: (name: u8*) -> u64 {
+    length: u64 = 0
+    while length < types.FS_NAME_LEN && @(name + length) != 0 {
+        length = length + 1
+    }
+    return length
+}
+
+names_equal: (stored: u8*, name: u8[]) -> i64 {
+    if name.len >= types.FS_NAME_LEN || name_length(stored) != name.len {
+        return 0
+    }
+    for index in 0..name.len {
+        if @(stored + index) != name[index] {
+            return 0
+        }
+    }
+    return 1
+}
+
+write_name: (destination: u8*, name: u8[]) -> Result<i64, types.FsError> {
+    if name.len == 0 || name.len >= types.FS_NAME_LEN {
+        return Err(FsError.InvalidPath)
+    }
+    mem.set(destination, 0, types.FS_NAME_LEN)
+    for index in 0..name.len {
+        @(destination + index) = name[index]
+    }
+    return Ok(0)
+}

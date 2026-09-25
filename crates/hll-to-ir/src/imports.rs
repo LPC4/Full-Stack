@@ -83,6 +83,35 @@ pub fn collect_exports(source: &str) -> Result<HashSet<String>, String> {
         .collect())
 }
 
+/// Flat entry symbols shared by definitions and imported interfaces for this target.
+pub fn abi_symbols(target: crate::TargetMode) -> HashSet<String> {
+    let mut symbols: HashSet<String> = ["_start", "main"].into_iter().map(str::to_owned).collect();
+    if target == crate::TargetMode::Kernel {
+        symbols.extend(
+            ["_s_trap_host", "kmain", "trap_handler"]
+                .into_iter()
+                .map(str::to_owned),
+        );
+    }
+    symbols
+}
+
+/// Function bodies in source order, paired with their export visibility.
+pub fn collect_function_definitions(source: &str) -> Result<Vec<(String, bool)>, String> {
+    Ok(parse_module(source)?
+        .declarations
+        .into_iter()
+        .filter_map(|declaration| match declaration.decl {
+            DeclNode::Function {
+                name,
+                body: Some(_),
+                ..
+            } => Some((name, declaration.exported)),
+            _ => None,
+        })
+        .collect())
+}
+
 /// The exported names that become link symbols (non-extern, non-generic functions and
 /// non-extern globals), i.e. the exports a closure build mangles to `prefix__name`.
 pub fn collect_exported_link_symbols(source: &str) -> Result<HashSet<String>, String> {
@@ -1215,7 +1244,12 @@ pub fn extract_interface(source: &str) -> Result<String, String> {
 
 // Mangle exported link symbols while leaving source-level types and constants scoped normally.
 fn extract_interface_prefixed(source: &str, prefix: &str) -> Result<String, String> {
-    extract_interface_prefixed_with_aliases(source, prefix, &HashMap::new())
+    extract_interface_prefixed_with_aliases(
+        source,
+        prefix,
+        &HashMap::new(),
+        crate::TargetMode::Hosted,
+    )
 }
 
 /// As [`extract_interface_prefixed`], with the module's direct imports resolved in its own scope.
@@ -1223,6 +1257,7 @@ pub fn extract_interface_prefixed_with_aliases(
     source: &str,
     prefix: &str,
     aliases: &HashMap<String, ModuleAlias>,
+    target: crate::TargetMode,
 ) -> Result<String, String> {
     let mut program = parse_module(source)?;
     let exported_interfaces = program
@@ -1236,7 +1271,9 @@ pub fn extract_interface_prefixed_with_aliases(
         .collect::<HashSet<_>>();
     validate_exported_bounds(&program, &exported_interfaces)?;
     rewrite_qualified_access(&mut program, aliases)?;
-    let (exported_symbols, private_symbols) = module_symbol_sets(&program);
+    let exempt = abi_symbols(target);
+    let (mut exported_symbols, private_symbols) = module_symbol_sets(&program);
+    exported_symbols.retain(|name| !exempt.contains(name));
     let mut out = String::new();
     for decl in &program.declarations {
         if !decl.exported {
@@ -1248,7 +1285,15 @@ pub fn extract_interface_prefixed_with_aliases(
             }
             other => other.clone(),
         };
-        if let Some(rendered) = render_export(&node, prefix, &exported_interfaces)? {
+        let symbol_prefix = match &node {
+            DeclNode::Function { name, .. } | DeclNode::Variable { name, .. }
+                if exempt.contains(name) =>
+            {
+                ""
+            }
+            _ => prefix,
+        };
+        if let Some(rendered) = render_export(&node, symbol_prefix, &exported_interfaces)? {
             out.push_str(&rendered);
             out.push('\n');
         }
@@ -2056,6 +2101,16 @@ fn unary_op(op: &UnaryOp) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn function_definitions_keep_source_order_and_visibility() {
+        let source = "external imported: ()\nexport api: () { helper() }\nhelper: () {}";
+        assert_eq!(
+            collect_function_definitions(source).unwrap(),
+            vec![("api".to_owned(), true), ("helper".to_owned(), false)]
+        );
+        assert!(collect_function_definitions("export broken: (").is_err());
+    }
 
     fn aliases(entries: &[(&str, &[&str])]) -> HashMap<String, ModuleAlias> {
         prefixed_aliases(entries.iter().map(|(a, e)| ("", *a, *e)))

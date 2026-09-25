@@ -1,5 +1,5 @@
 I started off creating Minecraft mods for fun, and ever since, I've wanted to understand what a computer
-*actually* does. Not just how to use a programming language, but how an application really gets run. At some point
+actually does. Not just how to use a programming language, but how an application really gets run. At some point
 I realized I had no idea how Java itself worked underneath.
 
 That question is why I started working on multiple projects in my free time: different virtual machines, custom assembly and
@@ -46,9 +46,9 @@ what the name means: RISC stands for Reduced Instruction Set Computer, and the V
 RISC design.
 
 I chose RISC-V because its instruction formats are much more regular, which makes it simpler to emulate, and because
-I agree with the mindset of keeping the assembly simple.
+I agree with the mindset of keeping the assembly simple and letting the programmer create his own abstractions.
 
-For now, we'll treat the CPU as the simplest machine possible. Real CPUs do all kinds of clever optimisations to run faster,
+For now, we'll treat the CPU as the simplest machine possible. Real CPUs use all kinds of clever tricks to run faster,
 but none of that is needed yet. Let's just understand the assembly first.
 
 ### Registers
@@ -205,8 +205,8 @@ So the basic loop your CPU keeps executing is:
 
 ### Endianness
 
-Because RISC-V is by default a *little-endian* architecture, the bytes are ordered in memory with the lowest byte first:
-byte 0 goes at the lowest address, byte 3 at the highest. In a big-endian architecture the bytes would be the
+Because RISC-V is by default a *little-endian* architecture, the bytes are ordered in memory with the least significant
+byte first: byte 0 goes at the lowest address, byte 3 at the highest. In a big-endian architecture the bytes would be the
 other way around. So if our `add` is stored at address 00, memory looks like this:
 
 ![The bytes of an add instruction in memory](figures/endianness.svg)
@@ -361,8 +361,36 @@ into the address field. There's your array. (The `va`/`pa` toggle next to the fi
 and physical addresses; our programs don't use virtual memory yet, so both read the same bytes, and you can
 ignore it until we get to operating systems.) We'll go over the `stack` view later.
 
-Sorry for so much boring debugger documentation without any diagrams, illustrations or code. To make up for it,
-here's an exercise.
+While you're in there, look at the `disasm` view: where the source reads `la t1, array`, the machine reads
+`auipc` and `addi`. `la` turns out to be a pseudo-instruction too, the assembler builds the address out of two
+real instructions. We'll see why in the next section.
+
+### Loads and jumps
+
+So why does `la` expand into `auipc` + `addi` in the first place? It comes down to the physical limits of the encoding.
+Every RISC-V instruction is exactly 32 bits wide, and a good chunk of that goes to the opcode and the register numbers.
+What's left for a number is small: `addi` gets 12 bits of immediate, `auipc` gets 20. A memory address on our RV64 machine
+is 64 bits. You cannot fit that into a single instruction, not even close.
+
+The trick is that `la` never tries to encode an absolute address. It encodes a *PC-relative offset*: the distance from
+the instruction doing the loading to the label. Your program's code and data are linked right next to each other, so that
+distance is tiny compared to what a signed 32-bit number can express (2GB is more than enough for our 128MB of RAM and
+256MB of ROM). The assembler splits that 32-bit distance in two: `auipc` ("add upper immediate to PC") carries the upper
+20 bits, `addi` the lower 12. The CPU adds both to the 64-bit program counter, sign-extending as it goes, and the upper
+32 bits of the final address fall out of the math for free.
+
+Jumps and branches do the exact same thing. `jal` and the `b*` instructions don't store "go to address X", they store
+"go X bytes from here". That's why a label keeps working no matter where the program ends up in memory: the offset
+between the jump and its target never changes, even when the absolute addresses do. Their budgets are smaller than `la`'s,
+`jal` gets a 21-bit offset (1MB), a branch only 13 bits (4KB), which is why the assembler occasionally has to get
+creative for very far jumps.
+
+The one thing the PC-relative trick can't do is make a large 64-bit number out of nothing. That's where `li` comes in:
+give it a large 64-bit constant, and it expands into a little chain of `lui`, `addi` and `slli` (shift left) instructions,
+building the value piece by piece. `la` can do it in two instructions because it leans on the PC, `li` needs to build it
+from nothing.
+
+**TODO: MAKE GOOD VISUALISATION**
 
 ### Exercise
 
@@ -427,7 +455,7 @@ max_a:
 	ret                 # jump back to the address in ra (ret = jalr x0, ra, 0)
 ```
 
-![`jal` transfers control to the function; `ret` returns to the saved address.](figures/function_call_and_return.svg)
+![`jal` transfers control to the function, `ret` returns to the saved address.](figures/function_call_and_return.svg)
 
 You'll find this one under
 [`04_functions/max.s`](repo:programs/lessons/04_functions/max.s), run configuration
@@ -560,8 +588,9 @@ epilogue:
 
 Let's read it in parts. The prologue reserves four slots and sets `fp` as early as it can, so everything after
 it can address the frame off `fp`. The one thing that has to happen first is saving the caller's `fp`: once
-`addi fp, sp, 32` runs, that old value is gone, so we `sd` it while `fp` still holds it (that lone `16(sp)` is
-the same slot as `-16(fp)`). From there `fp` is the base of the frame and the return address goes to `-8(fp)`.
+`addi fp, sp, 32` runs, that old value is gone, so we `sd` it while `fp` still holds it (Because fp is set to sp + 32,
+the offset `16(sp)` is mathematically identical to `-16(fp)`. We use `16(sp)` here because fp hasn't been updated yet!).
+From there `fp` is the base of the frame and the return address goes to `-8(fp)`.
 
 ```asm
 	addi sp, sp, -32     # prologue: reserve a 32-byte frame

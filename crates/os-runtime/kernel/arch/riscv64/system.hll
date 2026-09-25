@@ -1,0 +1,16 @@
+; Platform shutdown boundary.
+
+; --- Public API ---
+
+export system_shutdown: (code: i64) {
+    asm {
+        mv   a0, $code
+        li   t0, 268500992
+        sd   a0, 0(t0)
+    }
+    asm {
+    .Lsystem_halt:
+        wfi
+        j    .Lsystem_halt
+    }
+}

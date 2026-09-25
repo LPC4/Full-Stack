@@ -1,0 +1,44 @@
+; Supervisor CSR operations used by memory and boot orchestration.
+
+; --- Public API ---
+
+export csr_activate_address_space: (root: u64) {
+    asm {
+        mv   t0, $root
+        srli t0, t0, 12
+        li   t1, 8
+        slli t1, t1, 60
+        or   t0, t0, t1
+        csrw 0x180, t0
+        sfence.vma x0, x0
+    }
+}
+
+export csr_disable_interrupts: () {
+    asm {
+        csrr t0, sstatus
+        andi t0, t0, -3
+        csrw sstatus, t0
+    }
+}
+
+export csr_enable_interrupts: () {
+    asm {
+        csrr t0, sstatus
+        ori  t0, t0, 3
+        csrw sstatus, t0
+    }
+}
+
+export csr_allow_user_memory: () {
+    asm {
+        csrr t0, sstatus
+        li   t1, 0x40000
+        or   t0, t0, t1
+        csrw sstatus, t0
+    }
+}
+
+export csr_clear_software_interrupt: () {
+    asm { csrw sip, x0 }
+}

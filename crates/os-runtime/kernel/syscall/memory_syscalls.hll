@@ -1,0 +1,79 @@
+; User address-space syscall handlers.
+
+layout        := import("kernel/core/kernel_abi.hll")
+config        := import("kernel/core/kernel_config.hll")
+address_space := import("kernel/mm/address_space.hll")
+framebuffer   := import("kernel/arch/riscv64/framebuffer.hll")
+mem           := import("mem")
+pages         := import("kernel/mm/physical_pages.hll")
+tasks         := import("kernel/sched/tasks.hll")
+
+; --- State ---
+const USER_HEAP_BASE = 0x60000000
+const USER_ARG_BASE = 0x7FF00000
+const USER_HEAP_FLAGS = config.PTE_READ + config.PTE_WRITE + config.PTE_USER
+
+; --- Public API ---
+
+export memory_syscalls_brk: (frame: layout.TrapFrame*) -> layout.SysAction {
+    current: layout.Pcb* = tasks.current()
+    if current == null {
+        frame.x10 = 0xFFFFFFFFFFFFFFFF
+        return Continue
+    }
+
+    requested: u64 = frame.x10
+    current_break: u64 = current.heap_brk
+    if current_break == 0 {
+        current_break = USER_HEAP_BASE
+    }
+    if requested <= current_break {
+        frame.x10 = current_break
+        return Continue
+    }
+
+    map_from: u64 = page_up(current_break)
+    map_to: u64 = page_up(requested)
+    if map_to > USER_ARG_BASE {
+        frame.x10 = current_break
+        return Continue
+    }
+
+    address: u64 = map_from
+    while address < map_to {
+        page: u8* = pages.alloc()
+        if page == null {
+            frame.x10 = current_break
+            return Continue
+        }
+        mem.set(page, 0, 4096)
+        address_space.map(current.page_root, address, page as u64, USER_HEAP_FLAGS)
+        address = address + 4096
+    }
+
+    current.heap_brk = requested
+    frame.x10 = requested
+    return Continue
+}
+
+export memory_syscalls_map_framebuffer: (frame: layout.TrapFrame*) -> layout.SysAction {
+    current: layout.Pcb* = tasks.current()
+    if current == null {
+        frame.x10 = 0xFFFFFFFFFFFFFFFF
+        return Continue
+    }
+    for index in 0..framebuffer.PAGE_COUNT {
+        offset: u64 = (index as u64) * 4096
+        address_space.map(current.page_root, framebuffer.USER_BASE + offset,
+            framebuffer.PHYS_BASE + offset, USER_HEAP_FLAGS)
+    }
+    framebuffer.acquire(current)
+    frame.x10 = framebuffer.USER_BASE
+    return Continue
+}
+
+; --- Utilities ---
+
+page_up: (address: u64) -> u64 {
+    return ((address + 4095) / 4096) * 4096
+}

@@ -1,0 +1,37 @@
+; Framebuffer mapping and shared double-buffer ownership.
+
+layout := import("kernel/core/kernel_abi.hll")
+
+; --- State ---
+
+export const PHYS_BASE = 0x10020000
+export const PAGE_COUNT = 76
+export const USER_BASE = 0x50000000
+const PIXEL_BYTES = 307200
+const DBMODE_OFFSET = 8
+
+user_count: u64 = 0
+
+; --- Public API ---
+
+export framebuffer_release: (pcb: layout.Pcb*) {
+    if pcb == null or pcb.fb_mapped == 0 {
+        return
+    }
+    pcb.fb_mapped = 0
+    if user_count != 0 {
+        user_count = user_count - 1
+    }
+    if user_count == 0 {
+        dbmode: u32* = (PHYS_BASE + PIXEL_BYTES + DBMODE_OFFSET) as u32*
+        @dbmode = 0 as u32
+    }
+}
+
+export framebuffer_acquire: (pcb: layout.Pcb*) {
+    if pcb != null and pcb.fb_mapped == 0 {
+        pcb.fb_mapped = 1
+        user_count = user_count + 1
+    }
+}
+

@@ -1,0 +1,15 @@
+; Physical memory ranges and Sv39 permission bits.
+
+; --- Public API ---
+
+export const PMM_BASE = 0x80100000
+export const PMM_END = 0x87000000
+export const KHEAP_BASE = 0x87000000
+export const KHEAP_END = 0x87B00000
+
+export const PTE_VALID = 1
+export const PTE_READ = 2
+export const PTE_WRITE = 4
+export const PTE_EXECUTE = 8
+export const PTE_USER = 16
+export const PTE_GLOBAL = 32

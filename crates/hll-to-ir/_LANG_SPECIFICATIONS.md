@@ -648,24 +648,27 @@ The mechanisms above are the target. Current status:
   or an absolute path resolve from the importing source file's directory, not the registry.
 - The host pipeline compiles the transitive closure of qualified `import(path)` dependencies
   into per-module objects, dependencies first. Per-module mangling is on by default (so two
-  modules may export the same name); `set_module_mangling(false)` disables it for the kernel,
-  whose inline asm names HLL symbols literally and which links with unique flat names. Cycles
-  are rejected under mangling and tolerated when flat (the kernel's `syscall`/`scheduler` pair).
-  Header-only modules (e.g. `layout`) are skipped by the closure and reach importers via the
+  modules may export the same name). Cycles are rejected under mangling and for kernel builds, including flat kernel builds.
+  Flat non-kernel builds tolerate cycles.
+  Kernel mode preserves the flat ABI names `kmain`, `_s_trap_host`, and `trap_handler` in
+  both definitions and imported interfaces. These names are ordinary module symbols in other
+  targets; `_start` and `main` remain flat entry symbols in every target.
+  The kernel uses mangling after isolating its inline-assembly labels and removing its production
+  import cycle. Header-only modules (for example `kernel_abi`) are skipped and reach importers via the
   prepended interface.
-- The bundled resolver covers kernel modules (`layout`, `trap_entry`, `pmm`, `vmm`, `process`,
-  `scheduler`, `fs`, `syscall`, `trap_handler`, `utilities`, `checks`) and stdlib modules
+- The bundled resolver covers kernel modules through canonical crate-relative IDs such as
+  `kernel/core/kernel_abi.hll` and `kernel/syscall/syscalls.hll`, and stdlib modules
   (`alloc`, `vec`, `owned_string`, `arena`, `pool`, `string`, `format`, `mem`, `ascii`,
   `console`, `sys`, `cstr`, `runtime`, `klog`) through the generated registry. Stdlib sources use
   canonical crate-relative registry IDs, while `stdlib.build` maps those IDs to target-facing
   logical module names. It composes `common` with `baremetal` or `hosted_platform` and a target
   overlay. Kernel TUs import the providers they use with qualified
-  `name := import("name")`; `layout.hll` exports the PCB/trap-frame structs and ABI consts. The
+  aliases; `kernel_abi.hll` exports the PCB/trap-frame structs and ABI constants. The
   production kernel build (`ensure_kernel_binary`, the GUI, the CLI, and the integration tests)
-  drives the link set from the `my_kernel` closure with mangling off, linking it against the
+  drives the link set from the `my_kernel` closure with mangling on, linking it against the
   precompiled stdlib objects plus the boot `entry`. The kernel-mode source prelude
-  (auto-prepended `layout.hll`) remains as the fallback for the raw `HllCompiler` path, where the
-  import is inert. The split `as`/`cc`/`ld`/`shell` tools are also closure-built through
+  (auto-prepended `kernel_abi.hll`) remains as the fallback for the raw `HllCompiler` path, where
+  the import is inert. The split `as`/`cc`/`ld`/`shell` tools are also closure-built through
   qualified relative imports; `as` and `cc` keep their layout headers as shared record prelude.
   User programs use qualified stdlib imports rather than hand-written `external` declarations;
   `external` remains reserved for ABI/runtime edges such as `_start` calling user `main`.

@@ -1,0 +1,123 @@
+; Process lifecycle and scheduling facade.
+
+layout    := import("kernel/core/kernel_abi.hll")
+files     := import("kernel/fs/files.hll")
+framebuffer := import("kernel/arch/riscv64/framebuffer.hll")
+process   := import("kernel/sched/process.hll")
+scheduler := import("kernel/sched/scheduler.hll")
+system    := import("kernel/arch/riscv64/system.hll")
+
+; --- Public API ---
+
+export tasks_init: () {
+    process.init()
+    scheduler.init()
+}
+
+export tasks_current: () -> layout.Pcb* {
+    return scheduler.current()
+}
+
+export tasks_current_root: () -> u64 {
+    current: layout.Pcb* = scheduler.current()
+    if current == null {
+        return 0
+    }
+    return current.page_root
+}
+
+export tasks_build: (entry_pc: u64) -> layout.Pcb* {
+    return process.create(entry_pc)
+}
+
+export tasks_build_empty: () -> layout.Pcb* {
+    return process.alloc()
+}
+
+export tasks_enqueue: (pcb: layout.Pcb*) {
+    scheduler.add(pcb)
+}
+
+export tasks_schedule: (frame: layout.TrapFrame*, action: layout.SysAction) {
+    scheduler.schedule(frame, action)
+}
+
+export tasks_block_on_input: (pcb: layout.Pcb*) {
+    scheduler.set_input_waiter(pcb)
+}
+
+export tasks_wake_input: () -> u64 {
+    return scheduler.wake_input_waiter()
+}
+
+export tasks_pid_alive: (pid: u64) -> u64 {
+    return scheduler.pid_alive(pid)
+}
+
+export tasks_reap_child: (parent_pid: u64) -> layout.Pcb* {
+    child: layout.Pcb* = scheduler.find_zombie_child(parent_pid)
+    if child != null {
+        scheduler.remove_zombie(child)
+    }
+    return child
+}
+
+export tasks_reap_pid: (pid: u64) -> layout.Pcb* {
+    task: layout.Pcb* = scheduler.find_zombie_pid(pid)
+    if task != null {
+        scheduler.remove_zombie(task)
+    }
+    return task
+}
+
+export tasks_has_children: (parent_pid: u64) -> u64 {
+    return scheduler.has_children(parent_pid)
+}
+
+export tasks_kill_child: (parent_pid: u64) -> u64 {
+    return kill_ready(parent_pid, true)
+}
+
+export tasks_kill_pid: (pid: u64) -> u64 {
+    return kill_ready(pid, false)
+}
+
+export tasks_exit_current: (code: u64) -> layout.SysAction {
+    current: layout.Pcb* = scheduler.current()
+    if current == null || current.pid == 1 || scheduler.ready_empty() == 1 {
+        system.shutdown(code as i64)
+    }
+
+    release_resources(current, true)
+    current.exit_code = code
+    scheduler.make_zombie(current)
+    return ExitSchedule
+}
+
+; --- Implementation ---
+
+kill_ready: (target: u64, by_parent: bool) -> u64 {
+    match scheduler.remove_ready(target, by_parent) {
+        Some(task) -> {
+            task.state = PROC_EXITED
+            release_resources(task, false)
+            return 1
+        }
+        None -> { return 0 }
+    }
+}
+
+release_resources: (task: layout.Pcb*, normal_exit: bool) {
+    ; Kill retains the existing descriptor leak and does not create a zombie.
+    if normal_exit {
+        close_redirect(task.stdout_fd)
+        close_redirect(task.stdin_fd)
+    }
+    framebuffer.release(task)
+}
+
+close_redirect: (fd: u64) {
+    if fd >= 2 {
+        files.close(fd as i64)
+    }
+}

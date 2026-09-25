@@ -57,21 +57,9 @@ fn collect_sources(dir: &Path, manifest_dir: &Path, out: &mut Vec<Source>) {
             continue;
         }
         let rel = path.strip_prefix(manifest_dir).expect("source under crate");
-        let key = source_key(rel);
         let rel = rel.to_string_lossy().replace('\\', "/");
+        let key = rel.clone();
         out.push(Source { key, rel, path });
-    }
-}
-
-fn source_key(rel: &Path) -> String {
-    let stem = rel
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .expect("hll stem");
-    if rel.starts_with("stdlib") {
-        rel.to_string_lossy().replace('\\', "/")
-    } else {
-        stem.to_owned()
     }
 }
 
@@ -144,11 +132,11 @@ fn render_sources(sources: &[Source]) -> String {
     out.push_str(
         "/// Look up a bundled kernel or stdlib module by its stable registry key.\n\
          pub fn module_source(name: &str) -> Option<&'static str> {\n\
-             SOURCES.iter().find(|(key, _)| *key == name).map(|(_, source)| *source)\n\
+             SOURCES.iter().find(|(candidate, _)| *candidate == name).map(|(_, source)| *source)\n\
          }\n\n\
          /// Repo-relative source path for a bundled module key.\n\
          pub fn module_path(name: &str) -> Option<&'static str> {\n\
-             SOURCE_PATHS.iter().find(|(key, _)| *key == name).map(|(_, path)| *path)\n\
+             SOURCE_PATHS.iter().find(|(candidate, _)| *candidate == name).map(|(_, path)| *path)\n\
          }\n",
     );
     out

@@ -368,7 +368,7 @@ fn trace_row(ui: &mut egui::Ui, entry: &os_view::TraceEntry) {
     ));
 }
 
-// Mirrors core/syscall.hll; unknown numbers print raw.
+// Mirrors kernel/syscall/syscalls.hll; unknown numbers print raw.
 fn syscall_name(num: u64) -> String {
     let name = match num {
         2 => "yield",

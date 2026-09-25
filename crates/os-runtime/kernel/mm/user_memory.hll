@@ -1,0 +1,52 @@
+; Checked access to the active process's user address space.
+
+page_tables := import("kernel/mm/page_tables.hll")
+
+; --- State ---
+
+const PATH_MAX = 255
+
+; --- Public API ---
+
+export user_memory_validate: (root: u64, ptr: u8*, len: u64, write: i64) -> i64 {
+    match validate_range(root, ptr, len, write) {
+        Ok(_) -> { return 1 }
+        Err(_) -> { return 0 }
+    }
+}
+
+export user_memory_copy_path: (root: u64, src: u8*, len: u64, dst: u8*) -> i64 {
+    match copy_path(root, src, len, dst) {
+        Ok(_) -> { return 0 }
+        Err(_) -> { return -1 as i64 }
+    }
+}
+
+; --- Implementation ---
+
+enum UserCopyError {
+    InvalidRange
+    InvalidPath
+}
+
+validate_range: (root: u64, ptr: u8*, len: u64, write: i64) -> Result<u64, UserCopyError> {
+    if root == 0 || page_tables.validate_user(root, ptr as u64, len, write) == 0 {
+        return Err(UserCopyError.InvalidRange)
+    }
+    return Ok(len)
+}
+
+copy_path: (root: u64, src: u8*, len: u64, dst: u8*) -> Result<u64, UserCopyError> {
+    if len == 0 or len > PATH_MAX {
+        return Err(UserCopyError.InvalidPath)
+    }
+    validate_range(root, src, len, 0)?
+    for i in 0..len {
+        byte: u8 = @(src + i)
+        if byte == 0 {
+            return Err(UserCopyError.InvalidPath)
+        }
+        @(dst + i) = byte
+    }
+    return Ok(len)
+}

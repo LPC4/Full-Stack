@@ -17,11 +17,11 @@ specified elsewhere and are only referenced here:
 1. Overview
 2. Boot firmware (`boot/`)
 3. Kernel initialization (`stdlib/platform/kernel/entry.hll`, `my_kernel.hll`)
-4. Memory management (`vmm.hll`, `pmm.hll`, allocator)
-5. Processes and scheduling (`process.hll`, `scheduler.hll`)
+4. Memory management (`physical_pages.hll`, `page_tables.hll`, `address_space.hll`)
+5. Processes and scheduling (`tasks.hll`, `process.hll`, `scheduler.hll`)
 6. Traps and interrupts (`trap_entry.hll`, `trap_handler.hll`)
-7. Syscall interface (`syscall.hll`, `stdlib/platform/hosted/sys.hll`)
-8. Filesystem (`fs.hll`)
+7. Syscall interface (`kernel/syscall/`, `stdlib/platform/hosted/sys.hll`)
+8. Filesystem (`files.hll`, `fs_*.hll`)
 9. Standard library (`stdlib/`)
 10. Userspace programs (`programs/user/`)
 - Appendix A: Memory map quick reference
@@ -38,13 +38,13 @@ comments cite the chapter rather than repeating its content.
 | Path | Component | Chapter |
 |------|-----------|---------|
 | `boot/startup.s`, `boot/trap.s` | M-mode ROM firmware and trap vectors | 2 |
-| `stdlib/platform/kernel/entry.hll`, `my_kernel.hll` | S-mode entry and `kmain` boot sequence | 3 |
-| `kernel/mm/vmm.hll`, `pmm.hll` | Sv39 paging and physical page allocator | 4 |
-| `kernel/sched/process.hll`, `scheduler.hll` | PCB, scheduler, fork/exec | 5 |
+| `stdlib/platform/kernel/entry.hll`, `kernel/core/my_kernel.hll` | S-mode entry and `kmain` boot sequence | 3 |
+| `kernel/mm/address_space.hll`, `page_tables.hll`, `physical_pages.hll` | Sv39 paging and physical page allocator | 4 |
+| `kernel/sched/tasks.hll`, `process.hll`, `scheduler.hll` | Task facade, PCB construction, scheduler | 5 |
 | `kernel/trap/trap_entry.hll`, `trap_handler.hll` | Trap entry and dispatch | 6 |
-| `kernel/core/syscall.hll`, `stdlib/platform/hosted/sys.hll` | Syscall ABI, table, wrappers | 7 |
-| `kernel/fs/fs.hll` | Inode filesystem | 8 |
-| `kernel/core/utilities.hll`, `checks.hll` | HAL primitives, boot diagnostics | 3, 9 |
+| `kernel/syscall/`, `kernel/exec/elf_loader.hll` | Syscall facade and handlers | 7 |
+| `kernel/fs/files.hll`, `fs_*.hll` | Filesystem facade and internal owners | 8 |
+| `kernel/arch/riscv64/`, `kernel/core/checks.hll` | HAL boundaries and boot diagnostics | 3, 9 |
 | `stdlib/core/`, `stdlib/platform/` | Standard-library modules and providers | 9 |
 | `programs/user/bin/`, `programs/user/demo/`, `programs/user/sample/`, `programs/user/fixture/` | Userspace programs and boot-FS samples | 10 |
 
@@ -58,6 +58,9 @@ comments cite the chapter rather than repeating its content.
   the S-mode trap handler; spawns pid 1; then enters a timer-preempted scheduler.
 - **User (U-mode).** Programs run under the kernel with per-process address-space
   isolation, talking to the kernel only via `ecall`.
+
+Kernel public functions precede private helpers. State records and globals precede their users
+where required by HLL's source-order global resolution; forward global resolution is not assumed.
 
 ### 1.3 Target hardware
 
@@ -112,50 +115,54 @@ The **S-mode** entry path is in `trap_entry.hll` (chapter 6).
 ```
 boot_console    UART online, print banner
 boot_traps      trap_init: install stvec, enable STIE + SEIE
-boot_timer      arm CLINT timer via timer_set(1_000_000)
+boot_timer      arm the CLINT timer through timer.rearm
+boot_device_discovery report the fixed memory map in place of a device tree
 boot_plic       enable the UART RX IRQ on PLIC S-mode context 1
-diagnostics     memory_self_test, pmm_ops_test (checks.hll)
-boot_heap       heap_set_region(KHEAP_BASE, KHEAP_END) + smoke-test kmalloc
-pmm.boot        pmm_init(PMM_BASE, PMM_END) + alloc/free probe
-vmm.boot        vmm_init, stamp kernel maps, vmm_enable (write satp, sfence)
-process/sched   process.init, scheduler.init
-spawn_user      copy + map the pid-1 binary, process.create, scheduler.add
-boot_filesystem read FS metadata page, fs.init (mount the image)
-boot_interrupts vmm.s_enable_interrupts (only after pid 1 is enqueued)
-idle            WFI loop; the timer preempts into pid 1
+boot_memory_diagnostics run the bounded RAM check
+boot_heap       register the configured kernel heap and probe allocation
+boot_physical_pages initialize the physical-page owner and verify reuse
+boot_address_space build shared mappings and activate Sv39
+boot_tasks      initialize the task facade and its internal owners
+boot_user_process copy + map the pid-1 binary and enqueue it through `tasks`
+boot_final      publish the stable hart, RAM, and completion messages
+boot_filesystem read FS metadata page, files.init (mount the image)
+boot_interrupts csr.enable_interrupts (only after pid 1 is enqueued)
+boot_idle       WFI loop; the timer preempts into pid 1
 ```
 
-The production kernel is built from `kernel/kernel.build`. ABI-visible symbols such as `kmain`
-are declared there with `abi_exports`; they are not implicit compiler globals.
+The production kernel is built from `kernel/kernel.build` with per-module symbol mangling.
+`_kernel_start`, `kmain`, `_s_trap_host`, and `trap_handler` retain their flat ABI names; `kmain`
+is published through `abi_exports`, while the trap edges are exported by their boundary modules.
+All kernel imports use canonical `kernel/.../*.hll` registry IDs.
 
 ### 3.3 Physical memory the kernel programs
 
 RAM is `0x8000_0000` + 128 MiB. The kernel image and its 64 KiB stack sit at the
 bottom; `pmm` owns `0x8010_0000 .. 0x8700_0000`; the kernel heap region handed to
-the stdlib allocator at boot is `0x8700_0000 .. 0x87B0_0000` (layout.hll
+the stdlib allocator at boot is `0x8700_0000 .. 0x87B0_0000` (`kernel_config.hll`
 `KHEAP_BASE`/`KHEAP_END`); the injected pid-1 binary, its metadata, and the
 filesystem image sit in the top of RAM (Appendix A, and 5.x / 8.4 for the exact
 pages).
 
 
-## 4. Memory management (`vmm.hll`, `pmm.hll`, allocator)
+## 4. Memory management (`physical_pages.hll`, `page_tables.hll`, `address_space.hll`)
 
-### 4.1 Physical page allocator (`pmm.hll`)
+### 4.1 Physical page allocator (`physical_pages.hll`)
 
-`pmm` hands out 4 KiB pages from `[start, end)` set by `pmm_init`. `pmm_alloc`
+`physical_pages` hands out 4 KiB pages from `[start, end)` set by `pages.init`. `pages.alloc`
 checks a free list first (each freed page stores a magic + next pointer; a magic
 mismatch is skipped as corrupt) and otherwise bumps a pointer; it returns `null` on
-exhaustion. `pmm_free` pushes onto the free list. The allocator never returns a
-page that is still mapped: pages are only reused after an explicit `pmm_free`.
+exhaustion. `pages.free` pushes onto the free list. The allocator never returns a
+page that is still mapped: pages are only reused after an explicit free.
 
-### 4.2 Kernel heap (`kmalloc` / `malloc`)
+### 4.2 Kernel heap (`kernel_heap` / `malloc`)
 
-`kmalloc` (`utilities.hll`) wraps the stdlib `malloc` and panics on OOM; `kfree`
+`kernel_heap.alloc_bytes` wraps the stdlib `malloc` and panics on OOM; `free`
 returns temporary kernel allocations to the stdlib free list. The
 allocator (`stdlib/core/alloc.hll`) is bump-plus-free-list over the raw provider
 in `stdlib/platform/baremetal/heap.hll`: a 64 KiB bootstrap `heap_buffer` in
 kernel BSS, plus the `KHEAP_BASE .. KHEAP_END` region `boot_heap` registers via
-`heap_set_region`. This is distinct from `pmm` memory and from user pages, so heap
+`heap_set_region`. This is distinct from physical-page memory and from user pages, so heap
 allocations never alias process address spaces. The module also exports the
 aligned, fallible `allocate`/`reallocate`/`deallocate` ABI. The `vec`,
 `owned_string`, `arena`, and `pool` modules provide the containers described in
@@ -163,39 +170,36 @@ the language specification sections 11.4-11.5.
 
 ### 4.3 Sv39 paging and per-process roots
 
-The kernel runs Sv39 (39-bit VAs, 3-level tables). `vmm_init`/`vmm_enable` build
-and activate the boot root. `vmm_map` / `vmm_map_1gib` install leaf/gigapage PTEs
-into the *active* root; `vmm_alloc_pt` pulls intermediate tables from `pmm`.
+The kernel runs Sv39 (39-bit VAs, 3-level tables). `address_space.boot` builds and
+activates the boot root. `address_space.map` and `map_superpage` install leaf PTEs
+into the explicitly supplied root; `page_tables` pulls intermediate tables from `physical_pages`.
+Mapping a 4 KiB page requires an unused range or existing table branches; it does not split an
+existing superpage. Callers must leave the shared kernel superpages intact.
 
-Each process owns a private root (`vmm_new_root` allocates one and stamps the
-shared kernel/RAM/MMIO mappings into it via `vmm_map_kernel`). Because every root
+Each process owns a private root (`address_space.create` allocates one and stamps the
+shared kernel/RAM/MMIO mappings into it). Because every root
 carries those kernel mappings, the kernel can run with any process's `satp` active
 after a trap. **Isolation is physical, not by VA slotting:** all processes share
 the same canonical user VAs (code at `0x4000_0000`, stack top at `0x8000_0000`),
-mapped to disjoint physical pages in their own roots. `vmm_fork_copy` clones a
+mapped to disjoint physical pages in their own roots. `address_space.copy_user` clones a
 parent's user (U-flagged) pages into a child root for `fork`.
 
-### 4.4 Active root vs `satp`; TLB
+### 4.4 Explicit roots, `satp`, and the TLB
 
-Two notions of "current root" exist and must not be confused:
-
-- `satp` is the hardware-translated address space (what loads/stores use).
-- `vmm_active_root` is bookkeeping for where `vmm_map` writes PTEs.
-
-`vmm_set_root` updates only `vmm_active_root` (so the kernel can build a child's
-tables while still running in the parent's `satp`). `vmm_switch` updates both,
-writes `satp`, and issues `sfence.vma` to flush the TLB; the scheduler calls it on
-every context switch. The VM's TLB is also flushed on any `satp` change.
+Mapping and user-range validation take an explicit root physical address. There is no mutable
+selected-root bookkeeping: building a child's tables does not change the parent's active `satp`.
+`address_space.activate(root)` writes `satp` and issues `sfence.vma` to flush the TLB. The scheduler
+calls it on every context switch. The VM also flushes its TLB on any `satp` change.
 
 
-## 5. Processes and scheduling (`process.hll`, `scheduler.hll`)
+## 5. Processes and scheduling (`tasks.hll`, `process.hll`, `scheduler.hll`)
 
 ### 5.1 Process control block (PCB)
 
-A process is a 384-byte PCB allocated with `kmalloc`. `layout.hll` exports the
+A process is a 384-byte PCB allocated from `kernel_heap`. `kernel_abi.hll` exports the
 canonical HLL `Pcb` and `TrapFrame` types with this exact field order. Process,
 scheduler, syscall, and trap-dispatch code use typed pointers and field access.
-The `PCB_OFF_*`, `PCB_IDX_*`, and `TF_*` constants remain the ABI ground truth
+The typed record order, `PCB_SIZE`, and `TF_BYTES` remain the ABI ground truth
 for assembly and inspector code outside the typed HLL boundary.
 
 ```
@@ -218,7 +222,7 @@ Offset  Size  Field
 The `trap_frame` layout matches the on-stack frame built by the trap entry (6.1),
 so `schedule` saves/restores context with a single `mem.copy` of those 288 bytes.
 A host-side layout assertion checks the typed views against the offsets above,
-and `process_init` checks the compiler-computed sizes before scheduling starts.
+and `process.init` checks the compiler-computed sizes before scheduling starts.
 
 ### 5.2 Address space and initial trap frame
 
@@ -231,40 +235,38 @@ integer/FP register ABI is the standard RISC-V convention; see
 
 ### 5.3 States and the ready queue
 
-The scheduler keeps a FIFO ready queue (`ready_queue_head`), the running process
-(`current_process`), an EXITED-but-unreaped list (`zombie_head`), and the single
-process blocked on input (`input_waiter`, 6.4). States cycle
+The scheduler keeps the running, ready, zombie, and input-waiter pointers in one private
+`SchedulerState`. The `tasks` facade is the only production consumer of scheduler and process
+internals. States cycle
 READY -> RUNNING -> {READY, BLOCKED, EXITED}.
 
 ### 5.4 Round-robin preemption
 
-`schedule(frame, action)` saves the live frame into `current_process`, sets its
+`tasks.schedule(frame, action)` saves the live frame into the current PCB, sets its
 next state per `action` (7.3), dequeues the head of the ready queue, switches into
-its root (`vmm_switch`), and restores its frame. The CLINT timer interrupt (6.3)
-calls `schedule(frame, Schedule)` every 1,000,000 cycles, giving preemptive round-robin
+its root (`address_space.activate`), and restores its frame. The CLINT timer interrupt (6.3)
+calls `tasks.schedule(frame, Schedule)` every 1,000,000 cycles, giving preemptive round-robin
 even for compute-bound processes that never yield.
 
 ### 5.5 fork and exec
 
 `fork` (syscall 220) allocates a child PCB and root, copies the parent's user pages
-(`vmm_fork_copy`) and trap frame, sets the child's `a0` to 0, and enqueues it.
+(`address_space.copy_user`) and trap frame, sets the child's `a0` to 0, and enqueues it.
 `exec` (syscall 103) loads a static ELF (7.4) into a fresh per-process root at
-`0x4000_0000`, parents the child to its launcher (captured before the root
-switches), and enqueues it. The native call carries pointer-length pairs for the
+`0x4000_0000`, parents the child to its launcher, and enqueues it. The native call carries pointer-length pairs for the
 executable path and argument. The child starts with the argument pointer and length
 in `a0`/`a1`; hosted `_start` exposes that bounded value through `runtime.arg()`.
 `exec_redir` uses the fixed `ExecRequest` layout in
 7.2 and transfers descriptors opened by the parent. Temporary argument and ELF
-buffers are released on every ordinary return. `process_peek_pid` reports the next
-pid to be assigned.
+buffers are released on every ordinary return.
 
 ### 5.6 Zombies and reaping
 
-`exit` marks a process EXITED and keeps the PCB on `zombie_head` holding its exit
+`exit` marks a process EXITED and keeps the PCB in the zombie list holding its exit
 code until a parent reaps it; the VM halts only when the last runnable process
-exits. `wait`/`waitpid` (7.2) reap zombies. Liveness queries:
-`scheduler_pid_in_queue` checks the ready queue only; `scheduler_pid_alive`
-(backing `pidalive`) also counts the running and input-blocked process. `wait` and
+exits. The task-exit hook closes redirected descriptors and releases framebuffer ownership before
+the context switch. `wait`/`waitpid` (7.2) reap zombies. `tasks.pid_alive` (backing `pidalive`)
+counts the running, ready, and input-blocked process. `wait` and
 `waitpid` use the alive-including-blocked test (not the ready-queue-only one), so a
 child that sleeps on input -- e.g. the editor idling for a keystroke -- leaves the
 ready queue but is never misreported to its waiting parent as finished.
@@ -290,7 +292,7 @@ advances `sepc` by 4 before returning.
 
 ### 6.3 Timer preemption
 
-The timer interrupt re-arms `MTIMECMP` (`timer_set`) and calls `schedule(frame, Schedule)`
+The timer interrupt re-arms `MTIMECMP` through `timer.rearm` and calls `schedule(frame, Schedule)`
 to round-robin the ready queue.
 
 ### 6.4 UART RX wake model
@@ -308,15 +310,15 @@ the caller running (it retries the read).
 ### 6.5 Ctrl-C and the input pushback
 
 While the shell blocks in `waitpid`, the still-running branch peeks one UART byte.
-A `0x03` tears down that exact foreground pid (`scheduler_kill_pid`) and returns the
+A `0x03` tears down that exact foreground pid (`tasks.kill_pid`) and returns the
 `-2` sentinel; any other byte is stashed in a one-deep pushback
-(`input_pushback_*`) delivered ahead of the device by the next `readchar`, so an
+through `uart.pushback` and delivered ahead of the device by the next `readchar`, so an
 interactive child still receives its input in order. Ctrl-C is reliable for
 compute-bound children and best-effort for input readers (their `readchar` races
 the wait peek).
 
 
-## 7. Syscall interface (`syscall.hll`, `stdlib/platform/hosted/sys.hll`)
+## 7. Syscall interface (`syscalls.hll`, handlers, `stdlib/platform/hosted/sys.hll`)
 
 ### 7.1 Calling convention
 
@@ -325,7 +327,7 @@ are in `a0`-`a5`; the result is written back to `a0` in the trap frame. Native
 slice arguments occupy two consecutive words, pointer followed by length. The
 hosted wrapper always marshals those words explicitly and does not expose the
 compiler's aggregate calling convention as an ecall ABI. The S-mode handler
-catches cause 8, dispatches via `syscall_dispatch`, and advances `sepc` by 4.
+catches cause 8, dispatches via `syscalls.dispatch`, and advances `sepc` by 4.
 Standard numbers follow the Linux RISC-V ABI; the 100-range is project-specific.
 `stdlib/platform/hosted/sys.hll` provides the userspace `sys.*` wrappers and
 `stdlib/platform/hosted/cstr.hll` provides `cstr.*` helpers. Userspace programs
@@ -382,7 +384,7 @@ returns the exact copied name length, so no user-memory terminator is required.
 
 ### 7.3 Scheduler actions
 
-`syscall_dispatch` returns a `SysAction` that `trap_handler` either handles as
+`syscalls.dispatch` returns a `SysAction` that `trap_handler` either handles as
 `Continue` or passes to `schedule`:
 
 | Variant | Meaning |
@@ -392,15 +394,15 @@ returns the exact copied name length, so no user-memory terminator is required.
 | `ExitSchedule` | Exit: mark EXITED, switch to next |
 | `Block` | Sleep the caller (input wait); not re-enqueued (6.4) |
 
-`syscall_dispatch` records every ecall into a bounded trace ring before returning
+`syscalls.dispatch` records every ecall into a bounded trace ring before returning
 the action; the inner dispatch uses a scalar `match` on the syscall number.
 
-**Syscall trace ring.** `trace_ring` is a fixed byte backing store for 256 entries.
+**Syscall trace ring.** `syscall_trace.hll` owns a fixed byte backing store for 256 entries.
 Each exact 80-byte entry contains ten `u64` fields: a monotonic `seq` (0 marks an empty slot),
 the caller `pid`, the syscall number, all six payload words, and the result (`a0`
 after dispatch). The slot for `seq` is `(seq - 1) % 256`, so the ring keeps the most
 recent 256 calls. Dispatch publishes lock-free: it fills the record, writes its
-`seq`, then advances `trace_seq` last, so a reader that samples mid-write sees either
+`seq`, then advances the sequence counter last, so a reader that samples mid-write sees either
 the old counter or a fully written newest entry. A host-side layout assertion
 protects the inspector ABI. It is a read-only inspector feed: the GUI strace panel
 (`os_view::capture_trace`) drains it from guest memory each frame and renders the
@@ -473,7 +475,7 @@ Ctrl+letter to the UART so Ctrl-C can still interrupt a graphical foreground job
 `kill` (syscall `129`) generalises the Ctrl-C teardown into a pid-targeted path a
 program can invoke directly. Only `SIGKILL` (9) is implemented and it is
 uncatchable: `sys_kill_impl` unlinks the target from the ready queue and marks it
-`EXITED` via the same `scheduler_kill_pid` used by the Ctrl-C foreground teardown
+`EXITED` via the same `tasks.kill_pid` used by the Ctrl-C foreground teardown
 (6.5), leaving a zombie its parent reaps. pid 1 (the shell) is protected; any other
 signal number or an unknown/non-ready pid returns -1. There is no signal table,
 handler delivery, or `SIGTERM`/`SIGINT` catch path yet -- those, plus Ctrl-Z stop
@@ -562,7 +564,7 @@ the unchanged break, matching the kernel handler and the hosted allocator. The
 real-`qemu` path uses Linux's own `brk`.
 
 
-## 8. Filesystem (`fs.hll`)
+## 8. Filesystem (`files.hll`, `fs_*.hll`)
 
 ### 8.1 On-disk layout
 
@@ -580,27 +582,27 @@ The image is a contiguous region of 4 KiB blocks:
 Each 128-byte inode stores a type (free/file/dir), parent inode, size, a 32-byte
 name, and up to 44 direct block pointers (176 KiB max file -- enough for executable
 images). Directories store 36-byte entries (32-byte name + inode index). Paths are
-absolute and resolved from the root directory at inode 0. `fs.hll` maps these records
-through the exact-layout `DiskInode` and `DiskDirEntry` types after computing their
-image addresses. Filesystem algorithms accept slices, split paths into subslices,
-and compare components by length and bytes. On-disk names remain NUL-padded: reads
+absolute and resolved from the root directory at inode 0. `fs_types.hll` defines the exact-layout
+records, `fs_image.hll` maps them over image bytes, and `fs_directory.hll` owns name and path
+operations. Filesystem algorithms accept slices, split paths into subslices, and compare
+components by length and bytes. On-disk names remain NUL-padded: reads
 scan at most 32 bytes, while writes reject names longer than 31 bytes and clear the
 whole field before copying. Overlong components are errors rather than truncations.
 Superblock access remains byte-oriented.
 
 ### 8.3 Descriptors and operations
 
-Open files use a 16-slot kernel descriptor table; fds 0 and 1 are reserved for the
-UART, so file fds start at 2. `fs_open`/`read`/`write`/`close` plus
-`fs_create`/`mkdir`/`rename`/`stat`/`readdir`/`unlink`/`rmdir` back the
+Open files use a 16-slot kernel descriptor table owned by `fs_descriptors.hll`; fds 0 and 1 are
+reserved for the UART, so file fds start at 2. The `files` facade provides open/read/write/close plus
+truncate/mkdir/rename/stat/readdir/unlink/rmdir operations that back the
 corresponding syscalls (7.2). Each 32-byte slot is an `OpenFile` record containing
 four `u64` fields: validity, inode, flags, and sequential position. Host-side offset
-assertions and an `fs_init` compiler-size gate protect all three typed layouts.
+assertions and the `files_init` compiler-size gate protect all three typed layouts.
 
 ### 8.4 Image injection
 
 The test harness and GUI place the image in RAM before boot; `boot_filesystem`
-reads its metadata page and calls `fs_init` to validate the magic and mount it.
+reads its metadata page and calls `files.init` to validate the magic and mount it.
 Addresses are in Appendix A.
 
 
@@ -643,11 +645,11 @@ console backend, and panic provider.
 ### 9.5 HAL primitives
 
 The kernel bundle calls these directly (no syscall layer); implementations are in
-`utilities.hll` and `platform/baremetal/console.hll`. Source uses `console.putchar`/`write`/
+the architecture modules and `platform/baremetal/console.hll`. Source uses `console.putchar`/`write`/
 `writeln`/`print_int`/`print_hex`; the underlying flat link symbols keep the
-`console_` prefix. Halt/panic: `kshutdown` (write exit code to
-SYSCON `0x1001_0000`), `kpanic`. Timer/IRQ: `timer_get` (CLINT MTIME `0x0200_BFF8`),
-`timer_set` (MTIMECMP hart 0 `0x0200_4000`), `plic_init` (enable UART source 10 on
+`console_` prefix. Halt/panic: `system.shutdown` (write exit code to
+SYSCON `0x1001_0000`) and `runtime.panic`. Timer/IRQ: `timer.rearm` reads CLINT MTIME
+and writes MTIMECMP hart 0, and `interrupt_controller.init` enables UART source 10 on
 S-mode context 1), `trap_init` (install `stvec`, enable STIE+SEIE). MMIO is reached
 through `asm {}` blocks (a `li` of the device address then a load/store) because in
 S-mode `sp` may hold a user VA and `ecall` is unavailable.

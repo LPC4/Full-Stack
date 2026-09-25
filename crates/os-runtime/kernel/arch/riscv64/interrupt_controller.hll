@@ -1,0 +1,29 @@
+; PLIC control for the supervisor context on hart 0.
+
+; --- Public API ---
+
+export interrupt_controller_init: () {
+    asm {
+        li   t0, 201326628
+        li   t1, 1
+        sw   t1, 0(t0)
+
+        li   t0, 201334784
+        li   t1, 512
+        sw   t1, 0(t0)
+
+        li   t0, 203423744
+        sw   x0, 0(t0)
+    }
+}
+
+export interrupt_controller_claim_and_complete: () -> u64 {
+    irq: u64 = 0
+    asm {
+        li   t0, 203423748
+        lw   t1, 0(t0)
+        sw   t1, 0(t0)
+        mv   $irq, t1
+    }
+    return irq
+}

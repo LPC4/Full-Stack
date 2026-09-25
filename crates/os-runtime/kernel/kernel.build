@@ -4,5 +4,5 @@ root = "core/my_kernel.hll"
 entry = "_kernel_start"
 stdlib = "kernel"
 import_closure = true
-mangle_symbols = false
+mangle_symbols = true
 abi_exports = ["kmain"]

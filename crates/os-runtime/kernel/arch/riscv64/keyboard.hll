@@ -1,0 +1,12 @@
+; Packed keyboard-event input.
+
+; --- Public API ---
+
+export keyboard_poll: () -> i64 {
+    status: u32* = 0x10070000 as u32*
+    if @status == 0 {
+        return -1 as i64
+    }
+    data: u32* = 0x10070004 as u32*
+    return (@data) as i64
+}

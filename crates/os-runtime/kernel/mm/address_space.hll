@@ -1,0 +1,90 @@
+; Address-space ownership and shared kernel mappings.
+
+csr := import("kernel/arch/riscv64/csr.hll")
+klog := import("klog")
+config := import("kernel/core/kernel_config.hll")
+mem := import("mem")
+page_tables := import("kernel/mm/page_tables.hll")
+pages := import("kernel/mm/physical_pages.hll")
+runtime := import("runtime")
+
+; --- State ---
+
+const PAGE_SIZE = 4096
+const TABLE_ENTRIES = 512
+
+; --- Public API ---
+
+export address_space_map: (root: u64, virtual: u64, physical: u64, flags: u64) {
+    page_tables.map(root, virtual, physical, flags)
+}
+
+export address_space_map_superpage: (root: u64, virtual: u64, physical: u64, flags: u64) {
+    page_tables.map_superpage(root, virtual, physical, flags)
+}
+
+export address_space_create: () -> u64 {
+    root: u64 = page_tables.alloc_root()
+    map_kernel(root)
+    return root
+}
+
+export address_space_copy_user: (parent_root: u64, child_root: u64) {
+    level2: u64* = parent_root as u64*
+    for index2 in 0..TABLE_ENTRIES {
+        entry2: u64 = level2[index2]
+        if is_branch(entry2) {
+            level1: u64* = pte_address(entry2)
+            for index1 in 0..TABLE_ENTRIES {
+                entry1: u64 = level1[index1]
+                if is_branch(entry1) {
+                    level0: u64* = pte_address(entry1)
+                    for index0 in 0..TABLE_ENTRIES {
+                        leaf: u64 = level0[index0]
+                        if (leaf & config.PTE_VALID) != 0 and (leaf & config.PTE_USER) != 0 {
+                            virtual: u64 = ((index2 as u64) << 30) |
+                                ((index1 as u64) << 21) | ((index0 as u64) << 12)
+                            source: u64 = (leaf >> 10) << 12
+                            flags: u64 = leaf & 0x3FE
+                            destination: u8* = pages.alloc()
+                            if destination == null {
+                                runtime.panic("fork address-space allocation failed".ptr)
+                            }
+                            mem.copy(destination, source as u8*, PAGE_SIZE)
+                            page_tables.map(child_root, virtual, destination as u64, flags)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export address_space_activate: (root: u64) {
+    csr.activate_address_space(root)
+}
+
+export address_space_boot: () {
+    boot_root: u64 = address_space_create()
+    csr.disable_interrupts()
+    csr.activate_address_space(boot_root)
+    klog.ok("sv39 enabled".ptr)
+}
+
+; --- Implementation ---
+
+map_kernel: (root: u64) {
+    flags: u64 = (config.PTE_GLOBAL + config.PTE_WRITE + config.PTE_READ) as u64
+    page_tables.map_superpage(root, 0x00000000, 0, flags)
+    page_tables.map_superpage(root, 0x80000000, 0x80000000, flags + config.PTE_EXECUTE)
+    page_tables.map_superpage(root, 0xC0000000, 0xC0000000, flags + config.PTE_EXECUTE)
+}
+
+is_branch: (entry: u64) -> bool {
+    return (entry & config.PTE_VALID) != 0 and
+        (entry & (config.PTE_READ + config.PTE_WRITE + config.PTE_EXECUTE)) == 0
+}
+
+pte_address: (entry: u64) -> u64* {
+    return ((entry >> 10) << 12) as u64*
+}

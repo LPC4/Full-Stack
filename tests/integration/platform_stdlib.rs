@@ -5,7 +5,6 @@ use full_stack::compilation_pipeline::CompilationPipeline;
 use full_stack::compilation_pipeline::TargetMode as PipelineTargetMode;
 use hll_to_ir::TargetMode;
 use hll_to_ir::stdlib::get_stdlib_modules_for_mode;
-use os_runtime::kernel;
 use virtual_machine::rom::generate_rom_image;
 use virtual_machine::virtual_machine::{RunOutcome, VirtualMachine};
 
@@ -14,6 +13,10 @@ const KLOG_SRC: &str = include_str!(concat!(
     "/crates/os-runtime/stdlib/platform/kernel/klog.hll"
 ));
 
+fn runtime_source(path: &str) -> &'static str {
+    os_runtime::module_source(path).unwrap_or_else(|| panic!("missing runtime source `{path}`"))
+}
+
 fn run_hll(src: &str) -> (String, Option<i64>) {
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
@@ -21,7 +24,9 @@ fn run_hll(src: &str) -> (String, Option<i64>) {
     let stdlib_objs =
         CompilationPipeline::compile_stdlib_objects(TargetMode::Hosted).expect("stdlib compile");
     let user = pipeline.compile(src).expect("user compile");
-    let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user.ir_program).expect("valid IR layout");
+    let (_, user_tokens) = pipeline
+        .compile_ir_to_assembly_with_tokens(&user.ir_program)
+        .expect("valid IR layout");
     let user_obj = pipeline.assemble(&user_tokens).expect("user assemble");
     let mut modules: Vec<(&str, &AssembledOutput)> =
         stdlib_objs.iter().map(|(n, o)| (n.as_str(), o)).collect();
@@ -84,10 +89,10 @@ fn kernel_boot_runs_with_separate_stdlib_objects() {
     kernel_pipeline.set_write_artifacts(false);
     kernel_pipeline.set_entry_point(Some("_kernel_start".to_owned()));
     kernel_pipeline.set_link_layout(Some(LinkLayout::freestanding_kernel()));
-    kernel_pipeline.set_module_mangling(false);
+    kernel_pipeline.set_module_mangling(true);
 
     let mut kernel_objs = kernel_pipeline
-        .compile_program_closure("my_kernel", kernel::MY_KERNEL)
+        .compile_program_closure("my_kernel", runtime_source("kernel/core/my_kernel.hll"))
         .expect("kernel user modules compile");
     let kernel_manifest = BuildManifest::from_file(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -848,20 +853,21 @@ main: () -> i32 {
 fn kernel_fallible_allocator_matches_hosted_behavior() {
     let (uart, exit) = run_kernel_hll(
         r#"
+system := import("kernel/arch/riscv64/system.hll")
 alloc := import("alloc")
 vec := import("vec")
 owned := import("owned_string")
 arena := import("arena")
 pool := import("pool")
+config := import("kernel/core/kernel_config.hll")
 external heap_set_region: (start: u64, end: u64)
-external kshutdown: (code: i64)
 
 fail: (code: i64) {
-    kshutdown(code)
+    system.shutdown(code)
 }
 
 kmain: () {
-    heap_set_region(KHEAP_BASE, KHEAP_END)
+    heap_set_region(config.KHEAP_BASE, config.KHEAP_END)
 
     ptr: u8* = 0 as u8*
     first := alloc.allocate(5, 64)
@@ -937,7 +943,7 @@ kmain: () {
     if big[0] != 1 or big[1048575] != 2 { fail(17) }
     alloc.deallocate(big, 1048576, 8)
 
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#,
     );
@@ -950,20 +956,21 @@ kmain: () {
 fn kernel_containers_share_the_global_abi() {
     let (_, exit) = run_kernel_hll(
         r#"
+system := import("kernel/arch/riscv64/system.hll")
 alloc := import("alloc")
 vec := import("vec")
 owned := import("owned_string")
 arena := import("arena")
 pool := import("pool")
+config := import("kernel/core/kernel_config.hll")
 external heap_set_region: (start: u64, end: u64)
-external kshutdown: (code: i64)
 
 fail: (code: i64) {
-    kshutdown(code)
+    system.shutdown(code)
 }
 
 kmain: () {
-    heap_set_region(KHEAP_BASE, KHEAP_END)
+    heap_set_region(config.KHEAP_BASE, config.KHEAP_END)
 
     v: vec.Vec<i64> = { .ptr = null, .len = 0, .capacity = 0 }
     vec.Vec_init<i64>(&v)
@@ -1017,7 +1024,7 @@ kmain: () {
     if pool.Pool_release<i64>(&p, first) == true { fail(11) }
     pool.Pool_deinit<i64>(&p)
 
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#,
     );
@@ -1029,13 +1036,6 @@ kmain: () {
 // The kernel stdlib prefixes rodata labels with "__kern_str_" so they never
 // clash with user-code "str_" labels.
 fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
-    run_kernel_hll_with_layout_prelude(user_src, true)
-}
-
-fn run_kernel_hll_with_layout_prelude(
-    user_src: &str,
-    include_layout_prelude: bool,
-) -> (String, Option<i64>) {
     let snippet_manifest = BuildManifest::from_file(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/kernel_snippet.build"),
@@ -1043,21 +1043,19 @@ fn run_kernel_hll_with_layout_prelude(
     .expect("kernel snippet build file parse");
     let stdlib_objs = CompilationPipeline::compile_stdlib_objects(TargetMode::Kernel)
         .expect("kernel stdlib compile");
-    // Kernel module dependency objects (vmm, pmm, ...) from the my_kernel closure; drop the
-    // `my_kernel` object so the test's own kmain (`user`) supplies the entry.
+    // Reuse the production dependency graph, replacing only its root with the test's kmain.
     let kernel_objs =
         CompilationPipeline::compile_kernel_module_objects().expect("kernel modules compile");
 
     let mut user_pipeline = CompilationPipeline::new();
+    user_pipeline.set_target_mode(PipelineTargetMode::Kernel);
     user_pipeline.set_write_artifacts(false);
-    if include_layout_prelude {
-        user_pipeline.set_source_prelude(os_runtime::kernel::LAYOUT);
-    } else {
-        user_pipeline.set_target_mode(PipelineTargetMode::Kernel);
-    }
-    let user = user_pipeline.compile(user_src).expect("user compile");
-    let (_, user_tokens) = user_pipeline.compile_ir_to_assembly_with_tokens(&user.ir_program).expect("valid IR layout");
-    let mut user_obj = user_pipeline.assemble(&user_tokens).expect("user assemble");
+    let mut user_obj = user_pipeline
+        .compile_program_closure("user", user_src)
+        .expect("user closure compile")
+        .pop()
+        .expect("user object")
+        .1;
     for export in &snippet_manifest.abi_exports {
         user_obj.mark_entry_global(export);
     }
@@ -1087,12 +1085,12 @@ fn run_kernel_hll_with_layout_prelude(
 fn kernel_boot_prints_banner() {
     let (uart, exit) = run_kernel_hll(
         r#"
+system := import("kernel/arch/riscv64/system.hll")
 external klog_ok: (msg: u8*)
-external kshutdown: (code: i64)
 
 kmain: () {
     klog_ok("boot".ptr)
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#,
     );
@@ -1104,18 +1102,18 @@ kmain: () {
 fn kernel_boot_multiple_log_levels() {
     let (uart, exit) = run_kernel_hll(
         r#"
+system := import("kernel/arch/riscv64/system.hll")
 external klog_ok: (msg: u8*)
 external klog_warn: (msg: u8*)
 external klog_error: (msg: u8*)
 external klog_int: (label: u8*, val: i64)
-external kshutdown: (code: i64)
 
 kmain: () {
     klog_ok("console init".ptr)
     klog_warn("heap not ready".ptr)
     klog_error("test error".ptr)
     klog_int("hart".ptr, 0)
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#,
     );
@@ -1130,10 +1128,9 @@ kmain: () {
 fn kernel_boot_kshutdown_nonzero_exit() {
     let (uart, exit) = run_kernel_hll(
         r#"
-external kshutdown: (code: i64)
-
+system := import("kernel/arch/riscv64/system.hll")
 kmain: () {
-    kshutdown(42)
+    system.shutdown(42)
 }
 "#,
     );
@@ -1145,14 +1142,14 @@ kmain: () {
 fn kernel_boot_warn_error_format() {
     let (uart, exit) = run_kernel_hll(
         r#"
+system := import("kernel/arch/riscv64/system.hll")
 external klog_warn: (msg: u8*)
 external klog_error: (msg: u8*)
-external kshutdown: (code: i64)
 
 kmain: () {
     klog_warn("memory low".ptr)
     klog_error("disk failed".ptr)
-    kshutdown(1)
+    system.shutdown(1)
 }
 "#,
     );
@@ -1166,14 +1163,14 @@ fn kernel_boot_string_labels_no_collision() {
     // both emit string literals. Verifies the two rodata namespaces don't collide.
     let (uart, exit) = run_kernel_hll(
         r#"
+system := import("kernel/arch/riscv64/system.hll")
 external klog_ok: (msg: u8*)
 external klog_int: (label: u8*, val: i64)
-external kshutdown: (code: i64)
 
 kmain: () {
     klog_ok("user string A".ptr)
     klog_int("user string B".ptr, 99)
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#,
     );
@@ -1181,11 +1178,9 @@ kmain: () {
     assert_eq!(exit, Some(0));
 }
 
-const MY_KERNEL_EXAMPLE: &str = os_runtime::kernel::MY_KERNEL;
-
 #[test]
 fn my_kernel_example_program() {
-    let (uart, exit) = run_kernel_hll_with_layout_prelude(MY_KERNEL_EXAMPLE, false);
+    let (uart, exit) = run_kernel_hll(runtime_source("kernel/core/my_kernel.hll"));
     // When no user binary is present the kernel shuts down cleanly after
     // spawn_user_process returns.  Verify the critical checkpoints.
     assert!(
@@ -1216,7 +1211,9 @@ fn kernel_boot_missing_kmain_is_assemble_error() {
     let user = user_pipeline
         .compile("main: () -> i32 { return 0 }")
         .expect("user compile");
-    let (_, user_tokens) = user_pipeline.compile_ir_to_assembly_with_tokens(&user.ir_program).expect("valid IR layout");
+    let (_, user_tokens) = user_pipeline
+        .compile_ir_to_assembly_with_tokens(&user.ir_program)
+        .expect("valid IR layout");
     let user_obj = user_pipeline.assemble(&user_tokens).expect("user assemble");
 
     let mut modules: Vec<(&str, &AssembledOutput)> =
@@ -1239,18 +1236,18 @@ fn kernel_boot_missing_kmain_is_assemble_error() {
 fn kernel_boot_kmalloc_works() {
     let (uart, exit) = run_kernel_hll(
         r#"
+heap := import("kernel/mm/kernel_heap.hll")
+system := import("kernel/arch/riscv64/system.hll")
 external klog_ok: (msg: u8*)
-external kmalloc: (size: u64) -> u8*
-external kshutdown: (code: i64)
 
 kmain: () {
-    buf: u8* = kmalloc(16)
+    buf: u8* = heap.alloc_bytes(16)
     buf[0] = 72
     buf[1] = 105
     buf[2] = 33
     buf[3] = 0
     klog_ok(buf)
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#,
     );
@@ -1286,11 +1283,15 @@ fn cross_module_call_works() {
     "#;
 
     let a_result = pipeline.compile(module_a).expect("module a compile");
-    let (_, a_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&a_result.ir_program).expect("valid IR layout");
+    let (_, a_tokens) = pipeline
+        .compile_ir_to_assembly_with_tokens(&a_result.ir_program)
+        .expect("valid IR layout");
     let a_obj = pipeline.assemble_named("a", &a_tokens).expect("a assemble");
 
     let b_result = pipeline.compile(module_b).expect("module b compile");
-    let (_, b_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&b_result.ir_program).expect("valid IR layout");
+    let (_, b_tokens) = pipeline
+        .compile_ir_to_assembly_with_tokens(&b_result.ir_program)
+        .expect("valid IR layout");
     let b_obj = pipeline.assemble_named("b", &b_tokens).expect("b assemble");
 
     let mut modules: Vec<(&str, &AssembledOutput)> =
@@ -1337,11 +1338,15 @@ fn cross_module_la_works() {
     "#;
 
     let a_result = pipeline.compile(module_a).expect("module a compile");
-    let (_, a_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&a_result.ir_program).expect("valid IR layout");
+    let (_, a_tokens) = pipeline
+        .compile_ir_to_assembly_with_tokens(&a_result.ir_program)
+        .expect("valid IR layout");
     let a_obj = pipeline.assemble_named("a", &a_tokens).expect("a assemble");
 
     let b_result = pipeline.compile(module_b).expect("module b compile");
-    let (_, b_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&b_result.ir_program).expect("valid IR layout");
+    let (_, b_tokens) = pipeline
+        .compile_ir_to_assembly_with_tokens(&b_result.ir_program)
+        .expect("valid IR layout");
     let b_obj = pipeline.assemble_named("b", &b_tokens).expect("b assemble");
 
     let mut modules: Vec<(&str, &AssembledOutput)> =
@@ -1397,11 +1402,15 @@ fn cross_module_tail_works() {
     "#;
 
     let a_result = pipeline.compile(module_a).expect("module a compile");
-    let (_, a_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&a_result.ir_program).expect("valid IR layout");
+    let (_, a_tokens) = pipeline
+        .compile_ir_to_assembly_with_tokens(&a_result.ir_program)
+        .expect("valid IR layout");
     let a_obj = pipeline.assemble_named("a", &a_tokens).expect("a assemble");
 
     let b_result = pipeline.compile(module_b).expect("module b compile");
-    let (_, b_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&b_result.ir_program).expect("valid IR layout");
+    let (_, b_tokens) = pipeline
+        .compile_ir_to_assembly_with_tokens(&b_result.ir_program)
+        .expect("valid IR layout");
     let b_obj = pipeline.assemble_named("b", &b_tokens).expect("b assemble");
 
     let mut modules: Vec<(&str, &AssembledOutput)> =
@@ -1455,15 +1464,21 @@ fn cross_module_chain_three_works() {
     "#;
 
     let a_result = pipeline.compile(module_a).expect("a compile");
-    let (_, a_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&a_result.ir_program).expect("valid IR layout");
+    let (_, a_tokens) = pipeline
+        .compile_ir_to_assembly_with_tokens(&a_result.ir_program)
+        .expect("valid IR layout");
     let a_obj = pipeline.assemble_named("a", &a_tokens).expect("a assemble");
 
     let b_result = pipeline.compile(module_b).expect("b compile");
-    let (_, b_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&b_result.ir_program).expect("valid IR layout");
+    let (_, b_tokens) = pipeline
+        .compile_ir_to_assembly_with_tokens(&b_result.ir_program)
+        .expect("valid IR layout");
     let b_obj = pipeline.assemble_named("b", &b_tokens).expect("b assemble");
 
     let c_result = pipeline.compile(module_c).expect("c compile");
-    let (_, c_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&c_result.ir_program).expect("valid IR layout");
+    let (_, c_tokens) = pipeline
+        .compile_ir_to_assembly_with_tokens(&c_result.ir_program)
+        .expect("valid IR layout");
     let c_obj = pipeline.assemble_named("c", &c_tokens).expect("c assemble");
 
     let mut modules: Vec<(&str, &AssembledOutput)> =
@@ -1517,11 +1532,15 @@ fn cross_module_external_global_shared_storage() {
     "#;
 
     let a_result = pipeline.compile(module_a).expect("module a compile");
-    let (_, a_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&a_result.ir_program).expect("valid IR layout");
+    let (_, a_tokens) = pipeline
+        .compile_ir_to_assembly_with_tokens(&a_result.ir_program)
+        .expect("valid IR layout");
     let a_obj = pipeline.assemble_named("a", &a_tokens).expect("a assemble");
 
     let b_result = pipeline.compile(module_b).expect("module b compile");
-    let (_, b_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&b_result.ir_program).expect("valid IR layout");
+    let (_, b_tokens) = pipeline
+        .compile_ir_to_assembly_with_tokens(&b_result.ir_program)
+        .expect("valid IR layout");
     let b_obj = pipeline.assemble_named("b", &b_tokens).expect("b assemble");
 
     let mut modules: Vec<(&str, &AssembledOutput)> =
@@ -1557,21 +1576,20 @@ fn cross_module_external_global_shared_storage() {
 fn pmm_alloc_returns_non_null() {
     let (uart, exit) = run_kernel_hll(
         r#"
+system := import("kernel/arch/riscv64/system.hll")
+pages := import("kernel/mm/physical_pages.hll")
 external klog_ok:    (msg: u8*)
 external klog_error: (msg: u8*)
-external kshutdown:  (code: i64)
-external pmm_init:   (start: u64, end: u64)
-external pmm_alloc:  () -> u8*
 
 kmain: () {
-    pmm_init(0x84000000, 0x84010000)
-    page: u8* = pmm_alloc()
+    pages.init(0x84000000, 0x84010000)
+    page: u8* = pages.alloc()
     if page == null {
         klog_error("pmm alloc returned null".ptr)
-        kshutdown(1)
+        system.shutdown(1)
     }
     klog_ok("pmm alloc ok".ptr)
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#,
     );
@@ -1584,28 +1602,26 @@ kmain: () {
 fn pmm_free_list_reuse() {
     let (uart, exit) = run_kernel_hll(
         r#"
+system := import("kernel/arch/riscv64/system.hll")
+pages := import("kernel/mm/physical_pages.hll")
 external klog_ok:    (msg: u8*)
 external klog_error: (msg: u8*)
-external kshutdown:  (code: i64)
-external pmm_init:   (start: u64, end: u64)
-external pmm_alloc:  () -> u8*
-external pmm_free:   (page: u8*)
 
 kmain: () {
-    pmm_init(0x84000000, 0x84010000)
-    page1: u8* = pmm_alloc()
+    pages.init(0x84000000, 0x84010000)
+    page1: u8* = pages.alloc()
     if page1 == null {
         klog_error("first alloc returned null".ptr)
-        kshutdown(1)
+        system.shutdown(1)
     }
-    pmm_free(page1)
-    page2: u8* = pmm_alloc()
+    pages.free(page1)
+    page2: u8* = pages.alloc()
     if page2 != page1 {
         klog_error("free list not reused".ptr)
-        kshutdown(1)
+        system.shutdown(1)
     }
     klog_ok("pmm free list ok".ptr)
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#,
     );
@@ -1618,43 +1634,42 @@ kmain: () {
 fn pmm_sequential_alloc_returns_distinct_pages() {
     let (uart, exit) = run_kernel_hll(
         r#"
+system := import("kernel/arch/riscv64/system.hll")
+pages := import("kernel/mm/physical_pages.hll")
 external klog_ok:    (msg: u8*)
 external klog_error: (msg: u8*)
-external kshutdown:  (code: i64)
-external pmm_init:   (start: u64, end: u64)
-external pmm_alloc:  () -> u8*
 
 kmain: () {
-    pmm_init(0x84000000, 0x84010000)
-    a: u8* = pmm_alloc()
-    b: u8* = pmm_alloc()
-    c: u8* = pmm_alloc()
+    pages.init(0x84000000, 0x84010000)
+    a: u8* = pages.alloc()
+    b: u8* = pages.alloc()
+    c: u8* = pages.alloc()
     if a == null {
         klog_error("alloc a null".ptr)
-        kshutdown(1)
+        system.shutdown(1)
     }
     if b == null {
         klog_error("alloc b null".ptr)
-        kshutdown(1)
+        system.shutdown(1)
     }
     if c == null {
         klog_error("alloc c null".ptr)
-        kshutdown(1)
+        system.shutdown(1)
     }
     if a == b {
         klog_error("a == b".ptr)
-        kshutdown(1)
+        system.shutdown(1)
     }
     if b == c {
         klog_error("b == c".ptr)
-        kshutdown(1)
+        system.shutdown(1)
     }
     if a == c {
         klog_error("a == c".ptr)
-        kshutdown(1)
+        system.shutdown(1)
     }
     klog_ok("pmm distinct pages ok".ptr)
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#,
     );
@@ -1667,27 +1682,26 @@ kmain: () {
 fn pmm_oom_returns_null() {
     let (uart, exit) = run_kernel_hll(
         r#"
+system := import("kernel/arch/riscv64/system.hll")
+pages := import("kernel/mm/physical_pages.hll")
 external klog_ok:    (msg: u8*)
 external klog_error: (msg: u8*)
-external kshutdown:  (code: i64)
-external pmm_init:   (start: u64, end: u64)
-external pmm_alloc:  () -> u8*
 
 kmain: () {
     ; One-page region: exactly one alloc can succeed.
-    pmm_init(0x84000000, 0x84001000)
-    first: u8* = pmm_alloc()
+    pages.init(0x84000000, 0x84001000)
+    first: u8* = pages.alloc()
     if first == null {
         klog_error("first alloc should succeed".ptr)
-        kshutdown(1)
+        system.shutdown(1)
     }
-    second: u8* = pmm_alloc()
+    second: u8* = pages.alloc()
     if second != null {
         klog_error("second alloc should fail (OOM)".ptr)
-        kshutdown(1)
+        system.shutdown(1)
     }
     klog_ok("pmm oom ok".ptr)
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#,
     );
@@ -1701,31 +1715,30 @@ kmain: () {
 fn pmm_alloc_page_is_writable() {
     let (uart, exit) = run_kernel_hll(
         r#"
+system := import("kernel/arch/riscv64/system.hll")
+pages := import("kernel/mm/physical_pages.hll")
 external klog_ok:    (msg: u8*)
 external klog_error: (msg: u8*)
-external kshutdown:  (code: i64)
-external pmm_init:   (start: u64, end: u64)
-external pmm_alloc:  () -> u8*
 
 kmain: () {
-    pmm_init(0x84000000, 0x84010000)
-    page: u8* = pmm_alloc()
+    pages.init(0x84000000, 0x84010000)
+    page: u8* = pages.alloc()
     if page == null {
         klog_error("alloc failed".ptr)
-        kshutdown(1)
+        system.shutdown(1)
     }
     page[0] = 42
     page[4095] = 99
     if page[0] != 42 {
         klog_error("byte 0 corrupted".ptr)
-        kshutdown(1)
+        system.shutdown(1)
     }
     if page[4095] != 99 {
         klog_error("byte 4095 corrupted".ptr)
-        kshutdown(1)
+        system.shutdown(1)
     }
     klog_ok("pmm page writable".ptr)
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#,
     );
@@ -1735,25 +1748,30 @@ kmain: () {
 
 // --- VMM (Virtual Memory Manager) ---
 
-/// Checks that vmm_init allocates a root table and vmm_map does not crash.
 #[test]
-fn vmm_init_and_map_no_crash() {
+fn vmm_maps_page_and_preserves_kernel_mappings() {
     let (uart, exit) = run_kernel_hll(
         r#"
+system := import("kernel/arch/riscv64/system.hll")
+pages := import("kernel/mm/physical_pages.hll")
+address_space := import("kernel/mm/address_space.hll")
 external klog_ok:    (msg: u8*)
-external kshutdown:  (code: i64)
-external pmm_init:   (start: u64, end: u64)
-external vmm_init:   ()
-external vmm_map:    (va: u64, pa: u64, flags: u64)
-external mem_set:    (dst: u8*, val: u8, n: u64) -> u8*
 
 kmain: () {
-    pmm_init(0x84000000, 0x85000000)
-    vmm_init()
-    ; Map one kernel page: VA=0x80000000, PA=0x80000000, flags R+W+X+G = 2+4+8+32 = 46
-    vmm_map(0x80000000, 0x80000000, 46)
+    pages.init(0x84000000, 0x85000000)
+    root: u64 = address_space.create()
+    physical: u8* = pages.alloc()
+    if physical == null { system.shutdown(1) }
+    @physical = 99
+    ; The shared kernel superpages already occupy VA 0x80000000 and above.
+    address_space.map(root, 0x40000000, physical as u64, 6)
+    address_space.activate(root)
+    mapped: u8* = 0x40000000 as u8*
+    if @mapped != 99 { system.shutdown(2) }
+    @mapped = 42
+    if @physical != 42 { system.shutdown(3) }
     klog_ok("vmm map ok".ptr)
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#,
     );
@@ -1766,18 +1784,17 @@ kmain: () {
 fn vmm_map_1gib_no_crash() {
     let (uart, exit) = run_kernel_hll(
         r#"
+system := import("kernel/arch/riscv64/system.hll")
+pages := import("kernel/mm/physical_pages.hll")
+address_space := import("kernel/mm/address_space.hll")
 external klog_ok:    (msg: u8*)
-external kshutdown:  (code: i64)
-external pmm_init:   (start: u64, end: u64)
-external vmm_init:   ()
-external vmm_map_1gib: (va: u64, pa: u64, flags: u64)
 
 kmain: () {
-    pmm_init(0x84000000, 0x85000000)
-    vmm_init()
-    vmm_map_1gib(0x80000000, 0x80000000, 46)
+    pages.init(0x84000000, 0x85000000)
+    root: u64 = address_space.create()
+    address_space.map_superpage(root, 0x80000000, 0x80000000, 46)
     klog_ok("vmm 1gib ok".ptr)
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#,
     );
@@ -1792,33 +1809,28 @@ kmain: () {
 fn process_create_and_scheduler_add() {
     let (uart, exit) = run_kernel_hll(
         r#"
+system := import("kernel/arch/riscv64/system.hll")
+pages := import("kernel/mm/physical_pages.hll")
+address_space := import("kernel/mm/address_space.hll")
+tasks := import("kernel/sched/tasks.hll")
 external klog_ok:       (msg: u8*)
 external klog_error:    (msg: u8*)
-external kshutdown:     (code: i64)
-external pmm_init:      (start: u64, end: u64)
-external vmm_init:      ()
-external vmm_map:       (va: u64, pa: u64, flags: u64)
-external process_init:  ()
-external process_create: (entry_pc: u64) -> u64*
-external scheduler_init: ()
-external scheduler_add:  (pcb: u64*)
 
 kmain: () {
-    pmm_init(0x84000000, 0x86000000)
-    vmm_init()
-    ; Map user stack page so process_create can call vmm_map(0x7FFFF000, ...)
+    pages.init(0x84000000, 0x86000000)
+    root: u64 = address_space.create()
+    ; Map user stack page so process_create can call address_space.map(root, 0x7FFFF000, ...)
     ; Process subsystem maps the user stack at 0x7FFFF000 which is canonical.
-    process_init()
-    scheduler_init()
+    tasks.init()
 
-    pcb: u64* = process_create(0x40000000)
+    pcb: u64* = tasks.build(0x40000000) as u64*
     if pcb == null {
         klog_error("process_create returned null".ptr)
-        kshutdown(1)
+        system.shutdown(1)
     }
-    scheduler_add(pcb)
+    tasks.enqueue(pcb as Pcb*)
     klog_ok("process and scheduler ok".ptr)
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#,
     );
@@ -1839,39 +1851,37 @@ kmain: () {
 fn process_create_increments_pid() {
     let (uart, exit) = run_kernel_hll(
         r#"
+system := import("kernel/arch/riscv64/system.hll")
+pages := import("kernel/mm/physical_pages.hll")
+address_space := import("kernel/mm/address_space.hll")
+tasks := import("kernel/sched/tasks.hll")
 external klog_ok:        (msg: u8*)
 external klog_error:     (msg: u8*)
 external klog_int:       (label: u8*, val: i64)
-external kshutdown:      (code: i64)
-external pmm_init:       (start: u64, end: u64)
-external vmm_init:       ()
-external vmm_map:        (va: u64, pa: u64, flags: u64)
-external process_init:   ()
-external process_create: (entry_pc: u64) -> u64*
 
 kmain: () {
-    pmm_init(0x84000000, 0x86000000)
-    vmm_init()
-    process_init()
+    pages.init(0x84000000, 0x86000000)
+    root: u64 = address_space.create()
+    tasks.init()
 
-    p1: u64* = process_create(0x40000000)
-    p2: u64* = process_create(0x40001000)
+    p1: u64* = tasks.build(0x40000000) as u64*
+    p2: u64* = tasks.build(0x40001000) as u64*
     if p1 == null {
         klog_error("p1 null".ptr)
-        kshutdown(1)
+        system.shutdown(1)
     }
     if p2 == null {
         klog_error("p2 null".ptr)
-        kshutdown(1)
+        system.shutdown(1)
     }
     pid1: i64 = p1[0] as i64
     pid2: i64 = p2[0] as i64
     if pid2 != pid1 + 1 {
         klog_error("pids not sequential".ptr)
-        kshutdown(1)
+        system.shutdown(1)
     }
     klog_ok("pid sequence ok".ptr)
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#,
     );
@@ -1889,19 +1899,19 @@ fn syscall_dispatch_unknown_returns_error_sentinel() {
     // than panicking.  The trap is triggered from inline asm with a7=999.
     let (uart, exit) = run_kernel_hll(
         r#"
+system := import("kernel/arch/riscv64/system.hll")
+trap_entry := import("kernel/trap/trap_entry.hll")
 external klog_ok:       (msg: u8*)
 external klog_int:      (label: u8*, val: i64)
-external kshutdown:     (code: i64)
-external trap_init:     ()
 
 kmain: () {
-    trap_init()
+    trap_entry.trap_init()
     klog_ok("traps ready".ptr)
     ; Ecall from S-mode: cause is 9 (S-mode ecall), NOT a U-mode ecall.
     ; The kernel's trap_handler dispatches scause==9 as unhandled and kpanic.
     ; So we just verify the boot path compiles and trap_init doesn't crash.
     klog_ok("syscall path ok".ptr)
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#,
     );
@@ -1917,19 +1927,19 @@ kmain: () {
 fn memory_self_test_small_buf_passes() {
     let (uart, exit) = run_kernel_hll(
         r#"
+system := import("kernel/arch/riscv64/system.hll")
+checks := import("kernel/core/checks.hll")
 external klog_ok:          (msg: u8*)
 external klog_error:       (msg: u8*)
-external kshutdown:        (code: i64)
-external memory_self_test: (size: u64) -> i64
 
 kmain: () {
-    result: i64 = memory_self_test(64)
+    result: i64 = checks.memory_self_test(64)
     if result != 1 {
         klog_error("memory self test failed".ptr)
-        kshutdown(1)
+        system.shutdown(1)
     }
     klog_ok("memory self test isolated ok".ptr)
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#,
     );
@@ -1945,19 +1955,19 @@ kmain: () {
 fn memory_self_test_large_buf_passes() {
     let (uart, exit) = run_kernel_hll(
         r#"
+system := import("kernel/arch/riscv64/system.hll")
+checks := import("kernel/core/checks.hll")
 external klog_ok:          (msg: u8*)
 external klog_error:       (msg: u8*)
-external kshutdown:        (code: i64)
-external memory_self_test: (size: u64) -> i64
 
 kmain: () {
-    result: i64 = memory_self_test(512)
+    result: i64 = checks.memory_self_test(512)
     if result != 1 {
         klog_error("large memory self test failed".ptr)
-        kshutdown(1)
+        system.shutdown(1)
     }
     klog_ok("large memory self test ok".ptr)
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#,
     );
@@ -1975,37 +1985,37 @@ kmain: () {
 fn kmalloc_multiple_allocs_are_distinct() {
     let (uart, exit) = run_kernel_hll(
         r#"
+system := import("kernel/arch/riscv64/system.hll")
+heap := import("kernel/mm/kernel_heap.hll")
 external klog_ok:    (msg: u8*)
 external klog_error: (msg: u8*)
-external kshutdown:  (code: i64)
-external kmalloc:    (size: u64) -> u8*
 
 kmain: () {
-    a: u8* = kmalloc(8)
-    b: u8* = kmalloc(8)
-    c: u8* = kmalloc(8)
+    a: u8* = heap.alloc_bytes(8)
+    b: u8* = heap.alloc_bytes(8)
+    c: u8* = heap.alloc_bytes(8)
     if a == null {
         klog_error("a null".ptr)
-        kshutdown(1)
+        system.shutdown(1)
     }
     if b == null {
         klog_error("b null".ptr)
-        kshutdown(1)
+        system.shutdown(1)
     }
     if c == null {
         klog_error("c null".ptr)
-        kshutdown(1)
+        system.shutdown(1)
     }
     if a == b {
         klog_error("a == b".ptr)
-        kshutdown(1)
+        system.shutdown(1)
     }
     if b == c {
         klog_error("b == c".ptr)
-        kshutdown(1)
+        system.shutdown(1)
     }
     klog_ok("kmalloc distinct ok".ptr)
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#,
     );
@@ -2018,26 +2028,26 @@ kmain: () {
 fn kmalloc_data_survives_subsequent_alloc() {
     let (uart, exit) = run_kernel_hll(
         r#"
+system := import("kernel/arch/riscv64/system.hll")
+heap := import("kernel/mm/kernel_heap.hll")
 external klog_ok:    (msg: u8*)
 external klog_error: (msg: u8*)
-external kshutdown:  (code: i64)
-external kmalloc:    (size: u64) -> u8*
 
 kmain: () {
-    buf: u8* = kmalloc(4)
+    buf: u8* = heap.alloc_bytes(4)
     buf[0] = 7
     buf[1] = 13
-    _noise: u8* = kmalloc(64)
+    _noise: u8* = heap.alloc_bytes(64)
     if buf[0] != 7 {
         klog_error("buf[0] corrupted".ptr)
-        kshutdown(1)
+        system.shutdown(1)
     }
     if buf[1] != 13 {
         klog_error("buf[1] corrupted".ptr)
-        kshutdown(1)
+        system.shutdown(1)
     }
     klog_ok("kmalloc data stable".ptr)
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#,
     );
@@ -2054,32 +2064,31 @@ kmain: () {
 fn heap_survives_process_create() {
     let (uart, exit) = run_kernel_hll(
         r#"
+system := import("kernel/arch/riscv64/system.hll")
+pages := import("kernel/mm/physical_pages.hll")
+address_space := import("kernel/mm/address_space.hll")
+tasks := import("kernel/sched/tasks.hll")
+heap := import("kernel/mm/kernel_heap.hll")
 external klog_ok:       (msg: u8*)
 external klog_error:    (msg: u8*)
-external kshutdown:     (code: i64)
-external pmm_init:      (start: u64, end: u64)
-external vmm_init:      ()
-external process_init:  ()
-external process_create: (entry_pc: u64) -> u64*
-external kmalloc:       (size: u64) -> u8*
 
 kmain: () {
-    pmm_init(0x84000000, 0x86000000)
-    vmm_init()
-    process_init()
+    pages.init(0x84000000, 0x86000000)
+    root: u64 = address_space.create()
+    tasks.init()
 
     ; Allocate a PCB (exercises kmalloc + vmm_map internally).
-    pcb: u64* = process_create(0x40000000)
+    pcb: u64* = tasks.build(0x40000000) as u64*
     if pcb == null {
         klog_error("pcb null".ptr)
-        kshutdown(1)
+        system.shutdown(1)
     }
 
     ; Heap must still be usable.
-    buf: u8* = kmalloc(16)
+    buf: u8* = heap.alloc_bytes(16)
     if buf == null {
         klog_error("kmalloc after process_create returned null".ptr)
-        kshutdown(1)
+        system.shutdown(1)
     }
     ; Write and read back byte-by-byte to isolate any corruption.
     buf[0] = 42
@@ -2088,14 +2097,14 @@ kmain: () {
     v1: u8 = buf[1]
     if v0 != 42 {
         klog_error("buf[0] corrupted".ptr)
-        kshutdown(2)
+        system.shutdown(2)
     }
     if v1 != 43 {
         klog_error("buf[1] corrupted".ptr)
-        kshutdown(3)
+        system.shutdown(3)
     }
     klog_ok("heap ok after process_create".ptr)
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#,
     );
@@ -2112,49 +2121,46 @@ kmain: () {
 fn spawn_like_workload_then_process_create() {
     let (uart, exit) = run_kernel_hll(
         r#"
+system := import("kernel/arch/riscv64/system.hll")
+pages := import("kernel/mm/physical_pages.hll")
+address_space := import("kernel/mm/address_space.hll")
+tasks := import("kernel/sched/tasks.hll")
+heap := import("kernel/mm/kernel_heap.hll")
 external klog_ok:       (msg: u8*)
 external klog_error:    (msg: u8*)
-external kshutdown:     (code: i64)
-external pmm_init:      (start: u64, end: u64)
-external pmm_alloc:     () -> u8*
-external vmm_init:      ()
-external vmm_map:       (va: u64, pa: u64, flags: u64)
-external process_init:  ()
-external process_create: (entry_pc: u64) -> u64*
-external kmalloc:       (size: u64) -> u8*
 
 kmain: () {
-    pmm_init(0x84000000, 0x86000000)
-    vmm_init()
-    process_init()
+    pages.init(0x84000000, 0x86000000)
+    root: u64 = address_space.create()
+    tasks.init()
 
     ; Simulate the spawn loop: allocate 18 pages and map them.
     page_size: u64 = 4096
     pages: u64 = 18
     i: u64 = 0
     while i < pages {
-        dst_page: u8* = pmm_alloc()
+        dst_page: u8* = pages.alloc()
         if dst_page == null {
             klog_error("pmm_alloc null".ptr)
-            kshutdown(1)
+            system.shutdown(1)
         }
         va: u64 = 0x40000000 + i * page_size
-        vmm_map(va, dst_page as u64, 30)
+        address_space.map(root, va, dst_page as u64, 30)
         i = i + 1
     }
 
     ; Now create a process -- this exercises kmalloc + vmm_map internally.
-    pcb: u64* = process_create(0x40001000)
+    pcb: u64* = tasks.build(0x40001000) as u64*
     if pcb == null {
         klog_error("pcb null after spawn-like workload".ptr)
-        kshutdown(2)
+        system.shutdown(2)
     }
 
     ; Heap must still be usable after all that allocation.
-    buf: u8* = kmalloc(32)
+    buf: u8* = heap.alloc_bytes(32)
     if buf == null {
         klog_error("kmalloc null after spawn-like workload".ptr)
-        kshutdown(3)
+        system.shutdown(3)
     }
     buf[0] = 42
     buf[1] = 43
@@ -2162,14 +2168,14 @@ kmain: () {
     v1: u8 = buf[1]
     if v0 != 42 {
         klog_error("buf[0] corrupted after workload".ptr)
-        kshutdown(4)
+        system.shutdown(4)
     }
     if v1 != 43 {
         klog_error("buf[1] corrupted after workload".ptr)
-        kshutdown(5)
+        system.shutdown(5)
     }
     klog_ok("heap ok after spawn-like workload".ptr)
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#,
     );
@@ -2186,63 +2192,62 @@ kmain: () {
 fn heap_stress_after_multiple_process_creates() {
     let (uart, exit) = run_kernel_hll(
         r#"
+system := import("kernel/arch/riscv64/system.hll")
+pages := import("kernel/mm/physical_pages.hll")
+address_space := import("kernel/mm/address_space.hll")
+tasks := import("kernel/sched/tasks.hll")
+heap := import("kernel/mm/kernel_heap.hll")
 external klog_ok:       (msg: u8*)
 external klog_error:    (msg: u8*)
-external kshutdown:     (code: i64)
-external pmm_init:      (start: u64, end: u64)
-external vmm_init:      ()
-external process_init:  ()
-external process_create: (entry_pc: u64) -> u64*
-external kmalloc:       (size: u64) -> u8*
 
 kmain: () {
-    pmm_init(0x84000000, 0x86000000)
-    vmm_init()
-    process_init()
+    pages.init(0x84000000, 0x86000000)
+    root: u64 = address_space.create()
+    tasks.init()
 
     ; Create 5 processes (each allocates a PCB + stack page).
     j: u64 = 0
     while j < 5 {
-        pcb: u64* = process_create(0x40000000 + j * 4096)
+        pcb: u64* = tasks.build(0x40000000 + j * 4096) as u64*
         if pcb == null {
             klog_error("pcb null in loop".ptr)
-            kshutdown(1)
+            system.shutdown(1)
         }
         j = j + 1
     }
 
     ; Now allocate 4 buffers and verify they are distinct and writable.
-    a: u8* = kmalloc(16)
-    b: u8* = kmalloc(16)
-    c: u8* = kmalloc(16)
-    d: u8* = kmalloc(16)
+    a: u8* = heap.alloc_bytes(16)
+    b: u8* = heap.alloc_bytes(16)
+    c: u8* = heap.alloc_bytes(16)
+    d: u8* = heap.alloc_bytes(16)
     if a == null {
         klog_error("a null".ptr)
-        kshutdown(2)
+        system.shutdown(2)
     }
     if b == null {
         klog_error("b null".ptr)
-        kshutdown(3)
+        system.shutdown(3)
     }
     if c == null {
         klog_error("c null".ptr)
-        kshutdown(4)
+        system.shutdown(4)
     }
     if d == null {
         klog_error("d null".ptr)
-        kshutdown(5)
+        system.shutdown(5)
     }
     if a == b {
         klog_error("a == b".ptr)
-        kshutdown(6)
+        system.shutdown(6)
     }
     if b == c {
         klog_error("b == c".ptr)
-        kshutdown(7)
+        system.shutdown(7)
     }
     if c == d {
         klog_error("c == d".ptr)
-        kshutdown(8)
+        system.shutdown(8)
     }
     a[0] = 1
     b[0] = 2
@@ -2250,22 +2255,22 @@ kmain: () {
     d[0] = 4
     if a[0] != 1 {
         klog_error("a corrupted".ptr)
-        kshutdown(9)
+        system.shutdown(9)
     }
     if b[0] != 2 {
         klog_error("b corrupted".ptr)
-        kshutdown(10)
+        system.shutdown(10)
     }
     if c[0] != 3 {
         klog_error("c corrupted".ptr)
-        kshutdown(11)
+        system.shutdown(11)
     }
     if d[0] != 4 {
         klog_error("d corrupted".ptr)
-        kshutdown(12)
+        system.shutdown(12)
     }
     klog_ok("heap ok after 5 process creates".ptr)
-    kshutdown(0)
+    system.shutdown(0)
 }
 "#,
     );

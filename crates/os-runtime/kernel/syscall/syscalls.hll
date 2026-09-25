@@ -1,0 +1,136 @@
+; Trap-facing syscall dispatch facade. See OS specification chapter 7.
+
+layout       := import("kernel/core/kernel_abi.hll")
+files        := import("kernel/fs/files.hll")
+file_calls   := import("kernel/syscall/file_syscalls.hll")
+io_calls     := import("kernel/syscall/io_syscalls.hll")
+klog         := import("klog")
+memory_calls := import("kernel/syscall/memory_syscalls.hll")
+process_calls := import("kernel/syscall/process_syscalls.hll")
+tasks        := import("kernel/sched/tasks.hll")
+trace        := import("kernel/syscall/syscall_trace.hll")
+user_memory  := import("kernel/mm/user_memory.hll")
+
+; --- State ---
+
+const SYSCALL_YIELD = 2
+const SYSCALL_FTRUNCATE = 46
+const SYSCALL_OPEN = 56
+const SYSCALL_CLOSE = 57
+const SYSCALL_LSEEK = 62
+const SYSCALL_READ = 63
+const SYSCALL_WRITE = 64
+const SYSCALL_RENAME = 82
+const SYSCALL_MKDIR = 83
+const SYSCALL_EXIT = 93
+const SYSCALL_KILL = 129
+const SYSCALL_BRK = 214
+const SYSCALL_FORK = 220
+const SYSCALL_WAIT = 260
+const SYSCALL_WAITPID = 261
+
+const SYSCALL_READCHAR = 100
+const SYSCALL_READDIR = 101
+const SYSCALL_STAT = 102
+const SYSCALL_EXEC = 103
+const SYSCALL_PIDALIVE = 104
+const SYSCALL_UNLINK = 105
+const SYSCALL_RMDIR = 106
+const SYSCALL_MAPFB = 107
+const SYSCALL_POLLKEY = 108
+const SYSCALL_EXEC_REDIR = 110
+
+; --- Public API ---
+
+export syscalls_dispatch: (frame: layout.TrapFrame*) -> layout.SysAction {
+    current: layout.Pcb* = tasks.current()
+    pid: u64 = 0
+    if current != null {
+        pid = current.pid
+    }
+
+    entry: trace.TraceEntry* = trace.begin(frame, pid)
+    action: layout.SysAction = dispatch_inner(frame)
+    trace.finish(entry, frame.x10)
+    return action
+}
+
+; --- Implementation ---
+
+dispatch_inner: (frame: layout.TrapFrame*) -> layout.SysAction {
+    match frame.x17 {
+        SYSCALL_EXIT -> { return process_calls.exit(frame) }
+        SYSCALL_WRITE -> { return io_calls.write(frame) }
+        SYSCALL_OPEN -> { return file_calls.open(frame) }
+        SYSCALL_CLOSE -> { return close(frame) }
+        SYSCALL_READ -> { return read(frame) }
+        SYSCALL_RENAME -> { return file_calls.rename(frame) }
+        SYSCALL_MKDIR -> { return file_calls.mkdir(frame) }
+        SYSCALL_READCHAR -> { return io_calls.read_character(frame) }
+        SYSCALL_READDIR -> { return file_calls.readdir(frame) }
+        SYSCALL_STAT -> { return file_calls.stat(frame) }
+        SYSCALL_EXEC -> { return process_calls.exec(frame) }
+        SYSCALL_EXEC_REDIR -> { return process_calls.exec_redirected(frame) }
+        SYSCALL_FTRUNCATE -> { return file_calls.ftruncate(frame) }
+        SYSCALL_LSEEK -> { return seek(frame) }
+        SYSCALL_UNLINK -> { return file_calls.unlink(frame) }
+        SYSCALL_RMDIR -> { return file_calls.rmdir(frame) }
+        SYSCALL_MAPFB -> { return memory_calls.map_framebuffer(frame) }
+        SYSCALL_POLLKEY -> { return io_calls.poll_key(frame) }
+        SYSCALL_PIDALIVE -> { return pid_alive(frame) }
+        SYSCALL_FORK -> { return process_calls.fork(frame) }
+        SYSCALL_WAIT -> { return process_calls.wait(frame) }
+        SYSCALL_WAITPID -> { return process_calls.wait_pid(frame) }
+        SYSCALL_KILL -> { return process_calls.kill(frame) }
+        SYSCALL_BRK -> { return memory_calls.brk(frame) }
+        SYSCALL_YIELD -> { return Schedule }
+        _ -> { return unknown(frame) }
+    }
+}
+
+close: (frame: layout.TrapFrame*) -> layout.SysAction {
+    files.close(frame.x10 as i64)
+    frame.x10 = 0
+    return Continue
+}
+
+read: (frame: layout.TrapFrame*) -> layout.SysAction {
+    if user_memory.validate(tasks.current_root(), frame.x11 as u8*, frame.x13, 1) == 0 {
+        frame.x10 = 0xFFFFFFFFFFFFFFFF
+        return Continue
+    }
+    frame.x10 = files.read(
+        frame.x10 as i64,
+        frame.x11 as u8*,
+        frame.x12,
+        frame.x13,
+    ) as u64
+    return Continue
+}
+
+seek: (frame: layout.TrapFrame*) -> layout.SysAction {
+    fd: i64 = frame.x10 as i64
+    offset: i64 = frame.x11 as i64
+    base: u64 = 0
+    if frame.x12 == 1 {
+        base = files.get_pos(fd)
+    }
+    if frame.x12 == 2 {
+        base = files.fd_size(fd)
+    }
+    position: u64 = (base as i64 + offset) as u64
+    files.set_pos(fd, position)
+    frame.x10 = position
+    return Continue
+}
+
+pid_alive: (frame: layout.TrapFrame*) -> layout.SysAction {
+    frame.x10 = tasks.pid_alive(frame.x10)
+    return Continue
+}
+
+unknown: (frame: layout.TrapFrame*) -> layout.SysAction {
+    klog.int("syscall: unknown number".ptr, frame.x17 as i64)
+    frame.x10 = 0xFFFFFFFFFFFFFFFF
+    return Continue
+}

@@ -151,6 +151,10 @@ impl ProgramFile {
     }
 }
 
+fn runtime_source(path: &str) -> &'static str {
+    os_runtime::module_source(path).unwrap_or_else(|| panic!("missing runtime source `{path}`"))
+}
+
 fn built_in_programs() -> Vec<ProgramFile> {
     let mut programs = vec![
         // Stdlib parent. The actual stdlib files are child fragments below; the
@@ -167,7 +171,7 @@ fn built_in_programs() -> Vec<ProgramFile> {
                 "os-kernel-entry",
                 "Entry",
                 "Kernel entry point: _kernel_start -> kmain.",
-                os_runtime::kernel::ENTRY,
+                runtime_source("stdlib/platform/kernel/entry.hll"),
             );
             p.standalone = true;
             p.parent_id = Some("os-my-kernel".to_owned());
@@ -178,7 +182,7 @@ fn built_in_programs() -> Vec<ProgramFile> {
                 "os-kernel-checks",
                 "Checks",
                 "Boot-time diagnostics: memory self-test and system validation.",
-                os_runtime::kernel::CHECKS,
+                runtime_source("kernel/core/checks.hll"),
             );
             p.standalone = true;
             p.parent_id = Some("os-my-kernel".to_owned());
@@ -187,9 +191,9 @@ fn built_in_programs() -> Vec<ProgramFile> {
         {
             let mut p = ProgramFile::os(
                 "os-kernel-utilities",
-                "Utilities",
-                "Kernel platform helpers: kmalloc, kshutdown, timer, PLIC init.",
-                os_runtime::kernel::UTILITIES,
+                "System",
+                "Kernel shutdown boundary.",
+                runtime_source("kernel/arch/riscv64/system.hll"),
             );
             p.standalone = true;
             p.parent_id = Some("os-my-kernel".to_owned());
@@ -199,8 +203,8 @@ fn built_in_programs() -> Vec<ProgramFile> {
             let mut p = ProgramFile::os(
                 "os-kernel-trap-entry",
                 "Trap Entry",
-                "S-mode trap entry: stvec prologue/epilogue, trap_init, sscratch helpers.",
-                os_runtime::kernel::TRAP_ENTRY,
+                "S-mode trap entry, register save/restore, and trap-stack initialization.",
+                runtime_source("kernel/trap/trap_entry.hll"),
             );
             p.standalone = true;
             p.parent_id = Some("os-my-kernel".to_owned());
@@ -211,7 +215,7 @@ fn built_in_programs() -> Vec<ProgramFile> {
                 "os-kernel-trap-handler",
                 "Trap Handler",
                 "S-mode trap dispatcher: scause-based routing to interrupt/exception handlers.",
-                os_runtime::kernel::TRAP_HANDLER,
+                runtime_source("kernel/trap/trap_handler.hll"),
             );
             p.standalone = true;
             p.parent_id = Some("os-my-kernel".to_owned());
@@ -220,9 +224,9 @@ fn built_in_programs() -> Vec<ProgramFile> {
         {
             let mut p = ProgramFile::os(
                 "os-kernel-pmm",
-                "PMM",
-                "Physical Memory Manager: pmm_init, pmm_alloc, pmm_free (4 KiB pages).",
-                os_runtime::kernel::PMM,
+                "Physical Pages",
+                "Owned 4 KiB physical-page allocator with reuse.",
+                runtime_source("kernel/mm/physical_pages.hll"),
             );
             p.standalone = true;
             p.parent_id = Some("os-my-kernel".to_owned());
@@ -231,9 +235,9 @@ fn built_in_programs() -> Vec<ProgramFile> {
         {
             let mut p = ProgramFile::os(
                 "os-kernel-vmm",
-                "VMM",
-                "Sv39 Virtual Memory Manager: vmm_init, vmm_enable, vmm_map, vmm_map_range.",
-                os_runtime::kernel::VMM,
+                "Address Spaces",
+                "Sv39 address-space construction, activation, and fork copying.",
+                runtime_source("kernel/mm/address_space.hll"),
             );
             p.standalone = true;
             p.parent_id = Some("os-my-kernel".to_owned());
@@ -243,8 +247,8 @@ fn built_in_programs() -> Vec<ProgramFile> {
             let mut p = ProgramFile::os(
                 "os-kernel-process",
                 "Process",
-                "Process Control Block and lifecycle: process_init, process_create, fork helpers.",
-                os_runtime::kernel::PROCESS,
+                "Process control-block allocation, PID assignment, and user-stack construction.",
+                runtime_source("kernel/sched/process.hll"),
             );
             p.standalone = true;
             p.parent_id = Some("os-my-kernel".to_owned());
@@ -254,8 +258,8 @@ fn built_in_programs() -> Vec<ProgramFile> {
             let mut p = ProgramFile::os(
                 "os-kernel-syscall",
                 "Syscall",
-                "Syscall dispatch: syscall_dispatch and the sys_* implementations (exit, exec, fork, wait, file I/O).",
-                os_runtime::kernel::SYSCALL,
+                "Syscall dispatch, tracing, process control, and file/device request handlers.",
+                runtime_source("kernel/syscall/syscalls.hll"),
             );
             p.standalone = true;
             p.parent_id = Some("os-my-kernel".to_owned());
@@ -265,8 +269,8 @@ fn built_in_programs() -> Vec<ProgramFile> {
             let mut p = ProgramFile::os(
                 "os-kernel-scheduler",
                 "Scheduler",
-                "Round-robin scheduler: scheduler_init, scheduler_add, schedule, zombie/reap bookkeeping.",
-                os_runtime::kernel::SCHEDULER,
+                "Round-robin scheduling with ready queues, zombies, and input-wait bookkeeping.",
+                runtime_source("kernel/sched/scheduler.hll"),
             );
             p.standalone = true;
             p.parent_id = Some("os-my-kernel".to_owned());
@@ -276,8 +280,8 @@ fn built_in_programs() -> Vec<ProgramFile> {
             let mut p = ProgramFile::os(
                 "os-kernel-fs",
                 "Filesystem",
-                "Inode-based read-write filesystem: fs_open, fs_read, fs_write, fs_create, fs_mkdir, fs_rename, fs_unlink, fs_rmdir.",
-                os_runtime::kernel::FS,
+                "Inode-based read-write filesystem facade for descriptors and directory operations.",
+                runtime_source("kernel/fs/files.hll"),
             );
             p.standalone = true;
             p.parent_id = Some("os-my-kernel".to_owned());
@@ -288,8 +292,8 @@ fn built_in_programs() -> Vec<ProgramFile> {
             let mut p = ProgramFile::os(
                 "os-my-kernel",
                 "My Kernel",
-                "Compilable kernel: ties Entry, Checks, Utilities, PMM, VMM, and trap modules together. Select Kernel target mode to run.",
-                os_runtime::kernel::MY_KERNEL,
+                "Compilable kernel: coordinates hardware, memory, tasks, files, and traps. Select Kernel target mode to run.",
+                runtime_source("kernel/core/my_kernel.hll"),
             );
             p.build_path = Some(
                 std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

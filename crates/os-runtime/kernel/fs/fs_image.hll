@@ -1,0 +1,64 @@
+; Typed access to filesystem image records and descriptor storage.
+
+types := import("kernel/fs/fs_types.hll")
+
+; --- Public API ---
+
+export fs_image_read16: (address: u64) -> u64 {
+    pointer: u16* = address as u16*
+    return (@pointer) as u64
+}
+
+export fs_image_read32: (address: u64) -> u64 {
+    pointer: u32* = address as u32*
+    return (@pointer) as u64
+}
+
+export fs_image_write32: (address: u64, value: u64) {
+    pointer: u32* = address as u32*
+    @pointer = value as u32
+}
+
+export fs_image_inode_ptr: (state: types.FileSystemState*, index: u64) -> types.DiskInode* {
+    address: u64 = state.image_base + types.FS_BLOCK_SIZE + index * types.FS_INODE_SIZE
+    return address as types.DiskInode*
+}
+
+export fs_image_block_pa: (state: types.FileSystemState*, block: u64) -> u64 {
+    return state.image_base + block * types.FS_BLOCK_SIZE
+}
+
+export fs_image_dirent_ptr: (state: types.FileSystemState*, block: u64, slot: u64) -> types.DiskDirEntry* {
+    address: u64 = state.image_base + block * types.FS_BLOCK_SIZE + slot * types.FS_DIRENT_SIZE
+    return address as types.DiskDirEntry*
+}
+
+export fs_image_fd_ptr: (state: types.FileSystemState*, fd: u64) -> types.OpenFile* {
+    address: u64 = state.fd_table_pa + fd * types.FS_FD_ENTRY_SIZE
+    return address as types.OpenFile*
+}
+
+export fs_image_inode_type: (state: types.FileSystemState*, index: u64) -> u64 {
+    inode: types.DiskInode* = fs_image_inode_ptr(state, index)
+    return inode.node_type as u64 % 256
+}
+
+export fs_image_inode_size: (state: types.FileSystemState*, index: u64) -> u64 {
+    inode: types.DiskInode* = fs_image_inode_ptr(state, index)
+    return inode.size as u64
+}
+
+export fs_image_set_inode_size: (state: types.FileSystemState*, index: u64, size: u64) {
+    inode: types.DiskInode* = fs_image_inode_ptr(state, index)
+    inode.size = size as u32
+}
+
+export fs_image_inode_block: (state: types.FileSystemState*, index: u64, slot: u64) -> u64 {
+    inode: types.DiskInode* = fs_image_inode_ptr(state, index)
+    return inode.blocks[slot] as u64
+}
+
+export fs_image_set_inode_block: (state: types.FileSystemState*, index: u64, slot: u64, block: u64) {
+    inode: types.DiskInode* = fs_image_inode_ptr(state, index)
+    inode.blocks[slot] = block as u16
+}

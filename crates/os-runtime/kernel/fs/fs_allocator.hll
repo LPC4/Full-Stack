@@ -1,0 +1,77 @@
+; Filesystem inode and data-block allocation.
+
+image := import("kernel/fs/fs_image.hll")
+types := import("kernel/fs/fs_types.hll")
+
+; --- Public API ---
+
+export fs_allocator_alloc_block: (state: types.FileSystemState*) -> Result<u64, types.FsError> {
+    bitmap_base: u64 = state.image_base + types.FS_BITMAP_BLOCK * types.FS_BLOCK_SIZE
+    block_count: u64 = image.read16(state.image_base + types.FS_SB_BLOCK_COUNT)
+    bit: u64 = 0
+    while bit < block_count {
+        pointer: u8* = (bitmap_base + bit / 8) as u8*
+        byte: u8 = @pointer
+        mask: u64 = 1 << (bit % 8)
+        if (byte as u64 & mask) != 0 {
+            @pointer = (byte as u64 & (255 ^ mask)) as u8
+            free: u64 = image.read32(state.image_base + types.FS_SB_FREE_BLOCKS)
+            if free > 0 {
+                image.write32(state.image_base + types.FS_SB_FREE_BLOCKS, free - 1)
+            }
+            return Ok(types.FS_DATA_BLOCK_START + bit)
+        }
+        bit = bit + 1
+    }
+    return Err(FsError.NoSpace)
+}
+
+export fs_allocator_free_block: (state: types.FileSystemState*, block: u64) {
+    if block < types.FS_DATA_BLOCK_START {
+        return
+    }
+    bit: u64 = block - types.FS_DATA_BLOCK_START
+    bitmap_base: u64 = state.image_base + types.FS_BITMAP_BLOCK * types.FS_BLOCK_SIZE
+    pointer: u8* = (bitmap_base + bit / 8) as u8*
+    byte: u8 = @pointer
+    @pointer = (byte as u64 | (1 << (bit % 8))) as u8
+    free: u64 = image.read32(state.image_base + types.FS_SB_FREE_BLOCKS)
+    image.write32(state.image_base + types.FS_SB_FREE_BLOCKS, free + 1)
+}
+
+export fs_allocator_alloc_inode: (state: types.FileSystemState*) -> Result<i64, types.FsError> {
+    bitmap_base: u64 = state.image_base + types.FS_SB_INODE_BITMAP
+    byte_index: u64 = 0
+    while byte_index < 32 {
+        pointer: u8* = (bitmap_base + byte_index) as u8*
+        byte: u8 = @pointer
+        if byte != 0 {
+            bit: u64 = 0
+            while bit < 8 {
+                mask: u64 = 1 << bit
+                if (byte as u64 & mask) != 0 {
+                    @pointer = (byte as u64 & (255 ^ mask)) as u8
+                    free: u64 = image.read32(state.image_base + types.FS_SB_FREE_INODES)
+                    if free > 0 {
+                        image.write32(state.image_base + types.FS_SB_FREE_INODES, free - 1)
+                    }
+                    return Ok((byte_index * 8 + bit) as i64)
+                }
+                bit = bit + 1
+            }
+        }
+        byte_index = byte_index + 1
+    }
+    return Err(FsError.NoSpace)
+}
+
+export fs_allocator_free_inode: (state: types.FileSystemState*, index: u64) {
+    bitmap_base: u64 = state.image_base + types.FS_SB_INODE_BITMAP
+    pointer: u8* = (bitmap_base + index / 8) as u8*
+    byte: u8 = @pointer
+    @pointer = (byte as u64 | (1 << (index % 8))) as u8
+    free: u64 = image.read32(state.image_base + types.FS_SB_FREE_INODES)
+    image.write32(state.image_base + types.FS_SB_FREE_INODES, free + 1)
+    inode: types.DiskInode* = image.inode_ptr(state, index)
+    inode.node_type = types.FS_TYPE_FREE as u16
+}

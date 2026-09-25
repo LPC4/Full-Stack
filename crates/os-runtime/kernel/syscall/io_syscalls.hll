@@ -1,0 +1,94 @@
+; Console, input, and device syscall handlers.
+
+layout := import("kernel/core/kernel_abi.hll")
+console := import("console")
+files := import("kernel/fs/files.hll")
+keyboard := import("kernel/arch/riscv64/keyboard.hll")
+tasks := import("kernel/sched/tasks.hll")
+uart := import("kernel/arch/riscv64/uart.hll")
+user_memory := import("kernel/mm/user_memory.hll")
+
+; --- Public API ---
+
+export io_syscalls_read_character: (frame: layout.TrapFrame*) -> layout.SysAction {
+    current: layout.Pcb* = tasks.current()
+    if current != null {
+        input_fd: u64 = current.stdin_fd
+        if input_fd >= 2 {
+            position: u64 = files.get_pos(input_fd as i64)
+            byte: u8[1] = []
+            if files.read(input_fd as i64, &byte[0], position, 1) == 1 {
+                files.set_pos(input_fd as i64, position + 1)
+                frame.x10 = byte[0] as u64
+            } else {
+                frame.x10 = 0xFFFFFFFFFFFFFFFF
+            }
+            return Continue
+        }
+    }
+
+    character: i64 = uart.take()
+    if character >= 0 {
+        frame.x10 = character as u64
+        return Continue
+    }
+    if current == null {
+        frame.x10 = 0xFFFFFFFFFFFFFFFF
+        return Continue
+    }
+
+    uart.arm_receive()
+    tasks.block_on_input(current)
+    frame.sepc = frame.sepc - 4
+    return Block
+}
+
+export io_syscalls_write: (frame: layout.TrapFrame*) -> layout.SysAction {
+    fd: u64 = frame.x10
+    buffer: u8* = frame.x11 as u8*
+    len: u64 = frame.x12
+    if user_memory.validate(tasks.current_root(), buffer, len, 0) == 0 {
+        frame.x10 = 0xFFFFFFFFFFFFFFFF
+        return Continue
+    }
+    if fd < 2 {
+        frame.x10 = write_standard_output(buffer, len)
+        return Continue
+    }
+
+    position: u64 = files.get_pos(fd as i64)
+    written: i64 = files.write(fd as i64, buffer, position, len)
+    if written >= 0 {
+        files.set_pos(fd as i64, position + written as u64)
+    }
+    frame.x10 = written as u64
+    return Continue
+}
+
+export io_syscalls_poll_key: (frame: layout.TrapFrame*) -> layout.SysAction {
+    frame.x10 = keyboard.poll() as u64
+    return Continue
+}
+
+; --- Implementation ---
+
+write_standard_output: (buffer: u8*, len: u64) -> u64 {
+    current: layout.Pcb* = tasks.current()
+    if current != null {
+        output_fd: u64 = current.stdout_fd
+        if output_fd >= 2 {
+            position: u64 = files.get_pos(output_fd as i64)
+            written: i64 = files.write(output_fd as i64, buffer, position, len)
+            if written < 0 {
+                return 0
+            }
+            files.set_pos(output_fd as i64, position + written as u64)
+            return written as u64
+        }
+    }
+
+    for index in 0..len {
+        console.putchar((@(buffer + index)) as i32)
+    }
+    return len
+}

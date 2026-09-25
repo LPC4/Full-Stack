@@ -5,8 +5,8 @@ Boot firmware, S-mode kernel, and standard-library sources for the Full-Stack VM
 This crate is not a Rust library to link against. It holds the RISC-V assembly (`.s`) and
 HLL (`.hll`) sources that the compiler pipeline assembles into a bootable kernel image, plus
 the stdlib bundles shared by hosted and freestanding programs. The Rust side (`src/lib.rs`)
-only exposes each source file as a compile-time string constant so `hll-to-ir` and
-`virtual-machine` can embed them.
+exposes a generated path-keyed source registry so `hll-to-ir` and `virtual-machine` can embed
+them.
 
 ## Folder layout
 
@@ -14,7 +14,7 @@ only exposes each source file as a compile-time string constant so `hll-to-ir` a
 boot/       M-mode ROM firmware (assembly): reset stub and hosted trap handler
 kernel/     S-mode kernel sources (HLL): traps, memory, processes, syscalls, fs
 stdlib/     focused core modules and target-specific platform providers
-src/        thin Rust crate exposing every source file as a string constant
+src/        thin Rust crate exposing the generated source registry
 tests/      Rust tests over ROM, boot sequence, allocator, PMM, and subsystems
 ```
 
@@ -41,7 +41,7 @@ Power-on / VM reset
 
   stdlib/platform/kernel/entry.hll  _kernel_start: calls kmain(), panics if it returns
   kernel/core/my_kernel.hll         kmain(): console, traps, timer, PLIC, diagnostics,
-                                    heap, PMM, Sv39 VMM, process_init, scheduler_init,
+                                    heap, physical pages, Sv39 address spaces, tasks.init,
                                     spawn pid 1, mount filesystem, enable interrupts
 ```
 
@@ -61,23 +61,26 @@ boundary helpers.
 
 | Source | Provides |
 |--------|----------|
-| `kernel/trap/trap_entry.hll` | S-mode stvec prologue/epilogue, dedicated kernel trap stack via sscratch, `trap_init` |
-| `kernel/trap/trap_handler.hll` | Dispatch for timer (cause 5), external (cause 9), software (cause 1), U-mode ecall (cause 8) |
-| `kernel/core/utilities.hll` | `kmalloc`, `kshutdown`, CLINT timer get/set, `plic_init` |
-| `kernel/core/checks.hll` | Boot-time `memory_self_test`, `pmm_ops_test` diagnostics |
-| `kernel/mm/pmm.hll` | Physical page allocator (4 KiB pages, bump + free-list, double-free guard) |
-| `kernel/mm/vmm.hll` | Sv39 page tables: `vmm_init`, `vmm_enable`, `vmm_map`, `vmm_map_1gib`, `vmm_map_range` |
-| `kernel/sched/process.hll` | 384-byte typed PCB (pid, state, saved trap frame, page-table root, parent pid, exit code, framebuffer state), canonical user stack, `process_create`, `process_peek_pid` |
-| `kernel/sched/scheduler.hll` | Round-robin ready queue, `schedule`, queue introspection for exec/wait |
-| `kernel/core/syscall.hll` | Typed U-mode ecall match dispatch and syscall trace ring (see below) |
-| `kernel/fs/fs.hll` | Inode-based read-write filesystem with typed disk and descriptor records |
+| `kernel/core/kernel_abi.hll`, `kernel_config.hll` | Stable trap/PCB layouts, memory ranges, and PTE flags |
+| `kernel/arch/riscv64/` | CSR, timer, PLIC, UART, keyboard, framebuffer, and shutdown boundaries |
+| `kernel/mm/kernel_heap.hll`, `physical_pages.hll` | Kernel allocation and reusable 4 KiB physical pages |
+| `kernel/mm/page_tables.hll`, `address_space.hll` | Sv39 mechanics, shared mappings, activation, and fork copying |
+| `kernel/mm/user_memory.hll` | Checked user ranges and bounded path copies |
+| `kernel/sched/process.hll`, `scheduler.hll` | Internal PCB construction and round-robin queue ownership |
+| `kernel/sched/tasks.hll` | Process lifecycle and scheduling facade |
+| `kernel/exec/elf_loader.hll` | Checked static ELF64 segment loading |
+| `kernel/syscall/` | Trap-facing dispatch, trace, process, memory, file, I/O, and device handlers |
+| `kernel/fs/files.hll` | Mounted filesystem facade and single state owner |
+| `kernel/fs/fs_*.hll` | Disk records, image access, allocation, directories, and descriptors |
+| `kernel/trap/trap_entry.hll`, `trap_handler.hll` | Stable trap entry and short cause dispatcher |
 
 ## Filesystem
 
-`fs.hll` mounts a contiguous image (superblock, inode table, free-block bitmap, data blocks).
+The `files` facade mounts a contiguous image (superblock, inode table, free-block bitmap, data
+blocks).
 Inodes are 128 bytes and index up to 44 direct 4 KiB blocks (176 KiB max file), enough to hold
-executable images. The public API covers `fs_init`, `fs_open`, `fs_read`, `fs_write`,
-`fs_close`, `fs_create`, `fs_mkdir`, `fs_rename`, `fs_stat`, and `fs_readdir`, with absolute
+executable images. The public API covers initialization, descriptor I/O, directory mutation,
+metadata queries, and directory iteration, with absolute
 path resolution rooted at inode 0. Native paths are slices; the unchanged 32-byte on-disk name
 fields are decoded and compared with a 32-byte bound.
 

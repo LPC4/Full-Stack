@@ -1,0 +1,14 @@
+; CLINT timer access for hart 0.
+
+; --- Public API ---
+
+export timer_rearm: (interval: u64) {
+    asm {
+        mv   a0, $interval
+        li   t0, 33603576
+        ld   t1, 0(t0)
+        add  t1, t1, a0
+        li   t0, 33570816
+        sd   t1, 0(t0)
+    }
+}

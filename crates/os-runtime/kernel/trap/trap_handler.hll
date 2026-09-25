@@ -1,85 +1,71 @@
 ; Central trap dispatch: interrupts (timer/external) and U-mode ecalls. See OS spec ch.5/6.
 
-layout      := import("layout")
-runtime     := import("runtime")
-klog        := import("klog")
-utilities   := import("utilities")
-syscall     := import("syscall")
-scheduler   := import("scheduler")
+layout    := import("kernel/core/kernel_abi.hll")
+runtime   := import("runtime")
+klog      := import("klog")
+timer     := import("kernel/arch/riscv64/timer.hll")
+plic      := import("kernel/arch/riscv64/interrupt_controller.hll")
+csr       := import("kernel/arch/riscv64/csr.hll")
+uart      := import("kernel/arch/riscv64/uart.hll")
+syscalls  := import("kernel/syscall/syscalls.hll")
+tasks     := import("kernel/sched/tasks.hll")
+
+; --- State ---
 
 kernel_tick: u64 = 0
 
-; The typed trap frame comes from the shared kernel layout.
+; --- Public API ---
+
 export trap_handler: (frame: layout.TrapFrame*) {
-    ; Ensure S-mode can access U-flagged pages (needed for syscall buffer reads).
-    asm {
-        csrr t0, sstatus
-        li   t1, 0x40000        ; SUM = bit 18
-        or   t0, t0, t1
-        csrw sstatus, t0
-    }
-
-    scause_u: u64 = frame.scause
-    scause_i: i64 = scause_u as i64
-
-    ; Bit 63 set = interrupt (negative when cast to i64).
-    if scause_i < 0 {
-        cause_code: u64 = scause_u % 16
-
-        ; Timer interrupt (cause 5): tick and reschedule.
-        if cause_code == 5 {
-            kernel_tick = kernel_tick + 1
-            utilities.timer_set(1000000)
-            scheduler.schedule(frame, Schedule)
-            return
-        }
-
-        ; External interrupt (cause 9): UART RX. Claim/complete via PLIC, then
-        ; wake the process sleeping on input and run it next.
-        if cause_code == 9 {
-            asm {
-                ; Claim: read PLIC S-mode claim register for hart 0 context 1
-                li   t0, 203423748
-                lw   t1, 0(t0)
-                ; Complete: write the same IRQ number back
-                sw   t1, 0(t0)
+    csr.allow_user_memory()
+    cause: u64 = frame.scause
+    signed_cause: i64 = cause as i64
+    if signed_cause < 0 {
+        match cause % 16 {
+            5 -> { timer_interrupt(frame) }
+            9 -> { external_interrupt(frame) }
+            1 -> { csr.clear_software_interrupt() }
+            _ -> {
+                klog.hex("unhandled interrupt scause".ptr, cause)
+                runtime.panic("unhandled interrupt".ptr)
             }
-            ; Mask the RX IRQ until consumed (else it re-fires and livelocks);
-            ; the reader re-arms it when it next sleeps. See OS spec ch.6.4.
-            ier: u8* = 0x10000001 as u8*
-            @ier = 0 as u8
-            ; Wake the input sleeper (pushed to the ready-queue front) and
-            ; preempt the current job so it runs immediately.
-            if scheduler.wake_input_waiter() == 1 {
-                scheduler.schedule(frame, Schedule)
-            }
-            return
-        }
-
-        ; Software interrupt (cause 1).
-        if cause_code == 1 {
-            asm { csrw sip, x0 }
-            return
-        }
-
-        klog.hex("unhandled interrupt scause".ptr, scause_u)
-        runtime.panic("unhandled interrupt".ptr)
-        return
-    }
-
-    ; U-mode ecall (cause 8): dispatch to syscall layer.
-    ; Always advance sepc past the ecall, Continue resumes without scheduling.
-    if scause_u == 8 {
-        action: layout.SysAction = syscall.dispatch(frame)
-        frame.sepc = frame.sepc + 4
-        match action {
-            Continue -> {}
-            _ -> { scheduler.schedule(frame, action) }
         }
         return
     }
+    if cause == 8 {
+        ecall(frame)
+        return
+    }
+    fatal_exception(frame)
+}
 
-    klog.hex("exception scause".ptr, scause_u)
+; --- Implementation ---
+
+timer_interrupt: (frame: layout.TrapFrame*) {
+    kernel_tick = kernel_tick + 1
+    timer.rearm(1000000)
+    tasks.schedule(frame, Schedule)
+}
+
+external_interrupt: (frame: layout.TrapFrame*) {
+    plic.claim_and_complete()
+    uart.mask_receive()
+    if tasks.wake_input() == 1 {
+        tasks.schedule(frame, Schedule)
+    }
+}
+
+ecall: (frame: layout.TrapFrame*) {
+    action: layout.SysAction = syscalls.dispatch(frame)
+    frame.sepc = frame.sepc + 4
+    match action {
+        Continue -> {}
+        _ -> { tasks.schedule(frame, action) }
+    }
+}
+
+fatal_exception: (frame: layout.TrapFrame*) {
+    klog.hex("exception scause".ptr, frame.scause)
     klog.hex("exception sepc".ptr, frame.sepc)
     klog.hex("exception stval".ptr, frame.stval)
     runtime.panic("unhandled exception".ptr)

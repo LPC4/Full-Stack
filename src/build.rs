@@ -1052,7 +1052,7 @@ export value: () -> i32 {
         assert!(matches!(
             manifest.import_closure,
             ImportClosurePolicy::Enabled {
-                mangle_symbols: false
+                mangle_symbols: true
             }
         ));
     }

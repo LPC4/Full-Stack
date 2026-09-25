@@ -36,7 +36,7 @@ const MAX_WALK: usize = 64;
 // Bound the stack walk: a full 4-page (16 KiB) stack is 2048 words; cap the render.
 const MAX_STACK_WORDS: usize = 256;
 
-// Syscall trace ring layout (kernel/core/syscall.hll). Must match the HLL constants.
+// Syscall trace ring layout (kernel/syscall/syscall_trace.hll). Must match the HLL constants.
 const TRACE_ENTRIES: usize = 256;
 const TRACE_FIELDS: usize = 10;
 const TRACE_F_SEQ: u64 = 0;
@@ -65,13 +65,14 @@ impl OsSymbols {
     /// (e.g. a non-kernel binary, where the panel hides itself).
     pub fn from_kernel(assembled: &AssembledOutput) -> Option<Self> {
         let pa = |n: &str| assembled.symbol_address(n).map(|off| RAM_BASE + off);
+        let scheduler_state = pa("scheduler__scheduler_state")?;
         Some(Self {
-            current_process: pa("current_process")?,
-            ready_queue_head: pa("ready_queue_head")?,
-            zombie_head: pa("zombie_head")?,
-            input_waiter: pa("input_waiter")?,
-            trace_ring: pa("trace_ring")?,
-            trace_seq: pa("trace_seq")?,
+            current_process: scheduler_state,
+            ready_queue_head: scheduler_state + 8,
+            zombie_head: scheduler_state + 16,
+            input_waiter: scheduler_state + 24,
+            trace_ring: pa("syscall_trace__trace_buffer")? + 8,
+            trace_seq: pa("syscall_trace__trace_buffer")?,
         })
     }
 }

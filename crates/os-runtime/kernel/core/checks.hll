@@ -1,12 +1,13 @@
 ; Kernel diagnostics: memory integrity and PMM smoke tests.
 
-utilities   := import("utilities")
-klog        := import("klog")
-pmm         := import("pmm")
+heap   := import("kernel/mm/kernel_heap.hll")
+klog   := import("klog")
+pages  := import("kernel/mm/physical_pages.hll")
+system := import("kernel/arch/riscv64/system.hll")
 
 ; Write/read alternating pattern over `size` heap bytes. Returns 1 on pass, 0 on fail.
 export memory_self_test: (size: u64) -> i64 {
-    test_buf: u8* = utilities.malloc(size)
+    test_buf: u8* = heap.alloc_bytes(size)
 
     for i in 0..size {
         pattern: u8 = 170
@@ -29,16 +30,16 @@ export memory_self_test: (size: u64) -> i64 {
 
 ; PMM smoke test: alloc, write, read, free. Halts on failure.
 export pmm_ops_test: () {
-    test_page: u8* = pmm.alloc()
+    test_page: u8* = pages.alloc()
     if test_page == null {
         klog.error("halt: test alloc failed".ptr)
-        utilities.shutdown(1)
+        system.shutdown(1)
     }
     test_page[0] = 42
     if test_page[0] != 42 {
         klog.error("halt: test write/read failed".ptr)
-        utilities.shutdown(1)
+        system.shutdown(1)
     }
-    pmm.free(test_page)
+    pages.free(test_page)
     klog.ok("memory ops test passed".ptr)
 }

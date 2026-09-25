@@ -66,8 +66,7 @@ pub struct CompilationPipeline {
     // so separately compiled modules in the link set do not collide.
     mangle_modules: bool,
     current_module_prefix: Option<String>,
-    // Whether a closure build mangles per-module symbols. Off for the kernel, whose inline asm
-    // references HLL symbols by literal name and which already links with unique flat names.
+    // Whether a closure build mangles per-module symbols.
     mangle_in_closure: bool,
     module_resolver: Option<ModuleResolver>,
     artifact_root: PathBuf,
@@ -195,7 +194,7 @@ impl CompilationPipeline {
         self.type_prelude = types;
     }
 
-    /// Set HLL source prepended to every compiled unit (e.g. the kernel `layout.hll`),
+    /// Set HLL source prepended to every compiled unit (e.g. the kernel ABI),
     /// so consts and structs stay defined once in HLL across separately-compiled TUs.
     pub fn set_source_prelude(&mut self, src: impl Into<String>) {
         self.source_prelude = src.into();
@@ -220,13 +219,12 @@ impl CompilationPipeline {
     }
 
     /// Enable or disable per-module symbol mangling in `compile_program_closure` (default on).
-    /// The kernel disables it: its inline asm names HLL symbols literally and it links flat.
     pub fn set_module_mangling(&mut self, enabled: bool) {
         self.mangle_in_closure = enabled;
     }
 
     fn module_key(path: &str) -> &str {
-        path.trim_start_matches("./").trim_end_matches(".hll")
+        path.trim_start_matches("./")
     }
 
     // The mangling prefix: file stem for path imports, else the registry key,
@@ -675,9 +673,7 @@ impl CompilationPipeline {
             || stack_keys.iter().any(|key| key == &identity)
             || stack_sources.iter().any(|seen| seen == source)
         {
-            // The qualified module system forbids cycles; the kernel's flat build (mangling off)
-            // tolerates them, since separate compilation only needs each module's interface.
-            if self.mangle_in_closure {
+            if self.mangle_in_closure || self.target_mode == TargetMode::Kernel {
                 stack.push(name.to_owned());
                 return Err(CompilationError::FreestandingErrors(vec![format!(
                     "cyclic import: {}",
@@ -765,17 +761,18 @@ impl CompilationPipeline {
             .collect())
     }
 
-    /// Compile the kernel modules reachable from `my_kernel` via the qualified-import closure,
-    /// deps first, as per-module objects. Mangling is off: the kernel links flat.
+    /// Compile the kernel modules reachable from `my_kernel` via the qualified-import closure.
     pub fn compile_kernel_module_objects()
     -> Result<Vec<(String, AssembledOutput)>, CompilationError> {
         let mut pipeline = CompilationPipeline::new();
         pipeline.set_target_mode(TargetMode::Kernel);
         pipeline.set_write_artifacts(false);
         pipeline.set_string_prefix(Some("__kern_str_".to_owned()));
-        pipeline.set_module_mangling(false);
-        pipeline.set_current_source_path(bundled_module_path("my_kernel"));
-        pipeline.compile_program_closure("my_kernel", os_runtime::kernel::MY_KERNEL)
+        pipeline.set_module_mangling(true);
+        pipeline.set_current_source_path(bundled_module_path("kernel/core/my_kernel.hll"));
+        let source = bundled_module_source("kernel/core/my_kernel.hll")
+            .expect("generated registry contains the kernel root");
+        pipeline.compile_program_closure("my_kernel", source)
     }
 }
 

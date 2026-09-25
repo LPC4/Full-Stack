@@ -1,164 +1,138 @@
-; Round-robin scheduler. current_process is the running PCB; ready_queue_head is the queue.
+; Round-robin scheduling and process queue ownership.
 
-layout  := import("layout")
+layout  := import("kernel/core/kernel_abi.hll")
 mem     := import("mem")
-vmm     := import("vmm")
-runtime := import("runtime")
+address_space := import("kernel/mm/address_space.hll")
 klog    := import("klog")
-syscall := import("syscall")
 
-; PCB records and process states come from the shared kernel layout.
+; --- State ---
 
-current_process:  layout.Pcb* = null
-ready_queue_head: layout.Pcb* = null
-; EXITED processes waiting to be reaped by their parent (linked via Pcb.next).
-zombie_head:      layout.Pcb* = null
-; The single process BLOCKED waiting for UART input. Woken by the UART RX interrupt. null if none.
-input_waiter:     layout.Pcb* = null
+struct SchedulerState {
+    current: layout.Pcb*,
+    ready: layout.Pcb*,
+    zombies: layout.Pcb*,
+    input_waiter: layout.Pcb*,
+}
+
+scheduler_state: SchedulerState = {
+    .current = null,
+    .ready = null,
+    .zombies = null,
+    .input_waiter = null,
+}
+
+; --- Public API ---
 
 export scheduler_init: () {
-    current_process  = null
-    ready_queue_head = null
-    zombie_head      = null
-    input_waiter     = null
+    scheduler_state.current = null
+    scheduler_state.ready = null
+    scheduler_state.zombies = null
+    scheduler_state.input_waiter = null
     klog.ok("scheduler ready".ptr)
 }
 
-; Return the currently running PCB (null if none).
 export scheduler_current: () -> layout.Pcb* {
-    return current_process
+    return scheduler_state.current
 }
 
-; Append pcb to the tail of the ready queue.
 export scheduler_add: (pcb: layout.Pcb*) {
     pcb.next = null
-    if ready_queue_head == null {
-        ready_queue_head = pcb
+    if scheduler_state.ready == null {
+        scheduler_state.ready = pcb
         return
     }
-    curr: layout.Pcb* = ready_queue_head
+    curr: layout.Pcb* = scheduler_state.ready
     while curr.next != null {
         curr = curr.next
     }
     curr.next = pcb
 }
 
-; --- Context switch ---
-; Save the current frame, restore the next process. See OS spec ch.5.4 and 7.3.
 export schedule: (frame: layout.TrapFrame*, action: layout.SysAction) {
-    ; A block with nothing else to run would strand the caller: leave it RUNNING
-    ; to retry and clear the waiter.
     match action {
         Block -> {
-            if ready_queue_head == null {
-                input_waiter = null
+            if scheduler_state.ready == null {
+                scheduler_state.input_waiter = null
                 return
             }
         }
         _ -> {}
     }
 
-    if current_process != null {
-        mem.copy((&current_process.frame) as u8*, frame as u8*, TF_BYTES)
+    if scheduler_state.current != null {
+        mem.copy((&scheduler_state.current.frame) as u8*, frame as u8*, TF_BYTES)
 
         match action {
             ExitSchedule -> {
-                current_process.state = PROC_EXITED
-                syscall.fb_release_on_exit(current_process)
+                scheduler_state.current.state = PROC_EXITED
             }
             Block -> {
-                current_process.state = PROC_BLOCKED
+                scheduler_state.current.state = PROC_BLOCKED
             }
             _ -> {
-                current_process.state = PROC_READY
-                scheduler_add(current_process)
+                scheduler_state.current.state = PROC_READY
+                scheduler_add(scheduler_state.current)
             }
         }
     }
 
-    next: layout.Pcb* = ready_queue_head
+    next: layout.Pcb* = scheduler_state.ready
     if next == null {
         return
     }
-    ready_queue_head = next.next
+    scheduler_state.ready = next.next
     next.next = null
 
-    current_process = next
-    ; Switch into the next process's address space before restoring its context.
-    vmm.switch(next.page_root)
+    scheduler_state.current = next
+    address_space.activate(next.page_root)
     mem.copy(frame as u8*, (&next.frame) as u8*, TF_BYTES)
 }
 
-; Record the process about to block on UART input so the RX interrupt can wake
-; it. There is only one such reader at a time (the foreground input consumer).
 export scheduler_set_input_waiter: (pcb: layout.Pcb*) {
-    input_waiter = pcb
+    scheduler_state.input_waiter = pcb
 }
 
-; Wake the input-blocked process to the front of the ready queue; 1 if woken.
-; Called from the UART RX interrupt. See OS spec ch.6.4.
 export scheduler_wake_input_waiter: () -> u64 {
-    w: layout.Pcb* = input_waiter
+    w: layout.Pcb* = scheduler_state.input_waiter
     if w == null {
         return 0
     }
-    input_waiter = null
+    scheduler_state.input_waiter = null
     w.state = PROC_READY
-    w.next = ready_queue_head
-    ready_queue_head = w
+    w.next = scheduler_state.ready
+    scheduler_state.ready = w
     return 1
 }
 
-; Return 1 if the ready queue is empty, 0 otherwise.
-; The exit syscall uses this to halt the VM once the last process leaves.
 export scheduler_ready_empty: () -> u64 {
-    if ready_queue_head == null {
+    if scheduler_state.ready == null {
         return 1
     }
     return 0
 }
 
-; Return 1 if a READY process with the given pid is still queued, 0 otherwise.
-; The shell polls this after exec to wait for a launched program to finish.
-export scheduler_pid_in_queue: (pid: u64) -> u64 {
-    curr: layout.Pcb* = ready_queue_head
-    while curr != null {
-        if curr.pid == pid {
-            return 1
-        }
-        curr = curr.next
-    }
-    return 0
-}
 
-; Return 1 if the pid names a live process (RUNNING, READY, or BLOCKED on input),
-; 0 if it is a zombie or unknown.
 export scheduler_pid_alive: (pid: u64) -> u64 {
-    if current_process != null {
-        if current_process.pid == pid {
+    if scheduler_state.current != null {
+        if scheduler_state.current.pid == pid {
             return 1
         }
     }
-    if input_waiter != null {
-        if input_waiter.pid == pid {
+    if scheduler_state.input_waiter != null {
+        if scheduler_state.input_waiter.pid == pid {
             return 1
         }
     }
     return scheduler_pid_in_queue(pid)
 }
 
-; --- Zombie (EXITED, unreaped) bookkeeping ---
-
-; Add an EXITED process to the zombie list so its parent can later reap its
-; exit code. Reuses Pcb.next (the process is no longer ready).
 export scheduler_make_zombie: (pcb: layout.Pcb*) {
-    pcb.next = zombie_head
-    zombie_head = pcb
+    pcb.next = scheduler_state.zombies
+    scheduler_state.zombies = pcb
 }
 
-; Find the EXITED zombie with this exact pid (pids are unique), or null.
 export scheduler_find_zombie_pid: (pid: u64) -> layout.Pcb* {
-    curr: layout.Pcb* = zombie_head
+    curr: layout.Pcb* = scheduler_state.zombies
     while curr != null {
         if curr.pid == pid {
             return curr
@@ -168,9 +142,8 @@ export scheduler_find_zombie_pid: (pid: u64) -> layout.Pcb* {
     return null
 }
 
-; Find an EXITED child of parent_pid awaiting reaping. Returns its PCB or null.
 export scheduler_find_zombie_child: (parent_pid: u64) -> layout.Pcb* {
-    curr: layout.Pcb* = zombie_head
+    curr: layout.Pcb* = scheduler_state.zombies
     while curr != null {
         if curr.parent_pid == parent_pid {
             return curr
@@ -180,14 +153,12 @@ export scheduler_find_zombie_child: (parent_pid: u64) -> layout.Pcb* {
     return null
 }
 
-; Unlink a reaped zombie from the zombie list. The PCB itself is left allocated
-; (page-table teardown is deferred; leaking is safe for now).
 export scheduler_remove_zombie: (pcb: layout.Pcb*) {
-    if zombie_head == pcb {
-        zombie_head = pcb.next
+    if (scheduler_state.zombies as u64) == (pcb as u64) {
+        scheduler_state.zombies = pcb.next
         return
     }
-    prev: layout.Pcb* = zombie_head
+    prev: layout.Pcb* = scheduler_state.zombies
     while prev != null {
         nxt: layout.Pcb* = prev.next
         if nxt == pcb {
@@ -198,72 +169,60 @@ export scheduler_remove_zombie: (pcb: layout.Pcb*) {
     }
 }
 
-; Ctrl-C teardown: unlink the first READY child of parent_pid and mark it EXITED
-; (PCB/page tables leaked); 1 if killed. See OS spec ch.6.5.
-export scheduler_kill_child: (parent_pid: u64) -> u64 {
-    prev: layout.Pcb* = null
-    curr: layout.Pcb* = ready_queue_head
-    while curr != null {
-        if curr.parent_pid == parent_pid {
-            if prev == null {
-                ready_queue_head = curr.next
-            } else {
-                prev.next = curr.next
-            }
-            curr.state = PROC_EXITED
-            syscall.fb_release_on_exit(curr)
-            return 1
+export scheduler_remove_ready: (target: u64, by_parent: bool) -> Option<layout.Pcb*> {
+    previous: layout.Pcb* = null
+    current: layout.Pcb* = scheduler_state.ready
+    while current != null {
+        matches: bool = current.pid == target
+        if by_parent {
+            matches = current.parent_pid == target
         }
-        prev = curr
-        curr = curr.next
+        if matches {
+            if previous == null {
+                scheduler_state.ready = current.next
+            } else {
+                previous.next = current.next
+            }
+            return Some(current)
+        }
+        previous = current
+        current = current.next
     }
-    return 0
+    return None
 }
 
-; Pid-targeted Ctrl-C teardown: unlink the READY process with this exact pid and
-; mark it EXITED (PCB/page tables leaked); 1 if killed. See OS spec ch.6.5.
-export scheduler_kill_pid: (pid: u64) -> u64 {
-    prev: layout.Pcb* = null
-    curr: layout.Pcb* = ready_queue_head
-    while curr != null {
-        if curr.pid == pid {
-            if prev == null {
-                ready_queue_head = curr.next
-            } else {
-                prev.next = curr.next
-            }
-            curr.state = PROC_EXITED
-            syscall.fb_release_on_exit(curr)
-            return 1
-        }
-        prev = curr
-        curr = curr.next
-    }
-    return 0
-}
-
-; Return 1 if any READY or zombie process has parent_pid as its parent.
-; Used by wait to distinguish "no children" from "children still running".
 export scheduler_has_children: (parent_pid: u64) -> u64 {
-    curr: layout.Pcb* = ready_queue_head
+    curr: layout.Pcb* = scheduler_state.ready
     while curr != null {
         if curr.parent_pid == parent_pid {
             return 1
         }
         curr = curr.next
     }
-    ; A child sleeping on input has left the ready queue but is still alive.
-    if input_waiter != null {
-        if input_waiter.parent_pid == parent_pid {
+    if scheduler_state.input_waiter != null {
+        if scheduler_state.input_waiter.parent_pid == parent_pid {
             return 1
         }
     }
-    z: layout.Pcb* = zombie_head
+    z: layout.Pcb* = scheduler_state.zombies
     while z != null {
         if z.parent_pid == parent_pid {
             return 1
         }
         z = z.next
+    }
+    return 0
+}
+
+; --- Implementation ---
+
+scheduler_pid_in_queue: (pid: u64) -> u64 {
+    curr: layout.Pcb* = scheduler_state.ready
+    while curr != null {
+        if curr.pid == pid {
+            return 1
+        }
+        curr = curr.next
     }
     return 0
 }
