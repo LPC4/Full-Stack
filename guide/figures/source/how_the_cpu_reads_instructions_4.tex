@@ -1,0 +1,12 @@
+\begin{tikzpicture}
+  \begin{scope}[local bounding box=diagram]
+    \foreach \i/\bits/\value/\hex/\c in {0/{31:24}/00000000/00/violet,1/{23:16}/00110001/31/teal,2/{15:8}/00000000/00/operand,3/{7:0}/10110011/B3/accent} {
+      \node[category=\c, literal, minimum width=2.6cm, rounded corners=0pt] at ({\i*2.6+1.3},0) {\value\\\hex};
+      \node[note] at ({\i*2.6+1.3},1) {bits \bits};
+    }
+    \node[note, anchor=west] at (0,-1) {most significant byte};
+    \node[note, anchor=east] at (10.4,-1) {least significant byte};
+  \end{scope}
+  \node[literal, anchor=south, align=center] (heading0)
+    at ([yshift=0.40cm]diagram.north) {\asmop{add} \asmreg{x1}, \asmreg{x2}, \asmreg{x3} = 0x003100B3};
+\end{tikzpicture}

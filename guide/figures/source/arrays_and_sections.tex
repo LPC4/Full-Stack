@@ -1,0 +1,21 @@
+\begin{tikzpicture}
+  \begin{scope}[local bounding box=diagram]
+    \draw[region=violet] (0,0) rectangle (4,-1);
+    \node[literal] at (2,-0.5) {stack};
+    \draw[unused] (0,-1) rectangle (4,-2);
+    \node[literal] at (2,-1.5) {available space};
+    \draw[region=teal] (0,-2) rectangle (4,-3);
+    \node[literal] at (2,-2.5) {heap};
+    \draw[region=data] (0,-3) rectangle (4,-4);
+    \node[literal] at (2,-3.5) {.data};
+    \draw[region=accent] (0,-4) rectangle (4,-5);
+    \node[literal] at (2,-4.5) {.text};
+    \draw[guideedge] (-.5,-5) -- (-.5,0);
+    \node[anchor=west, text=violet] at (4.5,-0.5) {call frames};
+    \node[anchor=west, text=teal] at (4.5,-2.5) {dynamic objects};
+    \node[anchor=west, text=data] at (4.5,-3.5) {initialized writable bytes};
+    \node[anchor=west, text=accent] at (4.5,-4.5) {instructions};
+  \end{scope}
+  \node[note, anchor=south, align=center] (heading0)
+    at ([yshift=0.40cm]diagram.north) {Higher addresses at the top / not to scale};
+\end{tikzpicture}

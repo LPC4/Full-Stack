@@ -1,0 +1,13 @@
+\begin{tikzpicture}
+  \begin{scope}[local bounding box=diagram]
+    \foreach \label/\y/\id in {fetch/0/a,decode/-1.8/b,execute/-3.6/c,{next PC}/-5.4/d} {
+      \node[category=accent, minimum width=3cm] (\id) at (1.5,\y) {\label};
+    }
+    \draw[signal] (a) -- (b);
+    \draw[signal] (b) -- (c);
+    \draw[signal] (c) -- node[right, note] {PC + 4 or branch target} (d);
+    \draw[signal] (d.west) -- (-.7,-5.4) -- (-.7,0) -- (a.west);
+  \end{scope}
+  \node[note, anchor=south, align=center] (heading0)
+    at ([yshift=0.40cm]diagram.north) {Instruction cycle / not pipeline timing};
+\end{tikzpicture}

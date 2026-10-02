@@ -1,0 +1,19 @@
+\begin{tikzpicture}
+  \begin{scope}[local bounding box=diagram]
+    \foreach \v/\y/\a/\b/\reg/\col in {a/3.5/0/4/s2/accent,b/2.6/1/6/s3/data,c/1.7/3/7/s4/operand,d/0.8/5/8/s2/accent} {
+      \node[literal, anchor=east] at (-0.2,\y) {\v};
+      \draw[fill=\col!12!paper, draw=stroke] ({\a*0.48},\y-0.25) rectangle ({\b*0.48},\y+0.25);
+      \node[literal, anchor=west] at (4.1,\y) {\reg};
+    }
+    \draw[guideedge] (0,0) -- (3.84,0);
+    \node[note] at (1.92,-0.4) {program order};
+    \foreach \v/\x/\y/\col in {a/6/3.4/accent,b/8/3.4/data,c/6/1.1/operand,d/8/1.1/accent}
+      \node[circle, draw=stroke, fill=\col!12!paper, minimum size=0.7cm, literal] (\v) at (\x,\y) {\v};
+    \draw[stroke] (a) -- (b) -- (c) -- (a);
+    \draw[stroke] (b) -- (d) -- (c);
+  \end{scope}
+  \node[note, anchor=south, align=center] (heading0)
+    at ([yshift=0.40cm]diagram.north) {Overlapping live ranges cannot share a register};
+  \node[note, text width=9cm, anchor=north, align=center] (footer0)
+    at ([yshift=-.4cm]diagram.south) {Edges mean simultaneous liveness. a and d do not overlap, so both can use s2.};
+\end{tikzpicture}

@@ -1,0 +1,20 @@
+\begin{tikzpicture}
+  \begin{scope}[local bounding box=diagram]
+    \node[note] at (-1,.45) {fp offset};
+    \node[note] at (5,.45) {sp offset};
+    \foreach \label/\y/\f/\s/\c in {{saved ra}/-.5/-8/24/violet,{saved fp}/-1.5/-16/16/violet,n/-2.5/-24/8/data,padding/-3.5/-32/0/stroke} {
+      \draw[region=\c] (0,\y-.5) rectangle (4,\y+.5);
+      \node[literal] at (2,\y) {\label};
+      \node[literal] at (-1,\y) {\f};
+      \node[literal] at (5,\y) {\s};
+    }
+    \draw[pathof=violet] (7,0) -- (4,0);
+    \node[anchor=west, align=left] at (7.1,0) {fp\\entry sp};
+    \draw[pathof=violet] (7,-4) -- (4,-4);
+    \node[anchor=west, align=left] at (7.1,-4) {sp\\fp - 32};
+    \draw[guideedge] (-1.9,-4) -- (-1.9,0);
+    \node[note, rotate=90] at (-2.3,-2) {higher addresses};
+  \end{scope}
+  \node[anchor=south, align=center] (heading0)
+    at ([yshift=0.40cm]diagram.north) {fact: 32 bytes / four 8-byte slots};
+\end{tikzpicture}

@@ -1,0 +1,20 @@
+\begin{tikzpicture}
+  \begin{scope}[local bounding box=diagram]
+    \foreach \y/\len/\cap in {2.8/2/2,1.6/3/4,0.4/5/8} {
+      \node[literal, anchor=east] at (2.8,\y) {len=\len, cap=\cap};
+      \foreach \i in {1,...,\cap} {
+        \ifnum\i>\len \def\cellcolor{stroke}\else \def\cellcolor{data}\fi
+        \draw[region=\cellcolor] ({3.2+0.7*(\i-1)},\y-0.35) rectangle ({3.2+0.7*\i},\y+0.35);
+        \ifnum\i>\len
+          \node[note] at ({3.55+0.7*(\i-1)},\y) {.};
+        \else
+          \node[literal] at ({3.55+0.7*(\i-1)},\y) {\i};
+        \fi
+      }
+    }
+  \end{scope}
+  \node[note, anchor=south, align=center] (heading0)
+    at ([yshift=0.40cm]diagram.north) {Length counts live elements; capacity counts available slots};
+  \node[note, text width=9cm, anchor=north, align=center] (footer0)
+    at ([yshift=-.4cm]diagram.south) {A dot is spare capacity, not a live element. When full, allocate a larger buffer, copy live elements, and release the old buffer.};
+\end{tikzpicture}

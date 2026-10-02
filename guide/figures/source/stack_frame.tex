@@ -1,0 +1,18 @@
+\begin{tikzpicture}
+  \begin{scope}[local bounding box=diagram]
+    \foreach \label/\y/\c in {padding/-.5/stroke,{ra / saved registers}/-1.5/violet,{locals / spill slots}/-2.5/data} {
+      \draw[region=\c] (0,\y-.5) rectangle (4.5,\y+.5);
+      \node at (2.25,\y) {\label};
+    }
+    \draw[guideedge] (6,0) -- (4.5,0);
+    \node[anchor=west] at (6.1,0) {entry sp};
+    \draw[pathof=violet] (6,-3) -- (4.5,-3);
+    \node[anchor=west, align=left] at (6.1,-3) {adjusted sp\\fp (when enabled)};
+    \draw[guideedge] (-.5,-3) -- (-.5,0);
+    \node[note, rotate=90] at (-.9,-1.5) {higher addresses};
+  \end{scope}
+  \node[anchor=south, align=center] (heading0)
+    at ([yshift=0.40cm]diagram.north) {Compiler frame / schematic, not to scale};
+  \node[note, anchor=north, align=center] (footer0)
+    at ([yshift=-.4cm]diagram.south) {Frame size is a multiple of 16 bytes};
+\end{tikzpicture}

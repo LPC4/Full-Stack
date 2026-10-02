@@ -45,6 +45,7 @@ Use `repo:` links for files in the repository:
 ```
 
 Links to `.s`, `.ir`, and `.hll` files open in the IDE. Other repository files open on GitHub.
+Inline code labels in repository links wrap long paths to fit narrow screens.
 The build rejects missing files, invalid paths, and invalid line fragments.
 
 Include a complete repository file without duplicating it in the Guide source:
@@ -74,13 +75,19 @@ main: () -> i32 {
 Use `runnable=bare` only for a complete assembly program. `registers=false` hides the register
 dump when it is not useful.
 
-Image alt text becomes the visible caption. A matching `.dark.svg` file is selected in dark mode:
+Markdown image descriptions provide the diagram's accessible alternative and native fallback
+text when an image cannot load. They are not displayed as captions below loaded diagrams.
+A matching `.dark.svg` file is selected in dark mode:
 
 ```markdown
 ![Loads move data between RAM and registers.](figures/load_store_data_flow.svg)
 ```
 
-Regenerate committed figures after changing `guide/figures/figures.tex`:
+Edit individual TikZ files under `guide/figures/source/`. Follow the shared primitives,
+palette, and review checklist in [the figure authoring guide](figures/README.md).
+Use Markdown tables for simple comparisons. Diagrams should show a relationship through
+position, boundaries, or arrows. Keep labels concise and explanations in surrounding prose.
+Regenerate committed light/navy pairs after changing a source:
 
 ```sh
 python guide/tools/tikz_to_svg.py
@@ -92,7 +99,19 @@ List the available figure names without rendering them:
 python guide/tools/tikz_to_svg.py --list
 ```
 
-This requires `tectonic` and PyMuPDF.
+Use `--only <stable-id>` for one pair and `--report` for actual-size light/navy previews.
+Generation stages and validates the complete selection before replacing files and never
+rewrites descriptions or prunes unrelated outputs. It requires Tectonic and the dependencies in
+`tools/requirements-figures.txt`; first-run TeX package/font downloads require network access.
+
+Figures retain a universal 1.9 CSS pixels per SVG/PDF unit, including on phones. A focusable
+viewport contains horizontal scrolling. The focused viewport
+keeps Left/Right arrow keys for scrolling, including at its edges.
+Page-navigation shortcuts apply outside figure viewports. The persistent image
+role exposes one alternative in either theme; both native images carry the same fallback text
+and are hidden from assistive technology to avoid duplication. Print uses a light page palette
+and the light twin, regardless of the selected screen theme, and fits the page. Printed code
+uses the text color so screen-theme syntax colors remain readable on white.
 
 ## Layout
 

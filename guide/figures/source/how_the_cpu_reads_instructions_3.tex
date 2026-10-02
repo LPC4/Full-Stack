@@ -1,0 +1,19 @@
+\begin{tikzpicture}[x=0.40cm]
+  \begin{scope}[local bounding box=diagram]
+    \foreach \name/\val/\s/\w/\col/\range in {
+      funct7/0000000/0/7/stroke/{31:25},rs2/00011/7/5/operand/{24:20},
+      rs1/00010/12/5/operand/{19:15},funct3/000/17/3/stroke/{14:12},
+      rd/00001/20/5/accent/{11:7},opcode/0110011/25/7/data/{6:0}} {
+      \draw[region=\col] (\s,0) rectangle (\s+\w,1.1);
+      \node[literal] at (\s+\w/2,0.76) {\name};
+      \node[literal] at (\s+\w/2,0.29) {\val};
+      \node[note] at (\s+\w/2,1.4) {\range};
+    }
+  \end{scope}
+  \node[note, anchor=south, align=center] (heading0)
+    at ([yshift=0.40cm]diagram.north) {32-bit R-type instruction};
+  \node[literal, anchor=south, align=center] (heading1)
+    at ([yshift=1.05cm]diagram.north) {\asmop{add} \asmreg{x1}, \asmreg{x2}, \asmreg{x3}};
+  \node[note, anchor=north, align=center] (footer0)
+    at ([yshift=-.4cm]diagram.south) {read x2 and x3; write their sum to x1};
+\end{tikzpicture}

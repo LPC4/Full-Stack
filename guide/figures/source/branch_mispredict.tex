@@ -1,0 +1,35 @@
+\begin{tikzpicture}
+  \begin{scope}[local bounding box=diagram]
+    \node[note] at (0.0,0.9) {1};
+    \node[note] at (1.0,0.9) {2};
+    \node[note] at (2.0,0.9) {3};
+    \node[note] at (3.0,0.9) {4};
+    \node[note] at (4.0,0.9) {5};
+    \node[note] at (5.0,0.9) {6};
+    \node[note] at (6.0,0.9) {7};
+    \node[note] at (7.0,0.9) {8};
+    \node[literal, anchor=east] at (-0.7,0.0) {branch};
+    \node[draw=stroke, fill=accent!8!paper, minimum width=1cm, minimum height=0.7cm, literal] at (0,0.0) {IF};
+    \node[draw=stroke, fill=accent!8!paper, minimum width=1cm, minimum height=0.7cm, literal] at (1,0.0) {ID};
+    \node[draw=stroke, fill=accent!8!paper, minimum width=1cm, minimum height=0.7cm, literal] at (2,0.0) {EX};
+    \node[draw=stroke, fill=accent!8!paper, minimum width=1cm, minimum height=0.7cm, literal] at (3,0.0) {MEM};
+    \node[draw=stroke, fill=accent!8!paper, minimum width=1cm, minimum height=0.7cm, literal] at (4,0.0) {WB};
+    \node[literal, anchor=east] at (-0.7,-0.9) {wrong + 1};
+    \node[draw=stroke, fill=accent!8!paper, minimum width=1cm, minimum height=0.7cm, literal] at (1,-0.9) {IF};
+    \node[draw=stroke, fill=accent!8!paper, minimum width=1cm, minimum height=0.7cm, literal] at (2,-0.9) {ID};
+    \node[draw=stroke, fill=danger!12!paper, minimum width=1cm, minimum height=0.7cm, literal] at (3,-0.9) {X};
+    \node[literal, anchor=east] at (-0.7,-1.8) {wrong + 2};
+    \node[draw=stroke, fill=accent!8!paper, minimum width=1cm, minimum height=0.7cm, literal] at (2,-1.8) {IF};
+    \node[draw=stroke, fill=danger!12!paper, minimum width=1cm, minimum height=0.7cm, literal] at (3,-1.8) {X};
+    \node[literal, anchor=east] at (-0.7,-2.7) {target};
+    \node[draw=stroke, fill=accent!8!paper, minimum width=1cm, minimum height=0.7cm, literal] at (3,-2.7) {IF};
+    \node[draw=stroke, fill=accent!8!paper, minimum width=1cm, minimum height=0.7cm, literal] at (4,-2.7) {ID};
+    \node[draw=stroke, fill=accent!8!paper, minimum width=1cm, minimum height=0.7cm, literal] at (5,-2.7) {EX};
+    \node[draw=stroke, fill=accent!8!paper, minimum width=1cm, minimum height=0.7cm, literal] at (6,-2.7) {MEM};
+    \node[draw=stroke, fill=accent!8!paper, minimum width=1cm, minimum height=0.7cm, literal] at (7,-2.7) {WB};
+  \end{scope}
+  \node[note, anchor=south, align=center] (heading0)
+    at ([yshift=0.40cm]diagram.north) {Branch predicted not taken / actual outcome taken};
+  \node[note, text width=10.5cm, anchor=north, align=center] (footer0)
+    at ([yshift=-.4cm]diagram.south) {Cycles run left to right. EX resolves the branch; X marks discarded speculative work. Fetch restarts at the target.};
+\end{tikzpicture}

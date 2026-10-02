@@ -1,0 +1,17 @@
+\begin{tikzpicture}
+  \begin{scope}[local bounding box=diagram]
+    \node[category=accent, anchor=west, minimum width=3.5cm] (s0) at (0,0.0) {\texttt{\_start}};
+    \node[note, anchor=west, text width=5.5cm] at (4.1,0.0) {\asmop{call} \asmlabel{main}};
+    \node[category=accent, anchor=west, minimum width=3.5cm] (s1) at (0,-1.7) {\texttt{main}};
+    \node[note, anchor=west, text width=5.5cm] at (4.1,-1.7) {a0 = 2};
+    \draw[signal] (s0.south) -- (s1.north);
+    \node[category=accent, anchor=west, minimum width=3.5cm] (s2) at (0,-3.4) {runtime continuation};
+    \node[note, anchor=west, text width=5.5cm] at (4.1,-3.4) {\asmop{call} \asmlabel{exit}};
+    \draw[signal] (s1.south) -- (s2.north);
+    \node[category=accent, anchor=west, minimum width=3.5cm] (s3) at (0,-5.1) {machine stopped};
+    \node[note, anchor=west, text width=5.5cm] at (4.1,-5.1) {halt};
+    \draw[signal] (s2.south) -- (s3.north);
+  \end{scope}
+  \node[note, anchor=south, align=center] (heading0)
+    at ([yshift=0.40cm]diagram.north) {Bare teaching program / execution crosses source-file boundaries};
+\end{tikzpicture}

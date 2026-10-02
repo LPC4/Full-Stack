@@ -1,0 +1,17 @@
+\begin{tikzpicture}
+  \begin{scope}[local bounding box=diagram]
+    \node[category=accent, anchor=west, minimum width=3.5cm] (s0) at (0,0.0) {main returns 2};
+    \node[note, anchor=west, text width=5.5cm] at (4.1,0.0) {a0 = 2};
+    \node[category=accent, anchor=west, minimum width=3.5cm] (s1) at (0,-1.7) {\asmop{ecall}};
+    \node[note, anchor=west, text width=5.5cm] at (4.1,-1.7) {a7 = 93};
+    \draw[signal] (s0.south) -- (s1.north);
+    \node[category=accent, anchor=west, minimum width=3.5cm] (s2) at (0,-3.4) {ROM trap handler};
+    \node[note, anchor=west, text width=5.5cm] at (4.1,-3.4) {SYSCON <- a0};
+    \draw[signal] (s1.south) -- (s2.north);
+    \node[category=teal, anchor=west, minimum width=3.5cm] (s3) at (0,-5.1) {SYSCON halt};
+    \node[note, anchor=west, text width=5.5cm] at (4.1,-5.1) {exit code 2};
+    \draw[signal] (s2.south) -- (s3.north);
+  \end{scope}
+  \node[note, anchor=south, align=center] (heading0)
+    at ([yshift=0.40cm]diagram.north) {Bare teaching runtime / not a hosted process exit};
+\end{tikzpicture}

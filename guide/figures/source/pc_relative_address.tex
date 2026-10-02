@@ -1,0 +1,23 @@
+\begin{tikzpicture}
+  \begin{scope}[local bounding box=diagram]
+    \draw[guideedge] (-.3,0) -- (8.5,0);
+    \foreach \x/\value/\label in {0/0x1000/{starting PC},6.68/0x2ABC/target,8/0x3000/{rounded up}} {
+      \draw[draw=stroke] (\x,-.12) -- (\x,.12);
+      \node[literal, anchor=north] at (\x,-.25) {\value};
+    }
+    \node[note, anchor=north] at (0,-.8) {starting PC};
+    \node[note, anchor=south] at (6.68,.25) {target};
+    \draw[pathof=accent] (0,.25) -- (0,1.8) -- (8,1.8) -- (8,.25);
+    \node[literal, fill=paper] at (4,1.8) {+0x2000};
+    \node[align=center] at (4,2.8)
+      {1. \asmop{auipc} \asmreg{t0}, \asmimm{2}\\[3pt]Add two 4 KiB blocks to PC};
+    \draw[pathof=caution] (8,-.9) -- (8,-1.7) -- (6.68,-1.7) -- (6.68,-.9);
+    \node[literal, anchor=north] at (7.34,-1.95) {-0x544};
+    \node[align=center] at (4,-3)
+      {2. \asmop{addi} \asmreg{t0}, \asmreg{t0}, \asmimm{-1348}\\[3pt]Step back 1348 bytes to the target};
+  \end{scope}
+  \node[literal, anchor=south, align=center] at ([yshift=.5cm]diagram.north)
+    {\asmop{la} \asmreg{t0}, \asmlabel{target}};
+  \node[note, anchor=north, align=center] at ([yshift=-.45cm]diagram.south)
+    {Final t0 = 0x2ABC / addresses increase to the right};
+\end{tikzpicture}

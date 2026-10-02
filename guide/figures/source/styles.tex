@@ -1,0 +1,24 @@
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,calc}
+\usepackage[default]{sourcesanspro}
+\usepackage[scale=0.88]{sourcecodepro}
+\newcommand{\figlabel}{\fontsize{8.5}{11}\selectfont}
+\newcommand{\asmop}[1]{\textcolor{accent!90!ink}{\texttt{#1}}}
+\newcommand{\asmreg}[1]{\textcolor{operand}{\texttt{#1}}}
+\newcommand{\asmimm}[1]{\textcolor{caution}{\texttt{#1}}}
+\newcommand{\asmlabel}[1]{\textcolor{violet}{\texttt{#1}}}
+\tikzset{
+  every picture/.style={font=\figlabel, line width=0.75pt},
+  every node/.style={text=ink},
+  panel/.style={draw=stroke, fill=surface, rounded corners=2pt,
+    minimum height=1cm, inner xsep=7pt, inner ysep=5pt, align=center},
+  focus/.style={panel, draw=accent, fill=accent!8!paper},
+  category/.style args={#1}{panel, draw=#1, fill=#1!12!paper},
+  region/.style args={#1}{draw=#1, fill=#1!12!paper},
+  pathof/.style args={#1}{signal, draw=#1},
+  unused/.style={draw=stroke, dashed, fill=paper},
+  literal/.style={font=\figlabel\ttfamily},
+  note/.style={font=\figlabel, text=muted, align=left},
+  signal/.style={-{Stealth[length=2mm]}, draw=accent, line width=0.85pt},
+  guideedge/.style={-{Stealth[length=2mm]}, line width=0.85pt, draw=muted},
+}

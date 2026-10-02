@@ -1,0 +1,19 @@
+\begin{tikzpicture}
+  \begin{scope}[local bounding box=diagram]
+    \node[category=accent, minimum width=2.6cm] (ready) at (0,2.4) {READY};
+    \node[category=data, minimum width=2.6cm] (run) at (5,2.4) {RUNNING};
+    \node[category=caution, minimum width=2.6cm] (blocked) at (5,-0.5) {BLOCKED};
+    \node[category=stroke, minimum width=2.6cm] (exit) at (0,-0.5) {EXITED};
+    \draw[signal] (0,3.8) -- node[right, note]{create} (ready.north);
+    \draw[signal] (ready) to[bend left=20] node[above=3pt, note]{dispatch} (run);
+    \draw[guideedge] (run) to[bend left=20] node[below=3pt, note]{yield / preempt} (ready);
+    \draw[guideedge] (run) -- node[right=5pt, note]{wait for input} (blocked);
+    \draw[guideedge] (blocked.south) -- ++(0,-1.5) -- (-2.5,-2.5) |- node[near start, left, note]{wake} (ready.west);
+    \draw[guideedge] (run.south west) -- node[below, sloped, pos=0.7, note]{exit} (exit.north east);
+    \draw[guideedge] (exit.south) -- ++(0,-1) node[below, note]{waitpid reaps slot};
+  \end{scope}
+  \node[note, anchor=south, align=center] (heading0)
+    at ([yshift=0.40cm]diagram.north) {Hosted task lifecycle / relevant scheduling transitions};
+  \node[note, anchor=north, align=center] (footer0)
+    at ([yshift=-.4cm]diagram.south) {READY is the initial queued state.\\EXITED retains a status until reaped; it is not runnable.};
+\end{tikzpicture}

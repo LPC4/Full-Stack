@@ -539,9 +539,10 @@ break is a per-PCB field (5.1, PCB index 47), `0` until first use and lazily
 resolved to `USER_HEAP_BASE`.
 
 `brk` (syscall `214`, Linux semantics) sets the break to `a0`, or queries it when
-`a0 == 0`. Growing maps fresh zeroed pages `R|W|U` (no execute -- W^X) into the
-caller's own root for `[brk, addr)`; the break only ever moves to page-aligned
-ceilings, so the mapped range is whole pages. On out-of-memory the break is left
+`a0 == 0`. Growing maps fresh zeroed pages `R|W|U` (no execute, W^X) into the
+caller's own root from `page_up(brk)` to `page_up(addr)`. The stored break is the
+requested byte address; only the mapping boundaries are page-aligned. Requests
+at or below the current break return it unchanged. On out-of-memory the break is left
 unchanged and the old value returned, so the caller detects failure by comparing
 the result to its request. `fork` copies the break onto the child (the heap pages
 themselves are duplicated by the per-process address-space copy, 4.3); `exec`

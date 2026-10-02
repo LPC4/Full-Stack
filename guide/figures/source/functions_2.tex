@@ -1,0 +1,17 @@
+\begin{tikzpicture}
+  \begin{scope}[local bounding box=diagram]
+    \foreach \name/\y/\offset in {{saved ra}/-.5/8,{saved s0}/-1.5/0} {
+      \draw[region=violet] (0,\y-.5) rectangle (4,\y+.5);
+      \node[literal] at (2,\y) {\name};
+      \node[literal, anchor=east] at (-.3,\y) {\offset(sp)};
+    }
+    \draw[guideedge] (6,0) -- (4,0);
+    \node[anchor=west] at (6.1,0) {entry sp};
+    \draw[pathof=violet] (6,-2) -- (4,-2);
+    \node[literal, anchor=west] at (6.1,-2) {sp = entry sp - 16};
+  \end{scope}
+  \node[anchor=south, align=center] (heading0)
+    at ([yshift=0.40cm]diagram.north) {max3: 16-byte frame};
+  \node[note, anchor=north, align=center] (footer0)
+    at ([yshift=-.4cm]diagram.south) {8 bytes per cell / higher addresses at top};
+\end{tikzpicture}

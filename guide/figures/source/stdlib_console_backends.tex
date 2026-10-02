@@ -1,0 +1,23 @@
+\begin{tikzpicture}
+  \begin{scope}[local bounding box=diagram]
+    \node[category=accent, minimum width=9.4cm] (core) at (4.7,0)
+      {\texttt{console.print("Hi")}\\shared \texttt{core/console.hll}};
+    \node[panel, minimum width=9.4cm] (interface) at (4.7,-1.9)
+      {\texttt{console\_backend.write\_range(data, len)}};
+    \draw[signal] (core.south) -- (interface.north);
+    \node[note] at (4.7,-3) {Build-time choice};
+    \node[category=accent, minimum width=4.2cm, minimum height=1.5cm] (hosted) at (2.1,-4.6)
+      {Hosted / U-mode\\\texttt{sys.write(1, data, len)}};
+    \node[category=accent, minimum width=4.2cm, minimum height=1.5cm] (bare) at (7.3,-4.6)
+      {Freestanding / kernel\\\asmop{sb} for each byte};
+    \draw[guideedge,dashed] (interface.south -| hosted.north) -- (hosted.north);
+    \draw[guideedge,dashed] (interface.south -| bare.north) -- (bare.north);
+    \node[panel, minimum width=4.2cm] (os) at (2.1,-7) {S-mode kernel\\stdout file descriptor};
+    \node[category=teal, minimum width=4.2cm] (uart) at (7.3,-7)
+      {UART transmit\\\texttt{0x1000\_0000}};
+    \draw[signal] (hosted.south) -- node[right,note] {\asmop{ecall}} (os.north);
+    \draw[pathof=teal] (bare.south) -- node[right,note] {MMIO} (uart.north);
+  \end{scope}
+  \node[font=\figlabel\bfseries, anchor=south, align=center] (heading0)
+    at ([yshift=0.40cm]diagram.north) {Shared library, different ways to print};
+\end{tikzpicture}

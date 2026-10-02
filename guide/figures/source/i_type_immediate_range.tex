@@ -1,0 +1,15 @@
+\begin{tikzpicture}
+  \begin{scope}[local bounding box=diagram]
+    \foreach \name/\s/\w/\c/\range in {{imm[11:0]}/0/12/caution/{31:20},rs1/12/5/operand/{19:15},funct3/17/3/stroke/{14:12},rd/20/5/accent/{11:7},opcode/25/7/data/{6:0}} {
+      \draw[region=\c] ({\s*.4},0) rectangle ({(\s+\w)*.4},1.1);
+      \node[literal] at ({(\s+\w/2)*.4},.7) {\name};
+      \node[note] at ({(\s+\w/2)*.4},.27) {\w\ bits};
+      \node[note] at ({(\s+\w/2)*.4},1.4) {\range};
+    }
+    \node[category=caution, anchor=north west] (range) at (0,-.8) {signed 12-bit immediate\\\texttt{-2048 ... +2047}};
+    \draw[pathof=caution] (2.4,0) -- (range.north);
+    \node[category=danger, anchor=north west] at (6,-.8) {\texttt{0x3333 = 13107}\\outside the range};
+  \end{scope}
+  \node[literal, anchor=south, align=center] (heading0)
+    at ([yshift=0.40cm]diagram.north) {\asmop{addi} \asmreg{rd}, \asmreg{rs1}, \asmimm{imm}};
+\end{tikzpicture}

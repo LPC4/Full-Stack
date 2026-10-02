@@ -1,0 +1,22 @@
+\begin{tikzpicture}
+  \begin{scope}[local bounding box=diagram]
+    \draw[region=violet] (0,0) rectangle (4,-1);
+    \node at (2,-.5) {active stack frames};
+    \draw[unused] (0,-1) rectangle (4,-2.3);
+    \node[align=center] at (2,-1.65) {unused mapped\\stack space};
+    \draw[draw=stroke, fill=surface] (0,-2.3) rectangle (4,-4.4);
+    \node[align=center, text=muted] at (2,-3.35) {unmapped gap\\access faults};
+    \draw[region=teal] (0,-4.4) rectangle (4,-5.5);
+    \node at (2,-4.95) {mapped heap};
+    \draw[pathof=violet] (4.8,-.4) -- (4.8,-1.9);
+    \node[anchor=west, align=left] at (5.1,-1.15) {stack reserves frames\\within mapped pages};
+    \draw[pathof=teal] (4.8,-5.2) -- (4.8,-3.9);
+    \node[anchor=west, align=left] at (5.1,-4.55) {heap grows via brk\\new pages may be mapped};
+    \draw[pathof=violet] (-1,-1) -- (0,-1);
+    \node[literal, anchor=east] at (-1.1,-1) {sp};
+    \draw[guideedge] (-.5,-5.5) -- (-.5,0);
+    \node[note, rotate=90] at (-.9,-3.6) {higher addresses};
+  \end{scope}
+  \node[note, anchor=south, align=center] (heading0)
+    at ([yshift=0.40cm]diagram.north) {Process virtual addresses / not to scale};
+\end{tikzpicture}

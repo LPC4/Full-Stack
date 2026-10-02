@@ -1,268 +1,236 @@
-#!/usr/bin/env python3
-"""Render the tracked TikZ figure source to SVG for the Guide.
-
-Run locally, not in CI: the generated SVGs are committed so the Pages build
-needs no LaTeX. Requires `tectonic` on PATH and PyMuPDF (`pip install pymupdf`).
-
-    python guide/tools/tikz_to_svg.py            # rebuild every figure
-    python guide/tools/tikz_to_svg.py --list     # just show what would be built
-    python guide/tools/tikz_to_svg.py --only sv39_walk
-"""
+"""Build paired Guide SVGs from explicit, independently editable TikZ sources."""
 
 import argparse
+import json
+import math
+import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
-TEX = REPO / "guide" / "figures" / "figures.tex"
-OUT = REPO / "guide" / "figures"
-NAMES = REPO / "guide" / "figures" / "figures.toml"
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 
-# Dark-theme overrides. Only the ink/surface colors change; the accent hues are
-# already legible on the dark page, so the figures keep the palette the PDF uses.
-DARK = {
-    "ink": "E6EDF3",
-    "gray7": "C9D1D9",
-    "gray5": "8B949E",
-    "gray3": "30363D",
-    "codebg": "161B22",
-}
-
-# `gblue!12` mixes toward the model's implicit white, which redefining the named
-# `white` does not change, so the mix target has to be written out explicitly.
-# The digit run must be terminal, or `a!70!b` backtracks to `a!7` and strands a `0`.
-TINT = re.compile(r"\b([a-zA-Z][a-zA-Z0-9]*)!(\d+)(?![\d!])")
+ROOT = Path(__file__).resolve().parents[2]
+OUT = ROOT / "guide/figures"
+REVIEW = ROOT / "guide/out/figure-review"
+ID = re.compile(r"[a-z][a-z0-9_]*\Z")
 
 
-def read_tex():
-    if not TEX.is_file():
-        sys.exit(f"missing {TEX}")
-    return TEX.read_text(encoding="utf-8").splitlines()
+def read_manifest(root=OUT):
+    with (root / "figures.toml").open("rb") as stream:
+        data = tomllib.load(stream)
+    if set(data) != {"figure"} or not isinstance(data["figure"], list):
+        raise ValueError("figures.toml: expected [[figure]] entries")
+    ids, sources, figures = set(), set(), []
+    for entry in data["figure"]:
+        if set(entry) != {"id", "source"}:
+            raise ValueError(f"figure requires only id and source: {entry}")
+        name, source = entry["id"], entry["source"]
+        if not isinstance(name, str) or not ID.fullmatch(name):
+            raise ValueError(f"invalid figure ID: {name!r}")
+        if name.casefold() in ids:
+            raise ValueError(f"duplicate output ID: {name}")
+        if not isinstance(source, str) or not re.fullmatch(r"source/[a-z][a-z0-9_]*\.tex", source):
+            raise ValueError(f"{name}: source must be source/<stable-id>.tex")
+        path = (root / source).resolve()
+        if not path.is_relative_to(root.resolve()) or not path.is_file():
+            raise ValueError(f"{name}: missing or unsafe source {source}")
+        if path in sources:
+            raise ValueError(f"{name}: source already owned: {source}")
+        ids.add(name.casefold())
+        sources.add(path)
+        figures.append(dict(id=name, source=source))
+    return figures
 
 
-def preamble_blocks(lines):
-    """Packages, palette and tikz styles, lifted verbatim so figures cannot drift."""
-    end = next(i for i, l in enumerate(lines) if l.startswith(r"\begin{document}"))
-    head = lines[:end]
-
-    packages = [
-        l
-        for l in head
-        if l.startswith(r"\usepackage") or l.startswith(r"\usetikzlibrary")
-    ]
-    # Page furniture is meaningless in a standalone figure and pulls in fonts.
-    drop = ("geometry", "fancyhdr", "titlesec", "hyperref", "xurl", "parskip", "enumitem")
-    packages = [l for l in packages if not any(f"{{{d}}}" in l or f"]{{{d}}}" in l for d in drop)]
-
-    colors = [l for l in head if l.startswith(r"\definecolor")]
-
-    start = next(i for i, l in enumerate(head) if l.startswith(r"\tikzset{"))
-    depth, stop = 0, start
-    for i in range(start, len(head)):
-        depth += head[i].count("{") - head[i].count("}")
-        if depth == 0:
-            stop = i
-            break
-    styles = head[start : stop + 1]
-    return packages, colors, styles
+def select(figures, only):
+    if only is None:
+        return figures
+    selected = [figure for figure in figures if figure["id"] == only]
+    if not selected:
+        raise ValueError(f"unknown figure ID {only!r}; use --list")
+    return selected
 
 
-def figures(lines):
-    """Every tikzpicture that belongs to the body, with its section context."""
-    doc = next(i for i, l in enumerate(lines) if l.startswith(r"\begin{document}"))
-    section = subsection = ""
-    found, depth, start = [], 0, None
-
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        m = re.match(r"\\section\*?\{(.+?)\}", stripped)
-        if m:
-            section, subsection = m.group(1), ""
-        m = re.match(r"\\subsection\*?\{(.+?)\}", stripped)
-        if m:
-            subsection = m.group(1)
-
-        if stripped.startswith(r"\begin{tikzpicture}"):
-            start, depth = i, 0
-        if start is not None:
-            depth += line.count(r"\begin{tikzpicture}") - line.count(r"\end{tikzpicture}")
-            if depth == 0 and stripped.startswith(r"\end{tikzpicture}"):
-                # Anything before the first section is title-page decoration.
-                if i > doc and section:
-                    found.append(
-                        {
-                            "line": start + 1,
-                            "section": section,
-                            "subsection": subsection,
-                            "body": "\n".join(lines[start : i + 1]),
-                        }
-                    )
-                start = None
-    return found
+def palette(theme, root=OUT):
+    with (root / "palette.toml").open("rb") as stream:
+        roles = tomllib.load(stream)
+    colors = roles[theme]
+    if set(colors) != set(roles["light"]) or set(colors) != set(roles["navy"]):
+        raise ValueError("palette themes must define the same roles")
+    for name, value in colors.items():
+        if not re.fullmatch(r"[a-z][a-z0-9]*", name) or not re.fullmatch(r"[0-9A-F]{6}", value):
+            raise ValueError(f"invalid palette role {name}={value}")
+    return "\n".join(rf"\definecolor{{{name}}}{{HTML}}{{{value}}}" for name, value in colors.items())
 
 
-def slugify(text):
-    text = re.sub(r"\\[a-zA-Z]+", " ", text)
-    text = re.sub(r"[^0-9A-Za-z]+", "_", text).strip("_").lower()
-    return re.sub(r"_+", "_", text)
+def document(figure, theme, root=OUT):
+    return "\n".join([
+        r"\documentclass[border=8pt]{standalone}",
+        r"\usepackage[table]{xcolor}", palette(theme, root),
+        (root / "source/styles.tex").read_text(encoding="utf-8"),
+        r"\color{ink}\begin{document}",
+        (root / figure["source"]).read_text(encoding="utf-8"), r"\end{document}",
+    ])
 
 
-def assign_names(found):
-    """Name each figure after its subsection, numbering repeats within one."""
-    counts = {}
-    for figure in found:
-        base = slugify(figure["subsection"] or figure["section"]) or "figure"
-        counts[base] = counts.get(base, 0) + 1
-        figure["name"] = base if counts[base] == 1 else f"{base}_{counts[base]}"
-    return found
+def validate_svg(path):
+    svg = ET.parse(path).getroot()
+    if svg.tag != "{http://www.w3.org/2000/svg}svg":
+        raise ValueError(f"{path.name}: not an SVG")
+    dimensions = tuple(float(svg.attrib[key]) for key in ("width", "height"))
+    box = tuple(float(value) for value in svg.attrib["viewBox"].split())
+    if len(box) != 4 or not all(math.isfinite(v) for v in (*box, *dimensions)):
+        raise ValueError(f"{path.name}: invalid dimensions")
+    if min(*dimensions, *box[2:]) <= 0:
+        raise ValueError(f"{path.name}: nonpositive dimensions")
+    for node in svg.iter():
+        tag = node.tag.rsplit("}", 1)[-1]
+        if tag in {"script", "foreignObject", "image", "text", "style", "animate", "set"}:
+            raise ValueError(f"{path.name}: forbidden SVG element {tag}")
+        for key, value in node.attrib.items():
+            local = key.rsplit("}", 1)[-1]
+            if local.lower().startswith("on"):
+                raise ValueError(f"{path.name}: event handler")
+            if local == "href" and not value.startswith("#"):
+                raise ValueError(f"{path.name}: external reference")
+            if "url(" in value and not re.fullmatch(r"url\(#[A-Za-z0-9_-]+\)", value):
+                raise ValueError(f"{path.name}: external paint reference")
+    return dimensions, box
 
 
-def figure_metadata():
-    if not NAMES.is_file():
-        return {}
-    metadata = {}
-    for block in NAMES.read_text(encoding="utf-8").split("[[figure]]"):
-        fields = {
-            key: value
-            for key, value in re.findall(r'^(source|name|caption)\s*=\s*"([^"]*)"', block, re.M)
-        }
-        if "name" in fields:
-            metadata[fields.get("source", fields["name"])] = fields
-    return metadata
+def geometry(path):
+    return [(node.tag, {key: value for key, value in node.attrib.items()
+                       if key not in {"fill", "stroke"}})
+            for node in ET.parse(path).getroot().iter()]
 
 
-def apply_metadata(found, metadata):
-    for figure in found:
-        source = figure["name"]
-        entry = metadata.get(source, {})
-        figure["source"] = source
-        figure["name"] = entry.get("name", source)
-        figure["caption"] = entry.get("caption", "")
-    return found
+def render(figure, theme, workdir, root=OUT):
+    import fitz
 
-
-def toml_string(value):
-    return value.replace("\\", "\\\\").replace('"', '\\"')
-
-
-def darken(text):
-    # A box filled with `ink` is a terminal screen, not body text: it must stay
-    # dark in both themes, or its white label becomes unreadable.
-    text = text.replace("fill=ink", "fill=terminal").replace("draw=ink", "draw=terminal")
-    # Text on a saturated accent fill stays light; paper surfaces go dark.
-    text = text.replace("text=white", "text=oncolor")
-    text = text.replace(r"\color{white}", r"\color{oncolor}")
-    text = re.sub(r"\bwhite\b", "paper", text)
-    return TINT.sub(r"\1!\2!paper", text)
-
-
-def document(packages, colors, styles, body, dark):
-    palette = list(colors)
-    if dark:
-        for name, value in DARK.items():
-            palette = [c for c in palette if not c.startswith(rf"\definecolor{{{name}}}")]
-            palette.append(rf"\definecolor{{{name}}}{{HTML}}{{{value}}}")
-        palette.insert(0, r"\definecolor{oncolor}{HTML}{FFFFFF}")
-        palette.insert(1, r"\definecolor{paper}{HTML}{0D1117}")
-        palette.insert(2, r"\definecolor{terminal}{HTML}{161B22}")
-        styles = [darken(line) for line in styles]
-        body = darken(body)
-
-    return "\n".join(
-        [r"\documentclass[border=4pt]{standalone}", *packages, *palette, *styles]
-        + [r"\color{ink}", r"\begin{document}", body, r"\end{document}", ""]
-    )
-
-
-def to_svg(pdf: Path) -> str:
-    import fitz  # PyMuPDF
-
-    with fitz.open(pdf) as doc:
-        # Text as paths: no font loading in the browser, and no metric drift.
-        return doc[0].get_svg_image(text_as_path=True)
-
-
-def build(figure, packages, colors, styles, dark, workdir):
-    suffix = ".dark" if dark else ""
-    tex = workdir / f"{figure['name']}{suffix}.tex"
-    tex.write_text(document(packages, colors, styles, figure["body"], dark), encoding="utf-8")
-
-    result = subprocess.run(
+    suffix = ".dark" if theme == "navy" else ""
+    tex = workdir / f"{figure['id']}{suffix}.tex"
+    tex.write_text(document(figure, theme, root), encoding="utf-8")
+    process = subprocess.run(
         ["tectonic", "-X", "compile", "--outdir", str(workdir), "--keep-logs", str(tex)],
-        capture_output=True,
-        text=True,
+        capture_output=True, text=True,
     )
-    if result.returncode != 0:
-        tail = (result.stderr or result.stdout).strip().splitlines()[-12:]
-        raise RuntimeError(f"tectonic failed for {tex.name}:\n  " + "\n  ".join(tail))
+    if process.returncode:
+        raise RuntimeError(f"{tex.name}:\n" + "\n".join(process.stderr.splitlines()[-16:]))
+    with fitz.open(tex.with_suffix(".pdf")) as pdf:
+        if len(pdf) != 1:
+            raise ValueError(f"{tex.name}: expected one page, got {len(pdf)}")
+        svg = pdf[0].get_svg_image(text_as_path=True)
+    path = tex.with_suffix(".svg")
+    path.write_text(svg, encoding="utf-8", newline="\n")
+    validate_svg(path)
+    return path
 
-    pdf = tex.with_suffix(".pdf")
-    target = OUT / f"{figure['name']}{suffix}.svg"
-    target.write_text(to_svg(pdf), encoding="utf-8")
-    return target
+
+def install(staged, destination=OUT, replace=os.replace):
+    destination.mkdir(parents=True, exist_ok=True)
+    (destination.parent / "out").mkdir(parents=True, exist_ok=True)
+    recovery = Path(tempfile.mkdtemp(prefix="figure-recovery-", dir=destination.parent / "out"))
+    previous = {}
+    for path in staged:
+        target = destination / path.name
+        previous[path.name] = target.exists()
+        if target.exists():
+            shutil.copy2(target, recovery / path.name)
+    (recovery / "journal.json").write_text(json.dumps(previous, indent=2))
+    changed = []
+    try:
+        for path in staged:
+            target = destination / path.name
+            changed.append(target)
+            replace(path, target)
+    except BaseException:
+        for target in reversed(changed):
+            if previous[target.name]:
+                shutil.copy2(recovery / target.name, target)
+            else:
+                target.unlink(missing_ok=True)
+        shutil.rmtree(recovery)
+        raise
+    shutil.rmtree(recovery)
+
+
+def generate(figures, root=OUT, renderer=render):
+    (root.parent / "out").mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="figure-stage-", dir=root.parent / "out") as tmp:
+        staged = []
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            pending = [(figure, [executor.submit(renderer, figure, theme, Path(tmp), root)
+                                for theme in ("light", "navy")]) for figure in figures]
+            for figure, futures in pending:
+                pair = [future.result() for future in futures]
+                if (validate_svg(pair[0]) != validate_svg(pair[1])
+                        or geometry(pair[0]) != geometry(pair[1])):
+                    raise ValueError(f"{figure['id']}: twin geometry differs")
+                staged.extend(pair)
+                print(f"  {figure['id']}: light + navy", flush=True)
+        install(staged, root)
+
+
+def report(figures, root=OUT, output=REVIEW / "contact-sheet.html"):
+    from html import escape
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    rows, measurements = [], []
+    for figure in figures:
+        name = figure["id"]
+        images = []
+        for suffix in ("", ".dark"):
+            path = root / f"{name}{suffix}.svg"
+            if not path.exists():
+                images.append("<p>Missing pair member</p>")
+                continue
+            (width, height), _ = validate_svg(path)
+            measurements.append(dict(id=name, theme="navy" if suffix else "light",
+                                     width=width, height=height, bytes=path.stat().st_size))
+            relative = os.path.relpath(path, output.parent).replace(os.sep, "/")
+            images.append(f'<div class="viewport {"navy" if suffix else "light"}" tabindex="0">'
+                          f'<img alt="{escape(name)}" src="{relative}" '
+                          f'width="{round(width * 1.9)}" height="{round(height * 1.9)}"></div>')
+        rows.append(f'<section id="{name}"><h2>{name}</h2>{"".join(images)}</section>')
+    output.write_text('<!doctype html><meta charset="utf-8"><title>Figure review</title>'
+                      '<meta name="viewport" content="width=device-width,initial-scale=1">'
+                      '<style>body{font:16px system-ui;margin:24px;background:#f6f7f9}'
+                      'h2{font-size:16px}section{margin:32px 0}.viewport{overflow:auto;padding:16px}'
+                      '.light{background:white}.navy{background:#0d1117}img{max-width:none}</style>'
+                      + "".join(rows), encoding="utf-8")
+    output.with_suffix(".json").write_text(json.dumps(measurements, indent=2))
+    print(output)
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--list", action="store_true", help="show figures and exit")
-    parser.add_argument("--only", help="build a single figure by name")
-    parser.add_argument("--no-dark", action="store_true", help="skip the dark variants")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--list", action="store_true")
+    parser.add_argument("--only", help="one stable output ID")
+    parser.add_argument("--report", action="store_true", help="inspect pairs without rendering")
     args = parser.parse_args()
-
-    lines = read_tex()
-    packages, colors, styles = preamble_blocks(lines)
-    found = apply_metadata(assign_names(figures(lines)), figure_metadata())
-    selected = found
-
-    if args.only:
-        selected = [f for f in found if args.only in (f["source"], f["name"])]
-        if not selected:
-            sys.exit(f"no figure named {args.only!r}")
-
-    if args.list:
-        for figure in selected:
-            print(f"{figure['name']:34} line {figure['line']:5}  {figure['subsection']}")
-        print(f"\n{len(selected)} figures")
-        return
-
-    if not shutil.which("tectonic"):
-        sys.exit("tectonic is not on PATH")
-
-    OUT.mkdir(parents=True, exist_ok=True)
-    written = []
-    with tempfile.TemporaryDirectory(prefix="full-stack-guide-tikz-") as tmp:
-        workdir = Path(tmp)
-        for figure in selected:
-            variants = [False] if args.no_dark else [False, True]
-            for dark in variants:
-                target = build(figure, packages, colors, styles, dark, workdir)
-                written.append(target)
-                print(f"  {target.name} ({target.stat().st_size // 1024} KB)")
-
-    manifest = ["# Generated by guide/tools/tikz_to_svg.py. Captions are authored here.\n"]
-    for figure in found:
-        source = toml_string(figure["source"])
-        name = toml_string(figure["name"])
-        caption = toml_string(figure["caption"])
-        manifest.append(
-            f'[[figure]]\nsource = "{source}"\nname = "{name}"\n'
-            f'source_line = {figure["line"]}\ncaption = "{caption}"\n'
-        )
-    expected = {
-        f'{figure["name"]}{suffix}.svg'
-        for figure in found
-        for suffix in ("", ".dark")
-    }
-    for stale in OUT.glob("*.svg"):
-        if stale.name not in expected:
-            stale.unlink()
-    NAMES.write_text("\n".join(manifest), encoding="utf-8")
-
-    print(f"\n{len(written)} files -> {OUT}")
+    try:
+        figures = select(read_manifest(), args.only)
+        if args.list:
+            for figure in figures:
+                print(f"{figure['id']:38} {figure['source']}")
+            print(f"{len(figures)} figures")
+        elif args.report:
+            report(figures)
+        else:
+            if not shutil.which("tectonic"):
+                raise ValueError("tectonic is not on PATH; see guide/figures/README.md")
+            generate(figures)
+    except (ValueError, KeyError, OSError, RuntimeError, ET.ParseError) as error:
+        sys.exit(str(error))
 
 
 if __name__ == "__main__":

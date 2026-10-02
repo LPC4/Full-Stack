@@ -1,0 +1,30 @@
+\begin{tikzpicture}
+  \begin{scope}[local bounding box=diagram]
+    \node[category=data, minimum width=9.8cm] (isa) at (4.9,0)
+      {Same RV64 instruction set};
+    \foreach \name/\y/\id in {{Project VM}/-1.6/a,{QEMU virt}/-5/b,{QEMU sifive\_u}/-8.4/c} {
+      \draw[draw=stroke, rounded corners=3pt] (0,\y+.3) rectangle (9.8,\y-2.7);
+      \node[anchor=west] at (.3,\y-.1) {\name};
+      \node[category=data, minimum width=2cm] (\id) at (1.5,\y-1.35) {RV64 CPU};
+      \draw[pathof=data] (isa.west) -- (-.5,0) |- (\id.west);
+      \draw[draw=stroke] (\id.east) -- (3.2,\y-1.35);
+      \draw[guideedge] (3.2,\y-1.35) |- (3.7,\y-.75);
+      \draw[guideedge] (3.2,\y-1.35) |- (3.7,\y-1.95);
+    }
+    \node[category=data, minimum width=5.7cm] at (6.55,-2.35)
+      {UART / \texttt{0x1000\_0000}};
+    \node[panel, minimum width=5.7cm] at (6.55,-3.55) {Power off / SYSCON exit code};
+    \node[category=data, minimum width=5.7cm] at (6.55,-5.75)
+      {Same UART interface and address};
+    \node[category=difference, minimum width=5.7cm] at (6.55,-6.95)
+      {Different shutdown / test finisher};
+    \node[category=difference, minimum width=5.7cm] at (6.55,-9.15)
+      {Different UART / SiFive interface};
+    \node[category=danger, dashed, minimum width=5.7cm] at (6.55,-10.35)
+      {Missing / no power-off device};
+  \end{scope}
+  \node[note, anchor=north, align=center] at ([yshift=-.4cm]diagram.south)
+    {Compared with the Project VM:\\[3pt]
+     \textcolor{data}{Same}\quad /\quad \textcolor{difference}{Different}\quad /\quad
+     \textcolor{danger}{Missing}};
+\end{tikzpicture}

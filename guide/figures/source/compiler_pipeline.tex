@@ -1,0 +1,8 @@
+\begin{tikzpicture}
+  \foreach \name/\example/\y/\id in {HLL/{a + b}/0/a,IR/{typed add}/-2/b,{RISC-V assembly}/{\asmop{add} \asmreg{rd}, \asmreg{rs1}, \asmreg{rs2}}/-4/c,{Machine code}/{32-bit encoding}/-6/d} {
+    \node[category=accent, minimum width=5cm] (\id) at (2.5,\y) {\name\\\texttt{\example}};
+  }
+  \draw[signal] (a.south) -- node[right, note] {parse / check / lower} (b.north);
+  \draw[signal] (b.south) -- node[right, note] {select / allocate registers} (c.north);
+  \draw[signal] (c.south) -- node[right, note] {encode / resolve addresses} (d.north);
+\end{tikzpicture}

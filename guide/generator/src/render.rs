@@ -103,8 +103,7 @@ fn repository_link(dest: &str, ctx: &Context<'_>) -> Result<Option<String>, Stri
     )))
 }
 
-/// LaTeX points to CSS pixels. One factor for every figure, so a diagram's
-/// labels are the same size wherever it appears; the CSS caps the width.
+// PDF units to CSS pixels. Scroll drawings at this scale to keep labels readable.
 const FIGURE_SCALE: f32 = 1.9;
 
 // The SVGs carry their PDF size, which renders far too small next to 16px body text.
@@ -136,25 +135,22 @@ fn figure_html(dest: &str, alt: &str, ctx: &Context<'_>) -> String {
 
     let alt_attr = code::escape(alt);
     let light = format!(
-        "<img class=\"fig-light\" src=\"{root}figures/{name}\" alt=\"{alt_attr}\"{sizing} loading=\"lazy\" decoding=\"async\" fetchpriority=\"low\">"
+        "<img class=\"fig-light\" src=\"{root}figures/{name}\" alt=\"{alt_attr}\" aria-hidden=\"true\"{sizing} loading=\"lazy\" decoding=\"async\" fetchpriority=\"low\">"
     );
     // The class, not a `:has()` rule, is what tells the theme a twin exists.
     let (dark, kind) = if has_dark {
         (
             format!(
-                "<img class=\"fig-dark\" src=\"{root}figures/{stem}.dark.svg\" alt=\"\" aria-hidden=\"true\"{sizing} loading=\"lazy\" decoding=\"async\" fetchpriority=\"low\">"
+                "<img class=\"fig-dark\" src=\"{root}figures/{stem}.dark.svg\" alt=\"{alt_attr}\" aria-hidden=\"true\"{sizing} loading=\"lazy\" decoding=\"async\" fetchpriority=\"low\">"
             ),
             " has-dark",
         )
     } else {
         (String::new(), "")
     };
-    let caption = if alt.is_empty() {
-        String::new()
-    } else {
-        format!("<figcaption>{alt_attr}</figcaption>")
-    };
-    format!("<figure class=\"figure{kind}\">{light}{dark}{caption}</figure>")
+    format!(
+        "<figure class=\"figure{kind}\" role=\"presentation\"><div class=\"figure-viewport\" tabindex=\"0\" role=\"region\" aria-label=\"Diagram (scroll horizontally when needed)\"><div role=\"img\" aria-label=\"{alt_attr}\">{light}{dark}</div></div></figure>"
+    )
 }
 
 fn plain_text(events: &[Event<'_>]) -> String {
@@ -433,14 +429,16 @@ mod tests {
     }
 
     #[test]
-    fn images_become_figures_with_captions() {
+    fn images_keep_descriptions_as_alternatives_without_visible_captions() {
         let out = render("![The stack grows down](figures/stack.svg)\n", &ctx()).expect("render");
-        assert!(out.html.contains("<figure class=\"figure\">"));
-        assert!(out.html.contains("../figures/stack.svg"));
         assert!(
             out.html
-                .contains("<figcaption>The stack grows down</figcaption>")
+                .contains("<figure class=\"figure\" role=\"presentation\">")
         );
+        assert!(out.html.contains("../figures/stack.svg"));
+        assert!(out.html.contains("alt=\"The stack grows down\""));
+        assert!(out.html.contains("aria-label=\"The stack grows down\""));
+        assert!(!out.html.contains("<figcaption"));
         // No dark twin on disk, so none is referenced.
         assert!(!out.html.contains("stack.dark.svg"));
         assert!(out.html.contains("loading=\"lazy\""));
@@ -453,6 +451,31 @@ mod tests {
         let svg = r#"<svg width="285.98" height="114.84" viewBox="0 0 285.98 114.84">"#;
         assert_eq!(svg_dimension(svg, "width"), Some(543));
         assert_eq!(svg_dimension(svg, "height"), Some(218));
+    }
+
+    #[test]
+    fn theme_twins_share_one_escaped_alternative_outside_their_visibility_rules() {
+        let directory = std::env::temp_dir().join(format!("guide-figure-{}", std::process::id()));
+        fs::create_dir_all(&directory).expect("temporary figures");
+        let svg = r#"<svg width="100" height="50" viewBox="0 0 100 50"/>"#;
+        fs::write(directory.join("pair.svg"), svg).expect("light");
+        fs::write(directory.join("pair.dark.svg"), svg).expect("dark");
+        let context = Context {
+            figures: &directory,
+            ..ctx()
+        };
+        let html = figure_html("figures/pair.svg", "a < b & \"c\"", &context);
+        fs::remove_dir_all(directory).expect("cleanup");
+        assert_eq!(html.matches("role=\"img\"").count(), 1);
+        assert!(html.contains("aria-label=\"a &lt; b &amp; &quot;c&quot;\""));
+        assert_eq!(
+            html.matches("alt=\"a &lt; b &amp; &quot;c&quot;\" aria-hidden=\"true\"")
+                .count(),
+            2
+        );
+        assert_eq!(html.matches("width=\"190\" height=\"95\"").count(), 2);
+        assert!(html.contains("tabindex=\"0\" role=\"region\""));
+        assert!(!html.contains("<figcaption"));
     }
 
     #[test]

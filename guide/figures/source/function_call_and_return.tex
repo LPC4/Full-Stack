@@ -1,0 +1,12 @@
+\begin{tikzpicture}
+  \node at (2,1) {Caller};
+  \node at (7.5,1) {max};
+  \node[category=accent, text=ink, literal, minimum width=4cm] (call) at (2,0) {\asmop{jal} \asmreg{ra}, \asmlabel{max}};
+  \node[panel, literal, minimum width=4cm] (next) at (2,-2.8) {\asmop{li} \asmreg{a1}, \asmimm{3}};
+  \node[category=data, literal, minimum width=3cm] (fn) at (7.5,0) {a0 = max(a0, a1)};
+  \node[category=accent, text=ink, literal, minimum width=3cm] (ret) at (7.5,-2.8) {\asmop{ret}};
+  \draw[signal] (call.east) -- node[above,note] {call} (fn.west);
+  \draw[guideedge] (fn.south) -- (ret.north);
+  \draw[signal] (ret.west) -- node[above,note] {return via ra} (next.east);
+  \draw[guideedge, dashed] (call.south) -- node[left,note,align=right] {ra = PC + 4\\saved continuation} (next.north);
+\end{tikzpicture}

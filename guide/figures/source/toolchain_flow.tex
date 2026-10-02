@@ -1,0 +1,17 @@
+\begin{tikzpicture}
+  \begin{scope}[local bounding box=diagram]
+    \node[category=accent, anchor=west, minimum width=3.5cm] (s0) at (0,0.0) {demo.hll};
+    \node[note, anchor=west, text width=5.5cm] at (4.1,0.0) {typed source};
+    \node[category=accent, anchor=west, minimum width=3.5cm] (s1) at (0,-1.7) {demo.o};
+    \node[note, anchor=west, text width=5.5cm] at (4.1,-1.7) {symbols / relocations};
+    \draw[signal] (s0.south) -- (s1.north);
+    \node[category=accent, anchor=west, minimum width=3.5cm] (s2) at (0,-3.4) {demo.elf};
+    \node[note, anchor=west, text width=5.5cm] at (4.1,-3.4) {linked image};
+    \draw[signal] (s1.south) -- (s2.north);
+    \node[category=accent, anchor=west, minimum width=3.5cm] (s3) at (0,-5.1) {process};
+    \node[note, anchor=west, text width=5.5cm] at (4.1,-5.1) {mapped segments};
+    \draw[signal] (s2.south) -- (s3.north);
+  \end{scope}
+  \node[note, anchor=south, align=center] (heading0)
+    at ([yshift=0.40cm]diagram.north) {Artifact lifecycle / hosted executable};
+\end{tikzpicture}

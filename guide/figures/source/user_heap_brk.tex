@@ -1,0 +1,18 @@
+\begin{tikzpicture}
+  \begin{scope}[local bounding box=diagram]
+    \draw[draw=stroke, fill=surface] (0,0) rectangle (4,-1.5);
+    \node[text=muted] at (2,-.75) {unmapped};
+    \draw[unused] (0,-1.5) rectangle (4,-2.3);
+    \node at (2,-1.9) {mapped tail};
+    \draw[region=teal] (0,-2.3) rectangle (4,-4.5);
+    \node at (2,-3.4) {heap below brk};
+    \foreach \y/\label in {-4.5/{base: 0x6000\_0000},-2.3/{brk: byte boundary},-1.5/{page boundary}} {
+      \draw[pathof=teal] (5,\y) -- (4,\y);
+      \node[literal, anchor=west] at (5.1,\y) {\label};
+    }
+    \draw[pathof=teal] (-.5,-4.5) -- (-.5,0);
+    \node[note, rotate=90] at (-.9,-2) {growth / higher addresses};
+  \end{scope}
+  \node[note, anchor=south, align=center] (heading0)
+    at ([yshift=0.40cm]diagram.north) {User heap / schematic, not to scale};
+\end{tikzpicture}

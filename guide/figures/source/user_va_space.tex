@@ -1,0 +1,20 @@
+\begin{tikzpicture}
+  \begin{scope}[local bounding box=diagram]
+    \draw[region=violet] (0,0) rectangle (4,-1);
+    \node[literal] at (2,-0.5) {stack (4 pages)};
+    \draw[unused] (0,-1) rectangle (4,-2);
+    \node[literal] at (2,-1.5) {unmapped gap};
+    \draw[region=teal] (0,-2) rectangle (4,-3);
+    \node[literal] at (2,-2.5) {heap};
+    \draw[region=data] (0,-3) rectangle (4,-4);
+    \node at (2,-3.5) {data};
+    \draw[region=accent] (0,-4) rectangle (4,-5);
+    \node at (2,-4.5) {code};
+    \draw[guideedge] (-.5,-5) -- (-.5,0);
+    \node[literal, anchor=west] at (4.3,0) {0x8000\_0000};
+    \node[literal, anchor=west] at (4.3,-3) {0x6000\_0000};
+    \node[literal, anchor=west] at (4.3,-5) {0x4000\_0000};
+  \end{scope}
+  \node[note, anchor=south, align=center] (heading0)
+    at ([yshift=0.40cm]diagram.north) {User virtual addresses / higher at the top / not to scale};
+\end{tikzpicture}

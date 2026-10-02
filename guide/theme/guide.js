@@ -677,11 +677,12 @@
   });
 
   document.addEventListener("keydown", function (event) {
-    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
     var target = event.target;
     if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) {
       return;
     }
+    if (target && target.closest && target.closest(".figure-viewport")) return;
     var rel = event.key === "ArrowLeft" ? "prev" : event.key === "ArrowRight" ? "next" : null;
     if (!rel) return;
     var link = document.querySelector('.pagenav a[rel="' + rel + '"]');

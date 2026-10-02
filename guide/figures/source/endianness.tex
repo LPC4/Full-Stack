@@ -1,0 +1,17 @@
+\begin{tikzpicture}
+  \node[literal] at (3,1.3) {The same value: 0x003100B3};
+  \node at (3,.4) {Little endian (this VM)};
+  \foreach \i/\v in {0/B3,1/00,2/31,3/00} {
+    \node[category=accent, literal, minimum width=1.5cm, rounded corners=0pt]
+      at (\i*1.5+.75,-.5) {\v};
+  }
+  \foreach \i in {0,...,3} {\node[literal] at (\i*1.5+.75,-1.35) {+\i};}
+  \draw[guideedge] (0,-2) -- (6,-2);
+  \node[note, fill=paper] at (3,-2) {increasing memory addresses};
+  \node at (3,-2.85) {Big endian};
+  \foreach \i/\v in {0/00,1/31,2/00,3/B3} {
+    \node[category=accent, literal, minimum width=1.5cm, rounded corners=0pt]
+      at (\i*1.5+.75,-3.75) {\v};
+  }
+  \foreach \i in {0,...,3} {\node[literal] at (\i*1.5+.75,-4.6) {+\i};}
+\end{tikzpicture}

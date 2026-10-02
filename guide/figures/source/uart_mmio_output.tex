@@ -1,0 +1,20 @@
+\begin{tikzpicture}
+  \begin{scope}[local bounding box=diagram]
+    \node[category=operand, minimum width=4.6cm] (address) at (2.3,0)
+      {Address register\\\texttt{t0 = 0x1000\_0000}};
+    \node[category=operand, minimum width=3.3cm] (value) at (7.6,0)
+      {Source register\\\texttt{t1 = 0x48}};
+    \node[category=accent, text=ink, minimum width=4.6cm, literal] (store) at (2.3,-2)
+      {\asmop{sb} \asmreg{t1}, \asmimm{0}(\asmreg{t0})};
+    \draw[pathof=operand] (address.south) -- (store.north);
+    \draw[pathof=operand] (value.south) |- node[pos=.25, right, note] {low byte: 0x48} (store.east);
+    \node[category=teal, minimum width=4.6cm] (uart) at (2.3,-4)
+      {UART\\transmit register};
+    \draw[pathof=teal] (store.south) -- node[right,note] {MMIO write} (uart.north);
+    \node[panel, minimum width=3.3cm] (console) at (7.6,-4)
+      {IDE console\\\texttt{H}};
+    \draw[pathof=teal] (uart.east) -- node[above,note] {0x48} (console.west);
+  \end{scope}
+  \node[font=\figlabel\bfseries, anchor=south, align=center] (heading0)
+    at ([yshift=0.40cm]diagram.north) {One byte from a register to the console};
+\end{tikzpicture}

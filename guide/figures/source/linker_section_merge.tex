@@ -1,0 +1,26 @@
+\begin{tikzpicture}
+  \begin{scope}[local bounding box=diagram]
+    \node at (1.8,1) {Input objects};
+    \node at (8.5,1) {Output sections};
+    \foreach \name/\y/\id in {main/0/m,print/-3.7/p,math/-7.4/a} {
+      \draw[draw=stroke, rounded corners=3pt] (-.2,\y+.5) rectangle (3.8,\y-2.95);
+      \node[literal, anchor=west] at (0,\y+.05) {\name.o};
+      \node[category=accent, minimum width=3.4cm] (\id t) at (1.8,\y-.95) {\name\ .text};
+    }
+    \node[category=data, minimum width=3.4cm] (md) at (1.8,-2.15) {main .data};
+    \node[category=data, minimum width=3.4cm] (pd) at (1.8,-5.85) {print .data};
+    \node[note] at (1.8,-9.55) {no .data};
+    \node[literal] at (8.5,.3) {.text};
+    \foreach \name/\y/\id in {main/-.6/m,print/-1.6/p,math/-2.6/a} {
+      \node[category=accent, rounded corners=0pt, minimum width=3.4cm] (o\id t) at (8.5,\y) {\name\ code};
+      \draw[pathof=accent] (\id t.east) -- (o\id t.west);
+    }
+    \node[literal] at (8.5,-4) {.data};
+    \node[category=data, rounded corners=0pt, minimum width=3.4cm] (omd) at (8.5,-4.9) {main data};
+    \node[category=data, rounded corners=0pt, minimum width=3.4cm] (opd) at (8.5,-5.9) {print data};
+    \draw[pathof=data] (md.east) -- (omd.west);
+    \draw[pathof=data] (pd.east) -- (opd.west);
+  \end{scope}
+  \node[note, anchor=north, align=center]
+    at ([yshift=-.4cm]diagram.south) {input order within each section};
+\end{tikzpicture}

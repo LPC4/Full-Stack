@@ -96,6 +96,25 @@ fn copy_dir(from: &Path, to: &Path) -> std::io::Result<usize> {
     Ok(copied)
 }
 
+fn copy_figures(from: &Path, to: &Path) -> std::io::Result<usize> {
+    std::fs::create_dir_all(to)?;
+    let mut copied = 0;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let source = entry.path();
+        if source.is_file()
+            && matches!(
+                source.extension().and_then(|ext| ext.to_str()),
+                Some("svg" | "png")
+            )
+        {
+            std::fs::copy(&source, to.join(entry.file_name()))?;
+            copied += 1;
+        }
+    }
+    Ok(copied)
+}
+
 fn publish_icons(repo_root: &Path, output: &Path) -> Result<(), String> {
     let app_icon = repo_root.join("assets/icon/icon.png");
     for name in ["favicon.ico", "apple-touch-icon.png"] {
@@ -263,7 +282,7 @@ fn run() -> Result<(), String> {
     // Absent when wasm-pack is unavailable or the sandbox was skipped, which is fine.
     let sandbox_files = copy_dir(&root.join("wasm/pkg"), &guide_out.join("sandbox"))
         .map_err(|e| format!("cannot copy sandbox: {e}"))?;
-    let figure_files = copy_dir(&figures, &guide_out.join("figures"))
+    let figure_files = copy_figures(&figures, &guide_out.join("figures"))
         .map_err(|e| format!("cannot copy figures: {e}"))?;
     let source_files = catalog.publish(&source_out)?;
     publish_icons(repo_root, &output)?;
@@ -311,6 +330,12 @@ fn collect_missing_figures(markdown: &str, figures: &Path, missing: &mut Vec<Str
         if !figures.join(name).is_file() {
             missing.push(name.to_owned());
         }
+        if let Some(stem) = name.strip_suffix(".svg") {
+            let dark = format!("{stem}.dark.svg");
+            if !figures.join(&dark).is_file() {
+                missing.push(dark);
+            }
+        }
         rest = &rest[end..];
     }
 }
@@ -322,5 +347,41 @@ fn main() -> ExitCode {
             eprintln!("full_stack_guide: {message}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn publishing_copies_images_and_requires_complete_referenced_pairs() {
+        let root = std::env::temp_dir().join(format!("guide-publish-{}", std::process::id()));
+        let source = root.join("figures");
+        let output = root.join("published");
+        std::fs::create_dir_all(source.join("source")).expect("fixture");
+        for name in [
+            "diagram.svg",
+            "logo.png",
+            "figures.toml",
+            "source/diagram.tex",
+        ] {
+            std::fs::write(source.join(name), "fixture").expect("write");
+        }
+        assert_eq!(copy_figures(&source, &output).expect("publish"), 2);
+        assert!(!output.join("source").exists());
+        assert!(!output.join("figures.toml").exists());
+        let mut missing = Vec::new();
+        collect_missing_figures("![diagram](figures/diagram.svg)", &source, &mut missing);
+        assert_eq!(missing, ["diagram.dark.svg"]);
+        std::fs::write(source.join("diagram.dark.svg"), "fixture").expect("dark");
+        missing.clear();
+        collect_missing_figures(
+            "![diagram](figures/diagram.svg)\n![identity](figures/logo.png)",
+            &source,
+            &mut missing,
+        );
+        assert!(missing.is_empty());
+        std::fs::remove_dir_all(root).expect("cleanup");
     }
 }

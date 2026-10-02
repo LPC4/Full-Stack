@@ -1,0 +1,12 @@
+\begin{tikzpicture}
+  \node[category=operand, minimum width=3.4cm, minimum height=2.1cm] (regs) at (0,0)
+    {\textbf{Integer registers}\\[5pt]32 registers\\64 bits each};
+  \node[category=data, minimum width=3.4cm, minimum height=2.1cm] (ram) at (6.4,0)
+    {\textbf{RAM}\\[5pt]128 MiB\\byte-addressed};
+  \draw[signal] ([yshift=10pt]ram.west) --
+    node[above=5pt, literal] {load} ([yshift=10pt]regs.east);
+  \draw[signal] ([yshift=-10pt]regs.east) --
+    node[below=5pt, literal] {store} ([yshift=-10pt]ram.west);
+  \node[note, anchor=north] at (0,-1.35) {x0 always reads as zero};
+  \node[note, anchor=north] at (6.4,-1.35) {address selects the bytes};
+\end{tikzpicture}

@@ -11,8 +11,7 @@ use crate::memory::{
     rom::Rom,
 };
 
-/// Snapshot of the bus MMIO device state, cloned for time-travel snapshots. RAM
-/// is captured separately as a bulk image; ROM is static and needs no snapshot.
+/// Snapshot of the bus MMIO device state, cloned for time-travel snapshots.
 #[derive(Clone)]
 pub struct DeviceState {
     uart: Uart,
@@ -48,17 +47,15 @@ pub const ROM_END: u64 = ROM_BASE + ROM_SIZE - 1;
 pub const UART_BASE: u64 = 0x1000_0000;
 pub const UART_SIZE: u64 = 0x1000;
 pub const UART_END: u64 = UART_BASE + UART_SIZE - 1;
-/// SYSCON power-off device. Writing any 8-byte value halts the VM with the exit code.
+// SYSCON power-off device. Writing any 8-byte value halts the VM with the exit code.
 pub const SYSCON_BASE: u64 = 0x1001_0000;
 pub const SYSCON_SIZE: u64 = 0x1000;
 pub const SYSCON_END: u64 = SYSCON_BASE + SYSCON_SIZE - 1;
-/// Linear framebuffer MMIO device. See `devices::framebuffer`.
-/// The span covers the pixel buffer plus a one-page control block (FILL, ...).
+// Linear framebuffer MMIO device. See `devices::framebuffer`.
 pub const FB_BASE: u64 = 0x1002_0000;
 pub const FB_SIZE: u64 = crate::devices::framebuffer::FB_TOTAL_BYTES as u64;
 pub const FB_END: u64 = FB_BASE + FB_SIZE - 1;
-/// Keyboard input MMIO device. See `devices::keyboard`.
-/// Placed above `FB_END` (the framebuffer spans ~311 KiB from `FB_BASE`).
+// Keyboard input MMIO device. See `devices::keyboard`.
 pub const KBD_BASE: u64 = 0x1007_0000;
 pub const KBD_SIZE: u64 = crate::devices::keyboard::KBD_TOTAL_BYTES as u64;
 pub const KBD_END: u64 = KBD_BASE + KBD_SIZE - 1;
@@ -68,7 +65,6 @@ pub const CLINT_BASE: u64 = 0x0200_0000;
 pub const CLINT_SIZE: u64 = 0x10000;
 pub const CLINT_END: u64 = CLINT_BASE + CLINT_SIZE - 1;
 pub const PLIC_BASE: u64 = 0x0C00_0000;
-// Include context threshold/claim region at offsets 0x200000/0x200004.
 pub const PLIC_SIZE: u64 = 0x0100_0000;
 pub const PLIC_END: u64 = PLIC_BASE + PLIC_SIZE - 1;
 pub const RAM_BASE: u64 = 0x8000_0000;

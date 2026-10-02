@@ -1,0 +1,19 @@
+\begin{tikzpicture}
+  \begin{scope}[local bounding box=diagram]
+    \foreach \id/\value/\prediction/\x in {sn/00/{not taken}/0,wn/01/{not taken}/3,wt/10/taken/6,st/11/taken/9} {
+      \node[circle, draw=stroke, fill=surface, minimum size=1.2cm, literal] (\id) at (\x,1.5) {\value};
+      \node[note] at (\x,0.4) {\prediction};
+    }
+    \draw[signal] (3,3.0) -- (wn.north);
+    \foreach \a/\b in {sn/wn,wn/wt,wt/st}
+      \draw[signal] (\a) to[bend left=23] node[above=4pt, note]{T} (\b);
+    \foreach \a/\b in {st/wt,wt/wn,wn/sn}
+      \draw[guideedge] (\a) to[bend left=23] node[below=4pt, note]{N} (\b);
+    \draw[guideedge] (sn) to[loop left] node[left, note]{N} (sn);
+    \draw[signal] (st) to[loop right] node[right, note]{T} (st);
+  \end{scope}
+  \node[note, anchor=south, align=center] (heading0)
+    at ([yshift=0.40cm]diagram.north) {Two-bit saturating counter / initial state 01};
+  \node[note, anchor=north, align=center] (footer0)
+    at ([yshift=-.4cm]diagram.south) {T: actual taken; N: actual not taken. 00 and 11 saturate.\\Without a BTB entry, the target defaults to PC + 4.};
+\end{tikzpicture}

@@ -1,0 +1,14 @@
+\begin{tikzpicture}
+  \begin{scope}[local bounding box=diagram]
+    \node[category=data, anchor=west, minimum width=3.5cm] (s0) at (0,0.0) {back buffer};
+    \node[note, anchor=west, text width=5.5cm] at (4.1,0.0) {pixel stores / FILL};
+    \node[category=teal, anchor=west, minimum width=3.5cm] (s1) at (0,-1.7) {PRESENT};
+    \node[note, anchor=west, text width=5.5cm] at (4.1,-1.7) {publish completed frame};
+    \draw[signal] (s0.south) -- (s1.north);
+    \node[category=data, anchor=west, minimum width=3.5cm] (s2) at (0,-3.4) {front buffer};
+    \node[note, anchor=west, text width=5.5cm] at (4.1,-3.4) {320 x 240 RGBA};
+    \draw[signal] (s1.south) -- (s2.north);
+  \end{scope}
+  \node[note, anchor=south, align=center] (heading0)
+    at ([yshift=0.40cm]diagram.north) {Framebuffer / double-buffered mode enabled};
+\end{tikzpicture}

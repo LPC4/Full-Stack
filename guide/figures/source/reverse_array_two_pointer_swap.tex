@@ -1,0 +1,19 @@
+\begin{tikzpicture}
+  \begin{scope}[local bounding box=diagram]
+    \foreach \v/\i/\c in {10/0/operand,20/1/stroke,30/2/stroke,40/3/data} {
+      \node[category=\c, literal, minimum width=1.7cm] (b\i) at ({\i*1.8},0) {\v};
+      \node[literal] at ({\i*1.8},.85) {+\pgfmathparse{int(\i*8)}\pgfmathresult};
+    }
+    \foreach \v/\i/\c in {40/0/data,20/1/stroke,30/2/stroke,10/3/operand} {
+      \node[category=\c, literal, minimum width=1.7cm] (a\i) at ({\i*1.8},-2.5) {\v};
+    }
+    \draw[pathof=operand] (b0.south) -- (a3.north);
+    \draw[pathof=data] (b3.south) -- (a0.north);
+    \node[note, anchor=west] at (6.5,0) {before};
+    \node[note, anchor=west] at (6.5,-2.5) {first swap};
+    \draw[pathof=operand] (0,-3.5) -- node[below,note] {left += 8} (1.8,-3.5);
+    \draw[pathof=data] (5.4,-3.5) -- node[below,note] {right -= 8} (3.6,-3.5);
+  \end{scope}
+  \node[note, anchor=south, align=center] (heading0)
+    at ([yshift=0.40cm]diagram.north) {8-byte elements / addresses increase to the right};
+\end{tikzpicture}

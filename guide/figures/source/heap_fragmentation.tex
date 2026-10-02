@@ -1,0 +1,22 @@
+\begin{tikzpicture}
+  \begin{scope}[local bounding box=diagram]
+    \foreach \x/\title in {0/{1. Empty},3.4/{2. Allocate A--D},6.8/{3. Free A and C}} {
+      \node[font=\figlabel\bfseries] at (\x+1.25,4.5) {\title};
+      \draw[fill=surface, draw=stroke] (\x,0) rectangle (\x+2.5,3.9);
+    }
+    \node[note, align=center] at (1.25,1.95) {one free\\region};
+    \foreach \label/\lo/\hi/\col in {A/0/0.6/accent,B/0.6/1.5/data,C/1.5/2.1/caution,D/2.1/3.1/violet} {
+      \draw[fill=\col!8!paper, draw=stroke] (3.4,\lo) rectangle (5.9,\hi);
+      \node at (4.65,{(\lo+\hi)/2}) {\label};
+    }
+    \node[note] at (4.65,3.5) {free};
+    \foreach \label/\lo/\hi/\col in {free/0/0.6/surface,B/0.6/1.5/data,free/1.5/2.1/surface,D/2.1/3.1/violet,free/3.1/3.9/surface} {
+      \draw[fill=\col!8!paper, draw=stroke] (6.8,\lo) rectangle (9.3,\hi);
+      \node at (8.05,{(\lo+\hi)/2}) {\label};
+    }
+    \draw[guideedge] (2.65,1.95) -- (3.25,1.95);
+    \draw[guideedge] (6.05,1.95) -- (6.65,1.95);
+  \end{scope}
+  \node[note, anchor=north, align=center] (footer0)
+    at ([yshift=-.4cm]diagram.south) {Conceptual heap: higher addresses at the top; not to scale.\\B and D keep the three free regions apart.};
+\end{tikzpicture}

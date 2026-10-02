@@ -1,0 +1,18 @@
+\begin{tikzpicture}
+  \begin{scope}[local bounding box=diagram]
+    \draw[region=violet] (0,0) rectangle (4,-1.2);
+    \node at (2,-.6) {stack frames};
+    \draw[unused] (0,-1.2) rectangle (4,-4.2);
+    \node[align=center] at (2,-2.7) {available space};
+    \draw[region=teal] (0,-4.2) rectangle (4,-5.4);
+    \node at (2,-4.8) {heap allocations};
+    \draw[pathof=violet] (4.8,-.4) -- (4.8,-2.1);
+    \node[anchor=west, align=left] at (5.1,-1.25) {stack grows\\toward lower addresses};
+    \draw[pathof=teal] (4.8,-5) -- (4.8,-3.3);
+    \node[anchor=west, align=left] at (5.1,-4.15) {heap grows\\toward higher addresses};
+    \draw[guideedge] (-.5,-5.4) -- (-.5,0);
+    \node[note, rotate=90] at (-.9,-2.7) {higher addresses};
+  \end{scope}
+  \node[note, anchor=south, align=center] (heading0)
+    at ([yshift=0.40cm]diagram.north) {Conceptual memory / not to scale};
+\end{tikzpicture}
