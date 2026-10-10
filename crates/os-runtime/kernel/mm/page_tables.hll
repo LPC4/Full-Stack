@@ -8,7 +8,6 @@ runtime := import("runtime")
 ; --- State ---
 
 const PAGE_SIZE = 4096
-const TABLE_ENTRIES = 512
 
 ; --- Public API ---
 

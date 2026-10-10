@@ -487,6 +487,47 @@ fn kernel_modules_export_required_boundaries() {
 }
 
 #[test]
+fn task_reaping_preserves_missing_matches_and_unlinks_only_the_selected_zombie() {
+    let source = r#"
+tasks := import("kernel/sched/tasks.hll")
+scheduler := import("kernel/sched/scheduler.hll")
+layout := import("kernel/core/kernel_abi.hll")
+system := import("kernel/arch/riscv64/system.hll")
+
+kmain: () {
+    tasks.init()
+    if tasks.reap_child(7) != null || tasks.reap_pid(1) != null {
+        system.shutdown(1)
+    }
+    first: layout.Pcb* = tasks.build_empty()
+    first.parent_pid = 7
+    second: layout.Pcb* = tasks.build_empty()
+    second.parent_pid = 8
+    scheduler.make_zombie(first)
+    scheduler.make_zombie(second)
+    if tasks.reap_child(9) != null || tasks.reap_pid(99) != null {
+        system.shutdown(2)
+    }
+    if tasks.reap_child(7) != first {
+        system.shutdown(3)
+    }
+    if tasks.reap_pid(first.pid) != null || tasks.reap_child(7) != null {
+        system.shutdown(4)
+    }
+    if tasks.reap_pid(second.pid) != second {
+        system.shutdown(5)
+    }
+    if tasks.reap_child(8) != null || tasks.reap_pid(second.pid) != null {
+        system.shutdown(6)
+    }
+    system.shutdown(0)
+}
+"#;
+    let (uart, exit) = run_kernel_hll(source);
+    assert_eq!(exit, Some(0), "task reaping changed: {uart}");
+}
+
+#[test]
 fn kernel_modules_reference_imports_only_through_aliases() {
     // Quality gate: a kernel module must reach another module's functions/globals through its
     // qualified import alias, never by bare flat name. Inline asm is the sole exempt path (6.3).

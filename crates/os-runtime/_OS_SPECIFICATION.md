@@ -135,6 +135,11 @@ The production kernel is built from `kernel/kernel.build` with per-module symbol
 is published through `abi_exports`, while the trap edges are exported by their boundary modules.
 All kernel imports use canonical `kernel/.../*.hll` registry IDs.
 
+The architecture tests enforce acyclic imports, downward dependencies, approved consumers of
+internal modules, and facade exports. Kernel ABI tests compile the actual HLL records and check
+their sizes, alignments, and field offsets against the trap, disk, and inspector contracts.
+Mutation checks ensure changes to record size or field order fail these assertions.
+
 ### 3.3 Physical memory the kernel programs
 
 RAM is `0x8000_0000` + 128 MiB. The kernel image and its 64 KiB stack sit at the
@@ -237,8 +242,10 @@ integer/FP register ABI is the standard RISC-V convention; see
 
 The scheduler keeps the running, ready, zombie, and input-waiter pointers in one private
 `SchedulerState`. The `tasks` facade is the only production consumer of scheduler and process
-internals. States cycle
-READY -> RUNNING -> {READY, BLOCKED, EXITED}.
+internals. Queue transitions write READY, BLOCKED, or EXITED. The current-task pointer identifies
+the running process; dequeue does not write the reserved RUNNING value (1) into its PCB.
+Internal zombie searches return `Option<Pcb*>`. The task facade removes a found zombie and returns
+its pointer, or returns `null` when no match exists, preserving the wait syscall boundary.
 
 ### 5.4 Round-robin preemption
 

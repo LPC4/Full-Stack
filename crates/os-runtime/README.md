@@ -74,6 +74,22 @@ boundary helpers.
 | `kernel/fs/fs_*.hll` | Disk records, image access, allocation, directories, and descriptors |
 | `kernel/trap/trap_entry.hll`, `trap_handler.hll` | Stable trap entry and short cause dispatcher |
 
+The source tour in `guide/src/kernel.md` includes the live kernel files. Use these repository
+paths inside `hll` fences when extending it:
+
+| Topic | Include path |
+|-------|--------------|
+| Ordered boot | `crates/os-runtime/kernel/core/my_kernel.hll` |
+| Trap dispatch | `crates/os-runtime/kernel/trap/trap_handler.hll` |
+| One syscall path | `crates/os-runtime/kernel/syscall/file_syscalls.hll` |
+| Scheduling and lifecycle facade | `crates/os-runtime/kernel/sched/tasks.hll` |
+| Explicit address spaces | `crates/os-runtime/kernel/mm/address_space.hll` |
+| Filesystem facade | `crates/os-runtime/kernel/fs/files.hll` |
+
+Use `{{#include <path>}}` with one path from the table. Includes read the live source, so the
+Guide does not need copies of kernel implementation or comments. Internal files remain available
+for deeper explanations, but callers use the subsystem facades.
+
 ## Filesystem
 
 The `files` facade mounts a contiguous image (superblock, inode table, free-block bitmap, data

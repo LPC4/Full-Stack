@@ -56,143 +56,173 @@ fn all_kernel_hll_modules_compile() {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct RecordLayout {
+    size: usize,
+    alignment: usize,
+    fields: Vec<(String, usize)>,
+}
+
+fn record_layout(source: &str, name: &str) -> RecordLayout {
+    use hll_to_ir::ir::{IrType, type_layout};
+
+    // Layout is target-independent. Hosted mode avoids reinjecting the kernel ABI.
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    let program = pipeline
+        .compile(source)
+        .expect("compile kernel record")
+        .ir_program;
+    let aliases = program
+        .type_aliases
+        .into_iter()
+        .map(|alias| (alias.name, alias.ty))
+        .collect::<std::collections::HashMap<_, _>>();
+    let record = aliases
+        .get(name)
+        .unwrap_or_else(|| panic!("missing record {name}"));
+    let IrType::Aggregate(fields) = record else {
+        panic!("{name} is not a record");
+    };
+    let layout = type_layout(record, &aliases).expect("kernel record layout");
+    let mut offset = 0usize;
+    let fields = fields
+        .iter()
+        .map(|(field, ty)| {
+            let layout = type_layout(ty, &aliases).expect("kernel field layout");
+            offset = offset.next_multiple_of(layout.alignment);
+            let field = (field.clone(), offset);
+            offset += layout.size;
+            field
+        })
+        .collect();
+    RecordLayout {
+        size: layout.size,
+        alignment: layout.alignment,
+        fields,
+    }
+}
+
+fn expected_record(size: usize, alignment: usize, fields: &[(&str, usize)]) -> RecordLayout {
+    RecordLayout {
+        size,
+        alignment,
+        fields: fields
+            .iter()
+            .map(|(name, offset)| ((*name).to_owned(), *offset))
+            .collect(),
+    }
+}
+
 #[test]
 fn pcb_and_trap_frame_struct_layout_matches_offsets() {
-    fn u64_offsets<'a>(fields: &'a [&'a str]) -> Vec<(&'a str, usize)> {
-        fields
-            .iter()
-            .enumerate()
-            .map(|(idx, name)| (*name, idx * 8))
-            .collect()
-    }
-
-    let trap_fields = [
-        "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13",
-        "x14", "x15", "x16", "x17", "x18", "x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26",
-        "x27", "x28", "x29", "x30", "x31", "sepc", "scause", "stval", "sstatus",
-    ];
-    let trap_offsets = u64_offsets(&trap_fields);
-    assert_eq!(trap_offsets[2].1, 16, "TrapFrame.x2 must match TF_SP");
-    assert_eq!(trap_offsets[10].1, 80, "TrapFrame.x10 must match TF_A0");
-    assert_eq!(trap_offsets[11].1, 88, "TrapFrame.x11 must match TF_A1");
-    assert_eq!(trap_offsets[12].1, 96, "TrapFrame.x12 must match TF_A2");
-    assert_eq!(trap_offsets[13].1, 104, "TrapFrame.x13 must match TF_A3");
-    assert_eq!(trap_offsets[14].1, 112, "TrapFrame.x14 must match TF_A4");
-    assert_eq!(trap_offsets[17].1, 136, "TrapFrame.x17 must match TF_A7");
-    assert_eq!(trap_offsets[32].1, 256, "TrapFrame.sepc must match TF_SEPC");
+    let source = os_runtime::module_source("kernel/core/kernel_abi.hll").unwrap();
+    let mut trap_fields: Vec<_> = (0..32)
+        .map(|index| (format!("x{index}"), index * 8))
+        .collect();
+    trap_fields.extend([
+        ("sepc".to_owned(), 256),
+        ("scause".to_owned(), 264),
+        ("stval".to_owned(), 272),
+        ("sstatus".to_owned(), 280),
+    ]);
     assert_eq!(
-        trap_offsets[33].1, 264,
-        "TrapFrame.scause must match TF_SCAUSE"
+        record_layout(source, "TrapFrame"),
+        RecordLayout {
+            size: 288,
+            alignment: 8,
+            fields: trap_fields,
+        }
     );
     assert_eq!(
-        trap_offsets[34].1, 272,
-        "TrapFrame.stval must match TF_STVAL"
+        record_layout(source, "Pcb"),
+        expected_record(
+            384,
+            8,
+            &[
+                ("pid", 0),
+                ("state", 8),
+                ("next", 16),
+                ("user_stack_pa", 24),
+                ("entry_pc", 32),
+                ("frame", 40),
+                ("page_root", 328),
+                ("parent_pid", 336),
+                ("exit_code", 344),
+                ("stdout_fd", 352),
+                ("stdin_fd", 360),
+                ("fb_mapped", 368),
+                ("heap_brk", 376),
+            ]
+        )
     );
-    assert_eq!(
-        trap_offsets[35].1, 280,
-        "TrapFrame.sstatus must match TF_SSTATUS"
-    );
-    assert_eq!(trap_fields.len() * 8, 288, "TrapFrame must stay TF_BYTES");
-
-    let pcb_offsets = [
-        ("pid", 0),
-        ("state", 8),
-        ("next", 16),
-        ("user_stack_pa", 24),
-        ("entry_pc", 32),
-        ("frame", 40),
-        ("page_root", 328),
-        ("parent_pid", 336),
-        ("exit_code", 344),
-        ("stdout_fd", 352),
-        ("stdin_fd", 360),
-        ("fb_mapped", 368),
-        ("heap_brk", 376),
-    ];
-    let mut offset = 0;
-    for (field, expected) in pcb_offsets {
-        assert_eq!(offset, expected, "Pcb.{field} offset changed");
-        offset += if field == "frame" { 288 } else { 8 };
-    }
-    assert_eq!(offset, 384, "Pcb must stay PCB_SIZE");
 }
 
 #[test]
 fn filesystem_struct_layout_matches_disk_format() {
-    use std::mem::{offset_of, size_of};
-
-    #[repr(C)]
-    struct DiskInode {
-        node_type: u16,
-        parent: u16,
-        size: u32,
-        name: [u8; 32],
-        blocks: [u16; 44],
-    }
-
-    #[repr(C)]
-    struct DiskDirEntry {
-        name: [u8; 32],
-        inode: u16,
-        reserved: u16,
-    }
-
-    #[repr(C)]
-    struct OpenFile {
-        valid: u64,
-        inode: u64,
-        flags: u64,
-        pos: u64,
-    }
-
-    assert_eq!(size_of::<DiskInode>(), 128);
-    assert_eq!(offset_of!(DiskInode, node_type), 0);
-    assert_eq!(offset_of!(DiskInode, parent), 2);
-    assert_eq!(offset_of!(DiskInode, size), 4);
-    assert_eq!(offset_of!(DiskInode, name), 8);
-    assert_eq!(offset_of!(DiskInode, blocks), 40);
-
-    assert_eq!(size_of::<DiskDirEntry>(), 36);
-    assert_eq!(offset_of!(DiskDirEntry, name), 0);
-    assert_eq!(offset_of!(DiskDirEntry, inode), 32);
-    assert_eq!(offset_of!(DiskDirEntry, reserved), 34);
-
-    assert_eq!(size_of::<OpenFile>(), 32);
-    assert_eq!(offset_of!(OpenFile, valid), 0);
-    assert_eq!(offset_of!(OpenFile, inode), 8);
-    assert_eq!(offset_of!(OpenFile, flags), 16);
-    assert_eq!(offset_of!(OpenFile, pos), 24);
+    let source = os_runtime::module_source("kernel/fs/fs_types.hll").unwrap();
+    assert_eq!(
+        record_layout(source, "DiskInode"),
+        expected_record(
+            128,
+            4,
+            &[
+                ("node_type", 0),
+                ("parent", 2),
+                ("size", 4),
+                ("name", 8),
+                ("blocks", 40),
+            ]
+        )
+    );
+    assert_eq!(
+        record_layout(source, "DiskDirEntry"),
+        expected_record(36, 2, &[("name", 0), ("inode", 32), ("reserved", 34),])
+    );
+    assert_eq!(
+        record_layout(source, "OpenFile"),
+        expected_record(
+            32,
+            8,
+            &[("valid", 0), ("inode", 8), ("flags", 16), ("pos", 24),]
+        )
+    );
 }
 
 #[test]
 fn syscall_trace_entry_layout_matches_inspector_format() {
-    use std::mem::{offset_of, size_of};
+    let source = os_runtime::module_source("kernel/syscall/syscall_trace.hll").unwrap();
+    assert_eq!(
+        record_layout(source, "TraceEntry"),
+        expected_record(
+            80,
+            8,
+            &[
+                ("seq", 0),
+                ("pid", 8),
+                ("num", 16),
+                ("a0", 24),
+                ("a1", 32),
+                ("a2", 40),
+                ("a3", 48),
+                ("a4", 56),
+                ("a5", 64),
+                ("result", 72),
+            ]
+        )
+    );
+}
 
-    #[repr(C)]
-    struct TraceEntry {
-        seq: u64,
-        pid: u64,
-        num: u64,
-        a0: u64,
-        a1: u64,
-        a2: u64,
-        a3: u64,
-        a4: u64,
-        a5: u64,
-        result: u64,
-    }
-
-    assert_eq!(size_of::<TraceEntry>(), 80);
-    assert_eq!(offset_of!(TraceEntry, seq), 0);
-    assert_eq!(offset_of!(TraceEntry, pid), 8);
-    assert_eq!(offset_of!(TraceEntry, num), 16);
-    assert_eq!(offset_of!(TraceEntry, a0), 24);
-    assert_eq!(offset_of!(TraceEntry, a1), 32);
-    assert_eq!(offset_of!(TraceEntry, a2), 40);
-    assert_eq!(offset_of!(TraceEntry, a3), 48);
-    assert_eq!(offset_of!(TraceEntry, a4), 56);
-    assert_eq!(offset_of!(TraceEntry, a5), 64);
-    assert_eq!(offset_of!(TraceEntry, result), 72);
+#[test]
+fn kernel_layout_gate_detects_size_and_field_order_changes() {
+    let source = os_runtime::module_source("kernel/core/kernel_abi.hll").unwrap();
+    let original = record_layout(source, "Pcb");
+    let enlarged = source.replace("heap_brk: u64,", "heap_brk: u64[2],");
+    assert_ne!(record_layout(&enlarged, "Pcb").size, original.size);
+    let reordered = source.replace("pid: u64,\n    state: u64,", "state: u64,\n    pid: u64,");
+    let changed = record_layout(&reordered, "Pcb");
+    assert_eq!(changed.size, original.size);
+    assert_ne!(changed.fields, original.fields);
 }
 
 // --- Frame-size guard ---
@@ -250,6 +280,7 @@ fn kernel_frames_stay_within_immediate_range() {
     );
 
     let mut offenders: Vec<(String, u64)> = Vec::new();
+    let mut peak = (String::new(), 0);
     let mut parsed_any = false;
     for (name, source) in &sources {
         let ir = p
@@ -259,11 +290,16 @@ fn kernel_frames_stay_within_immediate_range() {
         let asm = p.compile_ir_to_assembly(&ir).expect("valid IR layout");
         for (func, size) in frame_sizes(&asm) {
             parsed_any = true;
+            if size > peak.1 {
+                peak = (format!("{name}::{func}"), size);
+            }
             if size > FRAME_WARN_BYTES {
                 offenders.push((func, size));
             }
         }
     }
+
+    eprintln!("peak kernel frame: {} bytes ({})", peak.1, peak.0);
 
     // Guard against the parser silently matching nothing (asm format drift).
     assert!(
@@ -280,6 +316,41 @@ fn kernel_frames_stay_within_immediate_range() {
             .map(|(f, s)| format!("  {f}: {s} bytes"))
             .collect::<Vec<_>>()
             .join("\n")
+    );
+}
+
+#[test]
+fn kernel_manifest_preserves_flat_abi_edges_and_boots() {
+    use full_stack::build::{BuildExecutor, BuildManifest};
+    use virtual_machine::virtual_machine::{RunOutcome, VirtualMachine};
+
+    let manifest = BuildManifest::from_file(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("crates/os-runtime/kernel/kernel.build"),
+    )
+    .expect("kernel manifest");
+    let started = std::time::Instant::now();
+    let artifacts = BuildExecutor::build(&manifest).expect("build kernel");
+    let build_time = started.elapsed();
+    for symbol in ["_kernel_start", "kmain", "_s_trap_host", "trap_handler"] {
+        assert!(
+            artifacts.linked.has_symbol(symbol),
+            "missing ABI edge {symbol}"
+        );
+    }
+    let mut machine = VirtualMachine::new_kernel(&artifacts.linked);
+    let run = machine.run(5_000_000);
+    assert!(
+        matches!(run.termination, RunOutcome::Halted(0)),
+        "{:?}",
+        run.termination
+    );
+    assert!(run.uart_output.contains("no user binary present"));
+    eprintln!(
+        "kernel build: {build_time:?}, {} objects, {} flat bytes, {} no-user boot steps",
+        artifacts.units.len(),
+        artifacts.linked.to_flat_binary().len(),
+        run.steps,
     );
 }
 

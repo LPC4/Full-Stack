@@ -55,19 +55,23 @@ export tasks_pid_alive: (pid: u64) -> u64 {
 }
 
 export tasks_reap_child: (parent_pid: u64) -> layout.Pcb* {
-    child: layout.Pcb* = scheduler.find_zombie_child(parent_pid)
-    if child != null {
-        scheduler.remove_zombie(child)
+    match scheduler.find_zombie_child(parent_pid) {
+        Some(child) -> {
+            scheduler.remove_zombie(child)
+            return child
+        }
+        None -> { return null }
     }
-    return child
 }
 
 export tasks_reap_pid: (pid: u64) -> layout.Pcb* {
-    task: layout.Pcb* = scheduler.find_zombie_pid(pid)
-    if task != null {
-        scheduler.remove_zombie(task)
+    match scheduler.find_zombie_pid(pid) {
+        Some(task) -> {
+            scheduler.remove_zombie(task)
+            return task
+        }
+        None -> { return null }
     }
-    return task
 }
 
 export tasks_has_children: (parent_pid: u64) -> u64 {

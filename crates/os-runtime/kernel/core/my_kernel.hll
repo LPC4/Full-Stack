@@ -89,8 +89,7 @@ boot_memory_diagnostics: () {
 }
 
 boot_heap: () {
-    ; Hand the stdlib allocator the kernel heap region carved out of RAM;
-    ; before this only the 64 KiB bootstrap buffer backs allocations.
+    ; Before this handoff, only the 64 KiB bootstrap buffer backs allocations.
     heap_backend.heap_set_region(config.KHEAP_BASE, config.KHEAP_END)
     probe: u8* = heap.alloc_bytes(64)
     mem.set(probe, 0, 64)
@@ -142,7 +141,7 @@ boot_filesystem: () {
 }
 
 spawn_user_process: () -> bool {
-    ; Probe the first qword at USER_BINARY_PA. If it is 0, no user binary is loaded.
+    ; A zero first word is the boot protocol's absent-image sentinel.
     header_ptr: u64* = USER_BINARY_PA as u64*
     if header_ptr[0] == 0 {
         klog.warn("no user binary present".ptr)

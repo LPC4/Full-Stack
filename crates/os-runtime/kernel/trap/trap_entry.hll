@@ -18,7 +18,6 @@ export _s_trap_host: () {
         ; swap, sp = kernel stack top and sscratch = the trap-time sp.
         csrrw sp, sscratch, sp
 
-        ; Allocate the 288-byte trap frame.
         addi sp, sp, -288
 
         ; Save the two scratch registers we need up front (x5=t0, x6=t1).
@@ -68,7 +67,6 @@ export _s_trap_host: () {
         sd   x30,  240(sp)
         sd   x31,  248(sp)
 
-        ; Save S-mode CSRs at offsets 256-280.
         csrr t0, sepc
         sd   t0, 256(sp)
         csrr t0, scause
@@ -81,7 +79,6 @@ export _s_trap_host: () {
         mv   a0, sp
         call trap_handler
 
-        ; Restore S-mode CSRs.
         ld   t0, 256(sp)
         csrw sepc, t0
         ld   t0, 280(sp)

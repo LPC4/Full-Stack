@@ -65,7 +65,6 @@ export enum SysAction {
 }
 
 export const PROC_READY = 0
-export const PROC_RUNNING = 1
 export const PROC_BLOCKED = 2
 export const PROC_EXITED = 3
 

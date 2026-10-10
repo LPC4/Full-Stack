@@ -131,26 +131,26 @@ export scheduler_make_zombie: (pcb: layout.Pcb*) {
     scheduler_state.zombies = pcb
 }
 
-export scheduler_find_zombie_pid: (pid: u64) -> layout.Pcb* {
+export scheduler_find_zombie_pid: (pid: u64) -> Option<layout.Pcb*> {
     curr: layout.Pcb* = scheduler_state.zombies
     while curr != null {
         if curr.pid == pid {
-            return curr
+            return Some(curr)
         }
         curr = curr.next
     }
-    return null
+    return None
 }
 
-export scheduler_find_zombie_child: (parent_pid: u64) -> layout.Pcb* {
+export scheduler_find_zombie_child: (parent_pid: u64) -> Option<layout.Pcb*> {
     curr: layout.Pcb* = scheduler_state.zombies
     while curr != null {
         if curr.parent_pid == parent_pid {
-            return curr
+            return Some(curr)
         }
         curr = curr.next
     }
-    return null
+    return None
 }
 
 export scheduler_remove_zombie: (pcb: layout.Pcb*) {
