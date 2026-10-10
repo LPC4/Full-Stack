@@ -40,7 +40,7 @@ fn shared_upper_immediate_encoder_matches_legacy_formula() {
 #[test]
 #[should_panic(expected = "register x32 is out of range")]
 fn upper_immediate_constructor_rejects_invalid_register() {
-    let _ = Lui::new(32, 0);
+    let _instruction = Lui::new(32, 0);
 }
 
 macro_rules! assert_register_register_encoding {

@@ -398,7 +398,7 @@ address out of two real instructions. We'll see why in the next section.
 So why does `la` expand into `auipc` + `addi` in the first place? It comes down to the physical
 limits of the encoding. Every instruction in this project's implemented subset is 32 bits wide
 (RISC-V also has a compressed extension), and a good chunk of that goes to the opcode and the
-register numbers. What's left for a number is small: `addi` gets 12 bits of immediate, `auipc` gets 20. 
+register numbers. What's left for a number is small: `addi` gets 12 bits of immediate, `auipc` gets 20.
 A memory address on our RV64 machine is 64 bits. You cannot fit that into a single instruction,
 not even close.
 
@@ -1624,8 +1624,6 @@ If you get stuck, the finished version is
 [`09_hll_functions/fibonacci.hll`](repo:programs/lessons/09_hll_functions/fibonacci.hll), with the
 run configuration `09.3 (solution): fibonacci`.
 
-For a quick reminder of the terminology used so far, see the [glossary](../../glossary/).
-
 ## Runtimes
 
 Open the [`08: HLL compiler pipeline`](repo:programs/lessons/08_hll/compiler_pipeline.hll) example
@@ -2270,4 +2268,4 @@ allocations. When the program calls `free`, the core allocator instead marks the
 `HeapBlock` as free. A later call to `malloc` can then find that block in the linked list and reuse
 it.
 
-## The kernel
+<!-- ## The kernel -->

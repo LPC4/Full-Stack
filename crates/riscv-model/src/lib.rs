@@ -1558,13 +1558,24 @@ pub const RETAINED_ENCODING_VECTORS: &[EncodingVector] = &[
 ];
 
 impl InstructionId {
-    #[expect(
-        clippy::enum_glob_use,
-        reason = "the exhaustive support table reads as an instruction vocabulary"
-    )]
     pub const fn extension(self) -> Extension {
         use Extension::{A, D, F, M, Privileged, Rv64I, Zicsr, Zifencei};
-        use InstructionId::*;
+        use InstructionId::{
+            Add, Addi, Addiw, Addw, AmoaddD, AmoaddW, AmoandD, AmoandW, AmomaxD, AmomaxW, AmomaxuD,
+            AmomaxuW, AmominD, AmominW, AmominuD, AmominuW, AmoorD, AmoorW, AmoswapD, AmoswapW,
+            AmoxorD, AmoxorW, And, Andi, Auipc, Beq, Bge, Bgeu, Blt, Bltu, Bne, Csrrc, Csrrci,
+            Csrrs, Csrrsi, Csrrw, Csrrwi, Div, Divu, Divuw, Divw, Ebreak, Ecall, FaddD, FaddS,
+            FclassD, FclassS, FcvtDL, FcvtDLu, FcvtDS, FcvtDW, FcvtDWu, FcvtLD, FcvtLS, FcvtLuD,
+            FcvtLuS, FcvtSD, FcvtSL, FcvtSLu, FcvtSW, FcvtSWu, FcvtWD, FcvtWS, FcvtWuD, FcvtWuS,
+            FdivD, FdivS, Fence, FenceI, FeqD, FeqS, Fld, FleD, FleS, FltD, FltS, Flw, FmaddD,
+            FmaddS, FmaxD, FmaxS, FminD, FminS, FmsubD, FmsubS, FmulD, FmulS, FmvDX, FmvWX, FmvXD,
+            FmvXW, FnmaddD, FnmaddS, FnmsubD, FnmsubS, Fsd, FsgnjD, FsgnjS, FsgnjnD, FsgnjnS,
+            FsgnjxD, FsgnjxS, FsqrtD, FsqrtS, FsubD, FsubS, Fsw, Jal, Jalr, Lb, Lbu, Ld, Lh, Lhu,
+            LrD, LrW, Lui, Lw, Lwu, Mret, Mul, Mulh, Mulhsu, Mulhu, Mulw, Or, Ori, Rem, Remu,
+            Remuw, Remw, Sb, ScD, ScW, Sd, SfenceVma, Sh, Sll, Slli, Slliw, Sllw, Slt, Slti, Sltiu,
+            Sltu, Sra, Srai, Sraiw, Sraw, Sret, Srl, Srli, Srliw, Srlw, Sub, Subw, Sw, Wfi, Xor,
+            Xori,
+        };
 
         match self {
             Lui | Auipc | Jal | Jalr | Beq | Bne | Blt | Bge | Bltu | Bgeu | Lb | Lh | Lw | Ld

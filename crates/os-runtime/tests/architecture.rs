@@ -293,10 +293,10 @@ fn upward_imports(modules: &KernelModules, graph: &ImportGraph) -> Vec<(String, 
     graph
         .iter()
         .flat_map(|(name, dependencies)| {
-            dependencies.iter().filter_map(move |dependency| {
-                (layer(modules[name].0) < layer(modules[dependency].0))
-                    .then(|| (name.clone(), dependency.clone()))
-            })
+            dependencies
+                .iter()
+                .filter(move |dependency| layer(modules[name].0) < layer(modules[*dependency].0))
+                .map(move |dependency| (name.clone(), dependency.clone()))
         })
         .collect()
 }
@@ -313,7 +313,7 @@ fn architecture_gates_detect_cycles_and_upward_imports() {
     let mut graph = import_graph(&modules);
     graph
         .get_mut("user_memory")
-        .unwrap()
+        .expect("user_memory module")
         .insert("tasks".to_owned());
     assert_eq!(
         upward_imports(&modules, &graph),
@@ -321,7 +321,7 @@ fn architecture_gates_detect_cycles_and_upward_imports() {
     );
     graph
         .get_mut("tasks")
-        .unwrap()
+        .expect("tasks module")
         .insert("user_memory".to_owned());
     assert!(!import_cycles(&graph).is_empty());
 }

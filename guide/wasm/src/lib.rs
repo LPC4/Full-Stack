@@ -96,7 +96,6 @@ fn outcome_from_result(vm: &VirtualMachine, result: RunResult) -> Outcome {
         steps,
         uart_output,
         termination,
-        ..
     } = result;
     let registers = vm.peek_all_xregs();
     let (error, exit_code, max_steps_reached) = match termination {

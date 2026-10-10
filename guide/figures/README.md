@@ -168,7 +168,6 @@ Review screenshots belong in this ignored directory, not among site assets.
 Use `serve --root guide --out guide/out/preview --include-worktree` for full previews during
 figure work. Trunk replaces its output directory, so serving into `guide/out` can remove review
 artifacts and recovery directories stored beneath it.
-The historical implementation record is in `.ai/current_plan/guide_figures/archive/REVIEW.md`.
 
 Plain comparisons retired from unpublished designs are in [reference-tables.md](reference-tables.md).
 [diagram-notes.md](diagram-notes.md) retains context for unpublished diagrams.
