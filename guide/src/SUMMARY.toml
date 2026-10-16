@@ -226,7 +226,7 @@ slug = "standard-library/different-targets"
 title = "Different targets"
 
 [[page]]
-kind = "section"
-slug = "standard-library/real-implementation"
-title = "Real implementation"
+kind = "chapter"
+slug = "the-kernel"
+title = "The kernel"
 

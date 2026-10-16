@@ -83,26 +83,16 @@ A matching `.dark.svg` file is selected in dark mode:
 ![Loads move data between RAM and registers.](figures/load_store_data_flow.svg)
 ```
 
-Edit individual TikZ files under `guide/figures/source/`. Follow the shared primitives,
+Edit individual Excalidraw scenes under `guide/figures/scenes/`. Follow the drawing conventions,
 palette, and review checklist in [the figure authoring guide](figures/README.md).
 Use Markdown tables for simple comparisons. Diagrams should show a relationship through
 position, boundaries, or arrows. Keep labels concise and explanations in surrounding prose.
-Regenerate committed light/navy pairs after changing a source:
+Save matching light/navy masters and export both SVGs after changing a scene. Use square storage
+shapes, outlined triangle arrowheads, and dashed sides for gaps. Follow the figure specification
+when setting export dimensions and checking the result in the Guide.
 
-```sh
-python guide/tools/tikz_to_svg.py
-```
-
-List the available figure names without rendering them:
-
-```sh
-python guide/tools/tikz_to_svg.py --list
-```
-
-Use `--only <stable-id>` for one pair and `--report` for actual-size light/navy previews.
-Generation stages and validates the complete selection before replacing files and never
-rewrites descriptions or prunes unrelated outputs. It requires Tectonic and the dependencies in
-`tools/requirements-figures.txt`; first-run TeX package/font downloads require network access.
+The TikZ sources under `guide/figures/source/` remain technical references. The empty legacy
+manifest prevents the old generator from replacing the manual exports.
 
 Figures retain a universal 1.9 CSS pixels per SVG/PDF unit, including on phones. A focusable
 viewport contains horizontal scrolling. The focused viewport
@@ -120,6 +110,6 @@ src/          Markdown sources and generated page summary
 generator/    Static-site generator and preview server
 wasm/         In-page assembly and HLL sandbox
 theme/        Guide styles and browser behavior
-figures/      Generated light and dark SVGs
-tools/        Figure-generation tools
+figures/      Editable scenes and light/navy SVG exports
+tools/        Legacy TikZ figure tools
 ```
